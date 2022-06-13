@@ -28,6 +28,7 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.plan.hep.HepPlanner;
 import org.apache.calcite.plan.hep.HepProgram;
 import org.apache.calcite.plan.hep.HepProgramBuilder;
+import org.apache.calcite.rel.AbstractRelNode;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelCollationTraitDef;
 import org.apache.calcite.rel.RelCollations;
@@ -77,7 +78,7 @@ import org.apache.calcite.rel.metadata.RelMdColumnUniqueness;
 import org.apache.calcite.rel.metadata.RelMdUtil;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
-import org.apache.calcite.rel.rules.ProjectToCalcRule;
+import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rex.RexBuilder;
@@ -106,6 +107,7 @@ import org.apache.calcite.util.BuiltInMethod;
 import org.apache.calcite.util.Holder;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.ImmutableIntList;
+import org.apache.calcite.util.Pair;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -150,8 +152,10 @@ import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.startsWith;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -382,7 +386,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
     final String sql = "select name,deptno from dept where deptno > 10";
     final RelNode relNode = convertSql(sql);
     final HepProgram program = new HepProgramBuilder().
-        addRuleInstance(ProjectToCalcRule.INSTANCE).build();
+        addRuleInstance(CoreRules.PROJECT_TO_CALC).build();
     final HepPlanner planner = new HepPlanner(program);
     planner.setRoot(relNode);
     final RelNode calc = planner.findBestExp();
@@ -599,8 +603,8 @@ public class RelMetadataTest extends SqlToRelTestBase {
     final String sql = "select * from (select * from emp limit 0) as emp\n"
         + "right join (select * from dept limit 4) as dept\n"
         + "on emp.deptno = dept.deptno";
-    checkRowCount(sql, 1D, // 0, rounded up to row count's minimum 1
-        0D, 4D); // 1 * 4
+    checkRowCount(sql, 4D,
+        0D, 4D);
   }
 
   @Test void testRowCountJoinFiniteEmpty() {
@@ -610,6 +614,23 @@ public class RelMetadataTest extends SqlToRelTestBase {
     checkRowCount(sql, 1D, // 0, rounded up to row count's minimum 1
         0D, 0D); // 7 * 0
   }
+
+  @Test void testRowCountLeftJoinFiniteEmpty() {
+    final String sql = "select * from (select * from emp limit 4) as emp\n"
+        + "left join (select * from dept limit 0) as dept\n"
+        + "on emp.deptno = dept.deptno";
+    checkRowCount(sql, 4D,
+        0D, 4D);
+  }
+
+  @Test void testRowCountRightJoinFiniteEmpty() {
+    final String sql = "select * from (select * from emp limit 4) as emp\n"
+        + "right join (select * from dept limit 0) as dept\n"
+        + "on emp.deptno = dept.deptno";
+    checkRowCount(sql, 1D, // 0, rounded up to row count's minimum 1
+        0D, 0D); // 0 * 4
+  }
+
 
   @Test void testRowCountJoinEmptyEmpty() {
     final String sql = "select * from (select * from emp limit 0) as emp\n"
@@ -901,6 +922,36 @@ public class RelMetadataTest extends SqlToRelTestBase {
 
   @Test void testDistinctRowCountTable() {
     // no unique key information is available so return null
+    RelNode rel = convertSql("select * from (values "
+        + "(1, 2, 3, null), "
+        + "(3, 4, 5, 6), "
+        + "(3, 4, null, 6), "
+        + "(8, 4, 5, null) "
+        + ") t(c1, c2, c3, c4)");
+    final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
+
+    ImmutableBitSet groupKey = ImmutableBitSet.of(0, 1, 2, 3);
+    Double result = mq.getDistinctRowCount(rel, groupKey, null);
+    // all rows are different
+    assertThat(result, is(4D));
+
+    groupKey = ImmutableBitSet.of(1, 2);
+    result = mq.getDistinctRowCount(rel, groupKey, null);
+    // rows 2 and 4 are the same in the specified columns
+    assertThat(result, is(3D));
+
+    groupKey = ImmutableBitSet.of(0);
+    result = mq.getDistinctRowCount(rel, groupKey, null);
+    // rows 2 and 3 are the same in the specified columns
+    assertThat(result, is(3D));
+
+    groupKey = ImmutableBitSet.of(3);
+    result = mq.getDistinctRowCount(rel, groupKey, null);
+    // the last column has 2 distinct values: 6 and null
+    assertThat(result, is(2D));
+  }
+
+  @Test void testDistinctRowCountValues() {
     RelNode rel = convertSql("select * from emp where deptno = 10");
     final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
     ImmutableBitSet groupKey =
@@ -1181,10 +1232,30 @@ public class RelMetadataTest extends SqlToRelTestBase {
         ImmutableSet.of(ImmutableBitSet.of(0)));
   }
 
+  @Test void testGroupingSets() {
+    checkGetUniqueKeys("select deptno, sal, count(*) from emp\n"
+            + "group by GROUPING SETS (deptno, sal)",
+        ImmutableSet.of());
+  }
+
   @Test void testUnion() {
     checkGetUniqueKeys("select deptno from emp\n"
         + "union\n"
         + "select deptno from dept",
+        ImmutableSet.of(ImmutableBitSet.of(0)));
+  }
+
+  @Test void testUniqueKeysMinus() {
+    checkGetUniqueKeys("select distinct deptno from emp\n"
+            + "except all\n"
+            + "select deptno from dept",
+        ImmutableSet.of(ImmutableBitSet.of(0)));
+  }
+
+  @Test void testUniqueKeysIntersect() {
+    checkGetUniqueKeys("select distinct deptno from emp\n"
+            + "intersect all\n"
+            + "select deptno from dept",
         ImmutableSet.of(ImmutableBitSet.of(0)));
   }
 
@@ -1563,6 +1634,13 @@ public class RelMetadataTest extends SqlToRelTestBase {
             rightKeys, JoinRelType.SEMI);
     assertThat(collations,
         equalTo(semiJoin.getTraitSet().getTraits(RelCollationTraitDef.INSTANCE)));
+    final EnumerableMergeJoin antiJoin = EnumerableMergeJoin.create(project, deptSort,
+        rexBuilder.makeLiteral(true), leftKeys, rightKeys, JoinRelType.ANTI);
+    collations =
+        RelMdCollation.mergeJoin(mq, project, deptSort, leftKeys,
+            rightKeys, JoinRelType.ANTI);
+    assertThat(collations,
+        equalTo(antiJoin.getTraitSet().getTraits(RelCollationTraitDef.INSTANCE)));
 
     // Values (empty)
     collations = RelMdCollation.values(mq, empTable.getRowType(),
@@ -1982,7 +2060,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
       final RelNode rel = convertSql(sql, false);
       final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
       RelOptPredicateList inputSet = mq.getPulledUpPredicates(rel.getInput(0));
-      assertThat(inputSet.pulledUpPredicates.size(), is(12));
+      assertThat(inputSet.pulledUpPredicates.size(), is(11));
     }
   }
 
@@ -2027,7 +2105,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
         + "select empno, deptno from emp where empno=3 or deptno=4");
     final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
     assertThat(mq.getPulledUpPredicates(rel).pulledUpPredicates,
-        sortsAs("[OR(=($0, 1), =($1, 2), =($0, 3), =($1, 4))]"));
+        sortsAs("[OR(SEARCH($0, Sarg[1, 3]), SEARCH($1, Sarg[2, 4]))]"));
   }
 
   @Test void testPullUpPredicatesFromUnion2() {
@@ -2037,7 +2115,13 @@ public class RelMetadataTest extends SqlToRelTestBase {
         + "select empno, comm, deptno from emp where empno=1 and comm=4");
     final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
     assertThat(mq.getPulledUpPredicates(rel).pulledUpPredicates,
-        sortsAs("[=($0, 1), OR(AND(=($2, 3), =($1, 2)), =($1, 4))]"));
+        // Because the hashCode for
+        // OR(AND(=($1, 2), =($2, 3)) and
+        // OR(AND(=($2, 3), =($1, 2)) are the same, the result is flipped and not stable,
+        // but they both are correct.
+        CoreMatchers.anyOf(
+            sortsAs("[=($0, 1), OR(AND(=($1, 2), =($2, 3)), =($1, 4))]"),
+            sortsAs("[=($0, 1), OR(AND(=($2, 3), =($1, 2)), =($1, 4))]")));
 
   }
 
@@ -3052,6 +3136,54 @@ public class RelMetadataTest extends SqlToRelTestBase {
         is("=($0, $1)"));
   }
 
+
+  /**
+   * Custom rel node for testing.
+   */
+  static class CustomRel extends AbstractRelNode {
+    CustomRel(RelOptCluster cluster, RelTraitSet traits) {
+      super(cluster, traits);
+    }
+  }
+
+  @Test void testRegenerateHandler() {
+    final FrameworkConfig config = RelBuilderTest.config().build();
+    final RelBuilder builder = RelBuilder.create(config);
+    RelNode filter = builder
+        .scan("EMP")
+        .filter(builder.call(NONDETERMINISTIC_OP))
+        .build();
+    RelMetadataQuery mq = filter.getCluster().getMetadataQuery();
+
+    Pair<String, String> cause = Pair.of("Size",
+        "org.apache.calcite.test.RelMetadataTest.CustomRel");
+
+    // get metadata for the first time to make sure handler is generated.
+    mq.getAverageRowSize(filter);
+    assertFalse(JaninoRelMetadataProvider.REGENERATION_CAUSES.contains(cause));
+
+    // make sure we have enough credits to perform regeneration.
+    assertTrue(JaninoRelMetadataProvider.MetadataRegenerationCounter.getCounterValue() > 0);
+
+    // get metadata for the second time, with a new node type,
+    // and make sure regeneration happens.
+    RelNode customRel = new CustomRel(filter.getCluster(), filter.getTraitSet());
+    mq.getAverageRowSize(customRel);
+
+    // make sure a regeneration log is produced
+    assertTrue(JaninoRelMetadataProvider.REGENERATION_CAUSES.contains(cause));
+  }
+
+  @Test void testRegenerateCounter() {
+    // setting the initial counter value more than once will cause an exception
+    IllegalStateException exp = assertThrows(IllegalStateException.class,
+        () -> {
+          JaninoRelMetadataProvider.MetadataRegenerationCounter.setInitialValue(1000000);
+          JaninoRelMetadataProvider.MetadataRegenerationCounter.setInitialValue(1000000);
+        });
+    assertEquals("The initial counter value has been set", exp.getMessage());
+  }
+
   /**
    * Matcher that succeeds for any collection that, when converted to strings
    * and sorted on those strings, matches the given reference string.
@@ -3066,14 +3198,12 @@ public class RelMetadataTest extends SqlToRelTestBase {
    */
   public static <T> Matcher<Iterable<? extends T>> sortsAs(final String value) {
     return Matchers.compose(equalTo(value), item -> {
-      try (RexNode.Closeable ignored = RexNode.skipNormalize()) {
-        final List<String> strings = new ArrayList<>();
-        for (T t : item) {
-          strings.add(t.toString());
-        }
-        Collections.sort(strings);
-        return strings.toString();
+      final List<String> strings = new ArrayList<>();
+      for (T t : item) {
+        strings.add(t.toString());
       }
+      Collections.sort(strings);
+      return strings.toString();
     });
   }
 
@@ -3098,7 +3228,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
       implements MetadataHandler<ColType> {
     static final ThreadLocal<List<String>> THREAD_LIST = new ThreadLocal<>();
 
-    @Override public MetadataDef<ColType> getDef() {
+    public MetadataDef<ColType> getDef() {
       return ColType.DEF;
     }
 
@@ -3194,5 +3324,28 @@ public class RelMetadataTest extends SqlToRelTestBase {
       registerTable(t1);
       return this;
     }
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-4192">[CALCITE-4192]
+   * RelMdColumnOrigins get the wrong index of group by columns after RelNode was optimized by
+   * AggregateProjectMergeRule rule</a>. */
+  @Test void testColumnOriginAfterAggProjectMergeRule() {
+    final String sql = "select count(ename), SAL from emp group by SAL";
+    final RelNode rel = tester.convertSqlToRel(sql).rel;
+    final HepProgramBuilder programBuilder = HepProgram.builder();
+    programBuilder.addRuleInstance(CoreRules.AGGREGATE_PROJECT_MERGE);
+    final HepPlanner planner = new HepPlanner(programBuilder.build());
+    planner.setRoot(rel);
+    final RelNode optimizedRel = planner.findBestExp();
+
+    Set<RelColumnOrigin> origins = RelMetadataQuery.instance()
+        .getColumnOrigins(optimizedRel, 1);
+    assertThat(origins.size(), equalTo(1));
+
+    RelColumnOrigin columnOrigin = origins.iterator().next();
+    assertThat(columnOrigin.getOriginColumnOrdinal(), equalTo(5));
+    assertThat(columnOrigin.getOriginTable().getRowType().getFieldNames().get(5),
+        equalTo("SAL"));
   }
 }
