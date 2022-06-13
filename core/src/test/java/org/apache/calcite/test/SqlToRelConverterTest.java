@@ -1288,21 +1288,6 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         + "from emp e");
   }
 
-  @Test void testCorrelatedScalarSubQueryInSelectList() {
-    Consumer<String> fn = sql -> {
-      sql(sql).withExpand(true).withDecorrelate(false)
-          .convertsTo("${planExpanded}");
-      sql(sql).withExpand(false).withDecorrelate(false)
-          .convertsTo("${planNotExpanded}");
-    };
-    fn.accept("select deptno,\n"
-        + "  (select min(1) from emp where empno > d.deptno) as i0,\n"
-        + "  (select min(0) from emp where deptno = d.deptno "
-        + "                            and ename = 'SMITH'"
-        + "                            and d.deptno > 0) as i1\n"
-        + "from dept as d");
-  }
-
   @Test void testCorrelationLateralSubQuery() {
     String sql = "SELECT deptno, ename\n"
         + "FROM\n"
@@ -2550,7 +2535,7 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
     programBuilder.addRuleInstance(CoreRules.PROJECT_TO_CALC);
     final HepPlanner planner = new HepPlanner(programBuilder.build());
     planner.setRoot(rel);
-    final RelNode calc = planner.findBestExp();
+    final LogicalCalc calc = (LogicalCalc) planner.findBestExp();
     final List<RelNode> rels = new ArrayList<>();
     final RelShuttleImpl visitor = new RelShuttleImpl() {
       @Override public RelNode visit(LogicalCalc calc) {
@@ -2559,14 +2544,14 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         return visitedRel;
       }
     };
-    calc.accept(visitor);
+    visitor.visit(calc);
     assertThat(rels.size(), is(1));
     assertThat(rels.get(0), isA(LogicalCalc.class));
   }
 
   @Test void testRelShuttleForLogicalTableModify() {
     final String sql = "insert into emp select * from emp";
-    final RelNode rel = sql(sql).toRel();
+    final LogicalTableModify rel = (LogicalTableModify) sql(sql).toRel();
     final List<RelNode> rels = new ArrayList<>();
     final RelShuttleImpl visitor = new RelShuttleImpl() {
       @Override public RelNode visit(LogicalTableModify modify) {
@@ -2575,7 +2560,7 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         return visitedRel;
       }
     };
-    rel.accept(visitor);
+    visitor.visit(rel);
     assertThat(rels.size(), is(1));
     assertThat(rels.get(0), isA(LogicalTableModify.class));
   }
@@ -3542,7 +3527,7 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
   @Test void testDynamicSchemaUnnest() {
     final String sql = "select t1.c_nationkey, t3.fake_col3\n"
         + "from SALES.CUSTOMER as t1,\n"
-        + "lateral (select t2.\"$unnest\" as fake_col3\n"
+        + "lateral (select t2 as fake_col3\n"
         + "         from unnest(t1.fake_col) as t2) as t3";
     sql(sql).withDynamicTable().ok();
   }
@@ -3550,7 +3535,7 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
   @Test void testStarDynamicSchemaUnnest() {
     final String sql = "select *\n"
         + "from SALES.CUSTOMER as t1,\n"
-        + "lateral (select t2.\"$unnest\" as fake_col3\n"
+        + "lateral (select t2 as fake_col3\n"
         + "         from unnest(t1.fake_col) as t2) as t3";
     sql(sql).withDynamicTable().ok();
   }
