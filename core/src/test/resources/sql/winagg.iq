@@ -546,7 +546,25 @@ select emp."ENAME", emp."DEPTNO",
 from emp order by emp."ENAME";
 EnumerableSort(sort0=[$0], dir0=[ASC])
   EnumerableWindow(window#0=[window(aggs [NTH_VALUE($1, $2), NTH_VALUE($1, $3), NTH_VALUE($1, $4), NTH_VALUE($1, $5), NTH_VALUE($1, $6)])])
-    EnumerableValues(tuples=[[{ 'Jane', 10 }, { 'Bob', 10 }, { 'Eric', 20 }, { 'Susan', 30 }, { 'Alice', 30 }, { 'Adam', 50 }, { 'Eve', 50 }, { 'Grace', 60 }, { 'Wilma', null }]])
+    EnumerableUnion(all=[true])
+      EnumerableCalc(expr#0=[{inputs}], expr#1=['Jane'], expr#2=[10], EXPR$0=[$t1], EXPR$1=[$t2])
+        EnumerableValues(tuples=[[{ 0 }]])
+      EnumerableCalc(expr#0=[{inputs}], expr#1=['Bob'], expr#2=[10], EXPR$0=[$t1], EXPR$1=[$t2])
+        EnumerableValues(tuples=[[{ 0 }]])
+      EnumerableCalc(expr#0=[{inputs}], expr#1=['Eric'], expr#2=[20], EXPR$0=[$t1], EXPR$1=[$t2])
+        EnumerableValues(tuples=[[{ 0 }]])
+      EnumerableCalc(expr#0=[{inputs}], expr#1=['Susan'], expr#2=[30], EXPR$0=[$t1], EXPR$1=[$t2])
+        EnumerableValues(tuples=[[{ 0 }]])
+      EnumerableCalc(expr#0=[{inputs}], expr#1=['Alice'], expr#2=[30], EXPR$0=[$t1], EXPR$1=[$t2])
+        EnumerableValues(tuples=[[{ 0 }]])
+      EnumerableCalc(expr#0=[{inputs}], expr#1=['Adam'], expr#2=[50], EXPR$0=[$t1], EXPR$1=[$t2])
+        EnumerableValues(tuples=[[{ 0 }]])
+      EnumerableCalc(expr#0=[{inputs}], expr#1=['Eve'], expr#2=[50], EXPR$0=[$t1], EXPR$1=[$t2])
+        EnumerableValues(tuples=[[{ 0 }]])
+      EnumerableCalc(expr#0=[{inputs}], expr#1=['Grace'], expr#2=[60], EXPR$0=[$t1], EXPR$1=[$t2])
+        EnumerableValues(tuples=[[{ 0 }]])
+      EnumerableCalc(expr#0=[{inputs}], expr#1=['Wilma'], expr#2=[null:INTEGER], EXPR$0=[$t1], EXPR$1=[$t2])
+        EnumerableValues(tuples=[[{ 0 }]])
 !plan
 +-------+--------+-------------+--------------+-------------+--------------+-------------+
 | ENAME | DEPTNO | first_value | second_value | fifth_value | eighth_value | tenth_value |
@@ -698,47 +716,20 @@ from emps order by emps."GENDER";
 
 !ok
 
-# [CALCITE-3661] MODE function
-
-# MODE function without ORDER BY.
-select deptno,
-  mode(gender) over (partition by deptno) as m
-from emp;
-+--------+---+
-| DEPTNO | M |
-+--------+---+
-|     10 | F |
-|     10 | F |
-|     20 | M |
-|     30 | F |
-|     30 | F |
-|     50 | M |
-|     50 | M |
-|     60 | F |
-|        | F |
-+--------+---+
-(9 rows)
+# [CALCITE-2648] EnumerableWindowRule generated wrong plan for EnumerableWindow
+select x, COUNT(*) OVER (PARTITION BY x) as y from (values (20), (35)) as t(x) ORDER BY x;
+EnumerableSort(sort0=[$0], dir0=[ASC])
+  EnumerableWindow(window#0=[window(partition {0} aggs [COUNT()])])
+    EnumerableValues(tuples=[[{ 20 }, { 35 }]])
+!plan
++----+---+
+| X  | Y |
++----+---+
+| 20 | 1 |
+| 35 | 1 |
++----+---+
+(2 rows)
 
 !ok
 
-select deptno,
-  ename,
-  mode(gender) over (partition by deptno order by ENAME) as m
-from emp;
-+--------+-------+---+
-| DEPTNO | ENAME | M |
-+--------+-------+---+
-|     10 | Bob   | M |
-|     10 | Jane  | M |
-|     20 | Eric  | M |
-|     30 | Alice | F |
-|     30 | Susan | F |
-|     50 | Adam  | M |
-|     50 | Eve   | M |
-|     60 | Grace | F |
-|        | Wilma | F |
-+--------+-------+---+
-(9 rows)
-
-!ok
 # End winagg.iq
