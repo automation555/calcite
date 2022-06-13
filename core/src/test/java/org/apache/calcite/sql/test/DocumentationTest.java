@@ -29,7 +29,7 @@ import org.apache.calcite.test.DiffTestCase;
 import org.apache.calcite.util.Sources;
 import org.apache.calcite.util.Util;
 
-import org.junit.jupiter.api.Test;
+import org.junit.Test;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -48,14 +48,14 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.fail;
 
 /** Various automated checks on the documentation. */
-class DocumentationTest {
+public class DocumentationTest {
   /** Generates a copy of {@code reference.md} with the current set of key
    * words. Fails if the copy is different from the original. */
-  @Test void testGenerateKeyWords() throws IOException {
+  @Test public void testGenerateKeyWords() throws IOException {
     final FileFixture f = new FileFixture();
     f.outFile.getParentFile().mkdirs();
     try (BufferedReader r = Util.reader(f.inFile);
@@ -73,7 +73,7 @@ class DocumentationTest {
         if (line.equals("{% comment %} start {% endcomment %}")) {
           ++stage;
           SqlAbstractParserImpl.Metadata metadata =
-              new SqlParserTest().fixture().parser().getMetadata();
+              new SqlParserTest().getSqlParser("").getMetadata();
           int z = 0;
           for (String s : metadata.getTokens()) {
             if (z++ > 0) {
@@ -100,7 +100,7 @@ class DocumentationTest {
 
   /** Tests that every function in {@link SqlStdOperatorTable} is documented in
    * reference.md. */
-  @Test void testAllFunctionsAreDocumented() throws IOException {
+  @Test public void testAllFunctionsAreDocumented() throws IOException {
     final FileFixture f = new FileFixture();
     final Map<String, PatternOp> map = new TreeMap<>();
     addOperators(map, "", SqlStdOperatorTable.instance().getOperatorList());
@@ -108,6 +108,7 @@ class DocumentationTest {
       switch (library) {
       case STANDARD:
       case SPATIAL:
+      case TERADATA:
         continue;
       }
       addOperators(map, "\\| [^|]*" + library.abbrev + "[^|]* ",
@@ -215,3 +216,5 @@ class DocumentationTest {
     }
   }
 }
+
+// End DocumentationTest.java

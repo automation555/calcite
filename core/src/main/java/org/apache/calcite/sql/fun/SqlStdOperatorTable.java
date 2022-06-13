@@ -22,7 +22,6 @@ import org.apache.calcite.sql.SqlAsOperator;
 import org.apache.calcite.sql.SqlBasicCall;
 import org.apache.calcite.sql.SqlBinaryOperator;
 import org.apache.calcite.sql.SqlCall;
-import org.apache.calcite.sql.SqlDescriptorOperator;
 import org.apache.calcite.sql.SqlFilterOperator;
 import org.apache.calcite.sql.SqlFunction;
 import org.apache.calcite.sql.SqlFunctionCategory;
@@ -51,7 +50,6 @@ import org.apache.calcite.sql.SqlUnnestOperator;
 import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.SqlValuesOperator;
 import org.apache.calcite.sql.SqlWindow;
-import org.apache.calcite.sql.SqlWindowTableFunction;
 import org.apache.calcite.sql.SqlWithinGroupOperator;
 import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.type.InferTypes;
@@ -76,7 +74,6 @@ import java.util.List;
  * the standard operators and functions.
  */
 public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
-
   //~ Static fields/initializers ---------------------------------------------
 
   /**
@@ -145,6 +142,9 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
    */
   public static final SqlMultisetSetOperator MULTISET_INTERSECT =
       new SqlMultisetSetOperator("MULTISET INTERSECT ALL", 18, true);
+
+  /** Converts string_expr to a NUMBER data type. */
+  public static final SqlFunction TO_NUMBER = SqlLibraryOperators.TO_NUMBER;
 
   //-------------------------------------------------------------
   //                   BINARY OPERATORS
@@ -943,18 +943,6 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
       new SqlMinMaxAggFunction(SqlKind.MAX);
 
   /**
-   * <code>EVERY</code> aggregate function.
-   */
-  public static final SqlAggFunction EVERY =
-      new SqlMinMaxAggFunction("EVERY", SqlKind.MIN, OperandTypes.BOOLEAN);
-
-  /**
-   * <code>SOME</code> aggregate function.
-   */
-  public static final SqlAggFunction SOME =
-      new SqlMinMaxAggFunction("SOME", SqlKind.MAX, OperandTypes.BOOLEAN);
-
-  /**
    * <code>LAST_VALUE</code> aggregate function.
    */
   public static final SqlAggFunction LAST_VALUE =
@@ -1085,12 +1073,6 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
    */
   public static final SqlAggFunction BIT_OR =
       new SqlBitOpAggFunction(SqlKind.BIT_OR);
-
-  /**
-   * <code>BIT_XOR</code> aggregate function.
-   */
-  public static final SqlAggFunction BIT_XOR =
-      new SqlBitOpAggFunction(SqlKind.BIT_XOR);
 
   //-------------------------------------------------------------
   // WINDOW Aggregate Functions
@@ -1647,15 +1629,6 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
           OperandTypes.NUMERIC_NUMERIC,
           SqlFunctionCategory.NUMERIC);
 
-  public static final SqlFunction CBRT =
-      new SqlFunction(
-          "CBRT",
-          SqlKind.OTHER_FUNCTION,
-          ReturnTypes.DOUBLE_NULLABLE,
-          null,
-          OperandTypes.NUMERIC,
-          SqlFunctionCategory.NUMERIC);
-
   public static final SqlFunction COS =
       new SqlFunction(
           "COS",
@@ -1705,7 +1678,7 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
       new SqlFunction(
           "ROUND",
           SqlKind.OTHER_FUNCTION,
-          ReturnTypes.NULLABLE_ROUND,
+          ReturnTypes.ARG0_NULLABLE,
           null,
           OperandTypes.NUMERIC_OPTIONAL_INTEGER,
           SqlFunctionCategory.NUMERIC);
@@ -1728,6 +1701,7 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
           OperandTypes.NUMERIC,
           SqlFunctionCategory.NUMERIC);
 
+
   public static final SqlFunction TAN =
       new SqlFunction(
           "TAN",
@@ -1741,7 +1715,7 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
       new SqlFunction(
           "TRUNCATE",
           SqlKind.OTHER_FUNCTION,
-          ReturnTypes.NULLABLE_TRUNCATE,
+          ReturnTypes.ARG0_NULLABLE,
           null,
           OperandTypes.NUMERIC_OPTIONAL_INTEGER,
           SqlFunctionCategory.NUMERIC);
@@ -2230,18 +2204,6 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
       };
 
   /**
-   * The INTERSECTION operator. Multiset aggregator function.
-   */
-  public static final SqlAggFunction INTERSECTION =
-      new SqlAggFunction("INTERSECTION", null,
-          SqlKind.INTERSECTION,
-          ReturnTypes.ARG0,
-          null,
-          OperandTypes.MULTISET,
-          SqlFunctionCategory.SYSTEM, false, false,
-          Optionality.FORBIDDEN) {
-      };
-  /**
    * The sequence next value function: <code>NEXT VALUE FOR sequence</code>
    */
   public static final SqlOperator NEXT_VALUE =
@@ -2292,12 +2254,6 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
           call.operand(1).unparse(writer, 0, rightPrec);
         }
       };
-
-  /** DESCRIPTOR(column_name, ...). */
-  public static final SqlOperator DESCRIPTOR = new SqlDescriptorOperator();
-
-  /** TUMBLE as a table-value function. */
-  public static final SqlFunction TUMBLE_TVF = new SqlWindowTableFunction(SqlKind.TUMBLE.name());
 
   /** The {@code TUMBLE} group function.
    *
@@ -2591,3 +2547,5 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
   }
 
 }
+
+// End SqlStdOperatorTable.java

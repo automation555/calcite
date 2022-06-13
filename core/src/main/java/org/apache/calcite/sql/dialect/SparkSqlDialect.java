@@ -31,10 +31,12 @@ import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.fun.SqlFloorFunction;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.ReturnTypes;
+import org.apache.calcite.util.ToNumberUtils;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
+import com.google.common.collect.ImmutableList;
 
-import static org.apache.calcite.util.RelToSqlConverterUtil.unparseHiveTrim;
+import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * A <code>SqlDialect</code> implementation for the APACHE SPARK database.
@@ -74,27 +76,23 @@ public class SparkSqlDialect extends SqlDialect {
     return true;
   }
 
-  @Override public boolean supportsNestedAggregations() {
-    return false;
-  }
-
-  @Override public boolean supportsApproxCountDistinct() {
-    return true;
-  }
-
   @Override public boolean supportsGroupByWithCube() {
     return true;
   }
 
-  @Override public void unparseOffsetFetch(SqlWriter writer, @Nullable SqlNode offset,
-      @Nullable SqlNode fetch) {
+  @Override public void unparseOffsetFetch(SqlWriter writer, SqlNode offset,
+      SqlNode fetch) {
     unparseFetchUsingLimit(writer, offset, fetch);
+  }
+
+  @Override public List<String> getSingleRowTableName() {
+    return ImmutableList.of("");
   }
 
   @Override public void unparseCall(SqlWriter writer, SqlCall call,
       int leftPrec, int rightPrec) {
     if (call.getOperator() == SqlStdOperatorTable.SUBSTRING) {
-      SqlUtil.unparseFunctionSyntax(SPARKSQL_SUBSTRING, writer, call, false);
+      SqlUtil.unparseFunctionSyntax(SPARKSQL_SUBSTRING, writer, call);
     } else {
       switch (call.getKind()) {
       case FLOOR:
@@ -110,8 +108,13 @@ public class SparkSqlDialect extends SqlDialect {
             timeUnitNode.getParserPosition());
         SqlFloorFunction.unparseDatetimeFunction(writer, call2, "DATE_TRUNC", false);
         break;
-      case TRIM:
-        unparseHiveTrim(writer, call, leftPrec, rightPrec);
+      case TO_NUMBER:
+        if (call.getOperandList().size() == 2 && Pattern.matches("^'[Xx]+'", call.operand(1)
+            .toString())) {
+          ToNumberUtils.unparseToNumbertoConv(writer, call, leftPrec, rightPrec);
+          break;
+        }
+        ToNumberUtils.unparseToNumber(writer, call, leftPrec, rightPrec);
         break;
       default:
         super.unparseCall(writer, call, leftPrec, rightPrec);
@@ -119,3 +122,5 @@ public class SparkSqlDialect extends SqlDialect {
     }
   }
 }
+
+// End SparkSqlDialect.java

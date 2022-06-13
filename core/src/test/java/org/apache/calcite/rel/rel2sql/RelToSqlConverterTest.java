@@ -21,13 +21,11 @@ import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelTraitDef;
 import org.apache.calcite.plan.hep.HepPlanner;
-import org.apache.calcite.plan.hep.HepProgram;
 import org.apache.calcite.plan.hep.HepProgramBuilder;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.rules.ProjectToWindowRule;
 import org.apache.calcite.rel.rules.PruneEmptyRules;
-import org.apache.calcite.rel.rules.SortProjectTransposeRule;
 import org.apache.calcite.rel.rules.UnionMergeRule;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
@@ -57,7 +55,6 @@ import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.util.SqlShuttle;
 import org.apache.calcite.sql2rel.SqlToRelConverter;
 import org.apache.calcite.test.CalciteAssert;
-import org.apache.calcite.test.MockSqlOperatorTable;
 import org.apache.calcite.test.RelBuilderTest;
 import org.apache.calcite.tools.FrameworkConfig;
 import org.apache.calcite.tools.Frameworks;
@@ -73,7 +70,7 @@ import org.apache.calcite.util.Util;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
-import org.junit.jupiter.api.Test;
+import org.junit.Test;
 
 import java.util.List;
 import java.util.Map;
@@ -85,9 +82,9 @@ import static org.apache.calcite.test.Matchers.isLinux;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.notNullValue;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Tests for {@link RelToSqlConverter}.
@@ -116,16 +113,12 @@ public class RelToSqlConverterTest {
   private static Planner getPlanner(List<RelTraitDef> traitDefs,
       SqlParser.Config parserConfig, SchemaPlus schema,
       SqlToRelConverter.Config sqlToRelConf, Program... programs) {
-    final MockSqlOperatorTable operatorTable =
-        new MockSqlOperatorTable(SqlStdOperatorTable.instance());
-    MockSqlOperatorTable.addRamp(operatorTable);
     final FrameworkConfig config = Frameworks.newConfigBuilder()
         .parserConfig(parserConfig)
         .defaultSchema(schema)
         .traitDefs(traitDefs)
         .sqlToRelConverterConfig(sqlToRelConf)
         .programs(programs)
-        .operatorTable(operatorTable)
         .build();
     return Frameworks.getPlanner(config);
   }
@@ -230,28 +223,6 @@ public class RelToSqlConverterTest {
         + "FROM \"foodmart\".\"product\"\n"
         + "GROUP BY \"product_class_id\", \"product_id\"";
     sql(query).ok(expected);
-  }
-
-  @Test public void testSelectQueryWithHiveCube() {
-    String query = "select \"product_class_id\", \"product_id\", count(*) "
-            + "from \"product\" group by cube(\"product_class_id\", \"product_id\")";
-    String expected = "SELECT product_class_id, product_id, COUNT(*)\n"
-            + "FROM foodmart.product\n"
-            + "GROUP BY product_class_id, product_id WITH CUBE";
-    sql(query).withHive().ok(expected);
-    SqlDialect sqlDialect = sql(query).withHive().dialect;
-    assertTrue(sqlDialect.supportsGroupByWithCube());
-  }
-
-  @Test public void testSelectQueryWithHiveRollup() {
-    String query = "select \"product_class_id\", \"product_id\", count(*) "
-            + "from \"product\" group by rollup(\"product_class_id\", \"product_id\")";
-    String expected = "SELECT product_class_id, product_id, COUNT(*)\n"
-            + "FROM foodmart.product\n"
-            + "GROUP BY product_class_id, product_id WITH ROLLUP";
-    sql(query).withHive().ok(expected);
-    SqlDialect sqlDialect = sql(query).withHive().dialect;
-    assertTrue(sqlDialect.supportsGroupByWithRollup());
   }
 
   @Test public void testSelectQueryWithGroupByEmpty() {
@@ -654,15 +625,6 @@ public class RelToSqlConverterTest {
         + "FROM \"foodmart\".\"product\"\n"
         + "GROUP BY \"product_id\") AS \"t1\"";
     final String expectedVertica = expectedPostgresql;
-    final String expectedBigQuery = "SELECT SUM(net_weight1) AS net_weight_converted\n"
-        + "FROM (SELECT SUM(net_weight) AS net_weight1\n"
-        + "FROM foodmart.product\n"
-        + "GROUP BY product_id) AS t1";
-    final String expectedHive = "SELECT SUM(net_weight1) net_weight_converted\n"
-        + "FROM (SELECT SUM(net_weight) net_weight1\n"
-        + "FROM foodmart.product\n"
-        + "GROUP BY product_id) t1";
-    final String expectedSpark = expectedHive;
     sql(query)
         .withOracle()
         .ok(expectedOracle)
@@ -671,13 +633,7 @@ public class RelToSqlConverterTest {
         .withVertica()
         .ok(expectedVertica)
         .withPostgresql()
-        .ok(expectedPostgresql)
-        .withBigQuery()
-        .ok(expectedBigQuery)
-        .withHive()
-        .ok(expectedHive)
-        .withSpark()
-        .ok(expectedSpark);
+        .ok(expectedPostgresql);
   }
 
   /** Test case for
@@ -2336,28 +2292,6 @@ public class RelToSqlConverterTest {
         .ok(expectedDateMinusNegate);
   }
 
-  @Test public void testUnparseSqlIntervalQualifierBigQuery() {
-    final String sql0 = "select  * from \"employee\" where  \"hire_date\" - "
-            + "INTERVAL '19800' SECOND(5) > TIMESTAMP '2005-10-17 00:00:00' ";
-    final String expect0 = "SELECT *\n"
-            + "FROM foodmart.employee\n"
-            + "WHERE (hire_date - INTERVAL 19800 SECOND)"
-            + " > TIMESTAMP '2005-10-17 00:00:00'";
-    sql(sql0).withBigQuery().ok(expect0);
-
-    final String sql1 = "select  * from \"employee\" where  \"hire_date\" + "
-            + "INTERVAL '10' HOUR > TIMESTAMP '2005-10-17 00:00:00' ";
-    final String expect1 = "SELECT *\n"
-            + "FROM foodmart.employee\n"
-            + "WHERE (hire_date + INTERVAL 10 HOUR)"
-            + " > TIMESTAMP '2005-10-17 00:00:00'";
-    sql(sql1).withBigQuery().ok(expect1);
-
-    final String sql2 = "select  * from \"employee\" where  \"hire_date\" + "
-            + "INTERVAL '1 2:34:56.78' DAY TO SECOND > TIMESTAMP '2005-10-17 00:00:00' ";
-    sql(sql2).withBigQuery().throws_("Only INT64 is supported as the interval value for BigQuery.");
-  }
-
   @Test public void testFloorMysqlWeek() {
     String query = "SELECT floor(\"hire_date\" TO WEEK) FROM \"employee\"";
     String expected = "SELECT STR_TO_DATE(DATE_FORMAT(`hire_date` , '%x%v-1'), '%x%v-%w')\n"
@@ -2490,7 +2424,7 @@ public class RelToSqlConverterTest {
         + "where b.\"product_id\" = a.\"product_id\")";
     String expected = "SELECT \"product_name\"\n"
         + "FROM \"foodmart\".\"product\"\n"
-        + "WHERE EXISTS (SELECT COUNT(*) AS \"EXPR$0\"\n"
+        + "WHERE EXISTS (SELECT COUNT(*)\n"
         + "FROM \"foodmart\".\"sales_fact_1997\"\n"
         + "WHERE \"product_id\" = \"product\".\"product_id\")";
     sql(query).config(NO_EXPAND_CONFIG).ok(expected);
@@ -2503,7 +2437,7 @@ public class RelToSqlConverterTest {
         + "where b.\"product_id\" = a.\"product_id\")";
     String expected = "SELECT \"product_name\"\n"
         + "FROM \"foodmart\".\"product\"\n"
-        + "WHERE NOT EXISTS (SELECT COUNT(*) AS \"EXPR$0\"\n"
+        + "WHERE NOT EXISTS (SELECT COUNT(*)\n"
         + "FROM \"foodmart\".\"sales_fact_1997\"\n"
         + "WHERE \"product_id\" = \"product\".\"product_id\")";
     sql(query).config(NO_EXPAND_CONFIG).ok(expected);
@@ -3753,7 +3687,7 @@ public class RelToSqlConverterTest {
         + "            from \"department\") as t(did)";
 
     final String expected = "SELECT \"col_0\" + 1\n"
-        + "FROM UNNEST (SELECT COLLECT(\"department_id\") AS \"EXPR$0\"\n"
+        + "FROM UNNEST (SELECT COLLECT(\"department_id\")\n"
         + "FROM \"foodmart\".\"department\") AS \"t0\" (\"col_0\")";
     sql(sql).ok(expected);
   }
@@ -4031,11 +3965,11 @@ public class RelToSqlConverterTest {
         + " where A.\"department_id\" = ( select min( A.\"department_id\") from \"foodmart\".\"department\" B where 1=2 )";
     final String expected = "SELECT \"employee\".\"department_id\"\n"
         + "FROM \"foodmart\".\"employee\"\n"
-        + "INNER JOIN (SELECT \"t1\".\"department_id\" \"department_id0\", MIN(\"t1\".\"department_id\") \"EXPR$0\"\n"
+        + "INNER JOIN (SELECT \"t1\".\"department_id\" \"department_id0\", MIN(\"t1\".\"department_id\")\n"
         + "FROM (SELECT NULL \"department_id\", NULL \"department_description\"\nFROM \"DUAL\"\nWHERE 1 = 0) \"t\",\n"
         + "(SELECT \"department_id\"\nFROM \"foodmart\".\"employee\"\nGROUP BY \"department_id\") \"t1\"\n"
         + "GROUP BY \"t1\".\"department_id\") \"t3\" ON \"employee\".\"department_id\" = \"t3\".\"department_id0\""
-        + " AND \"employee\".\"department_id\" = \"t3\".\"EXPR$0\"";
+        + " AND \"employee\".\"department_id\" = MIN(\"t1\".\"department_id\")";
     sql(query).withOracle().ok(expected);
   }
 
@@ -4046,7 +3980,7 @@ public class RelToSqlConverterTest {
     final String expected = "SELECT \"employee\".\"department_id\"\n"
         + "FROM \"foodmart\".\"employee\"\n"
         + "INNER JOIN (SELECT \"t1\".\"department_id\" AS \"department_id0\","
-        + " MIN(\"t1\".\"department_id\") AS \"EXPR$0\"\n"
+        + " MIN(\"t1\".\"department_id\")\n"
         + "FROM (SELECT *\nFROM (VALUES  (NULL, NULL))"
         + " AS \"t\" (\"department_id\", \"department_description\")"
         + "\nWHERE 1 = 0) AS \"t\","
@@ -4054,7 +3988,7 @@ public class RelToSqlConverterTest {
         + "\nGROUP BY \"department_id\") AS \"t1\""
         + "\nGROUP BY \"t1\".\"department_id\") AS \"t3\" "
         + "ON \"employee\".\"department_id\" = \"t3\".\"department_id0\""
-        + " AND \"employee\".\"department_id\" = \"t3\".\"EXPR$0\"";
+        + " AND \"employee\".\"department_id\" = MIN(\"t1\".\"department_id\")";
     sql(query).ok(expected);
   }
 
@@ -4310,73 +4244,385 @@ public class RelToSqlConverterTest {
             .ok(expected5);
   }
 
-  @Test public void testTableFunctionScan() {
-    final String query = "SELECT *\n"
-        + "FROM TABLE(DEDUP(CURSOR(select \"product_id\", \"product_name\"\n"
-        + "from \"product\"), CURSOR(select  \"employee_id\", \"full_name\"\n"
-        + "from \"employee\"), 'NAME'))";
-
-    final String expected = "SELECT *\n"
-        + "FROM TABLE(DEDUP(CURSOR ((SELECT \"product_id\", \"product_name\"\n"
-        + "FROM \"foodmart\".\"product\")), CURSOR ((SELECT \"employee_id\", \"full_name\"\n"
-        + "FROM \"foodmart\".\"employee\")), 'NAME'))";
-    sql(query).ok(expected);
-
-    final String query2 = "select * from table(ramp(3))";
-    sql(query2).ok("SELECT *\n"
-        + "FROM TABLE(RAMP(3))");
-  }
-
-  @Test public void testTableFunctionScanWithComplexQuery() {
-    final String query = "SELECT *\n"
-        + "FROM TABLE(DEDUP(CURSOR(select \"product_id\", \"product_name\"\n"
-        + "from \"product\"\n"
-        + "where \"net_weight\" > 100 and \"product_name\" = 'Hello World')\n"
-        + ",CURSOR(select  \"employee_id\", \"full_name\"\n"
-        + "from \"employee\"\n"
-        + "group by \"employee_id\", \"full_name\"), 'NAME'))";
-
-    final String expected = "SELECT *\n"
-        + "FROM TABLE(DEDUP(CURSOR ((SELECT \"product_id\", \"product_name\"\n"
-        + "FROM \"foodmart\".\"product\"\n"
-        + "WHERE \"net_weight\" > 100 AND \"product_name\" = 'Hello World')), "
-        + "CURSOR ((SELECT \"employee_id\", \"full_name\"\n"
-        + "FROM \"foodmart\".\"employee\"\n"
-        + "GROUP BY \"employee_id\", \"full_name\")), 'NAME'))";
-    sql(query).ok(expected);
-  }
-
-  @Test public void testSelectImplicitAliasFromUnionByStar() {
-    final String query = "select \"shelf_width\", * from (\n"
-        + "select \"shelf_width\", \"product_id\" + 1 from \"product\"\n"
-        + "union all\n"
-        + "select \"shelf_width\", \"product_id\" from \"product\""
-        + ") A";
-    final String expected = "SELECT \"shelf_width\", \"shelf_width\" AS \"shelf_width0\""
-        + ", \"product_id\" + 1\n"
-        + "FROM (SELECT \"shelf_width\", \"product_id\" + 1\n"
-        + "FROM \"foodmart\".\"product\"\n"
-        + "UNION ALL\n"
-        + "SELECT \"shelf_width\", \"product_id\"\n"
-        + "FROM \"foodmart\".\"product\") AS \"t1\"";
-    sql(query).ok(expected);
-  }
-
-  @Test public void testGroupByWithLimitPlan() {
-    final HepProgram program = HepProgram
-        .builder()
-        .addRuleInstance(SortProjectTransposeRule.INSTANCE)
-        .build();
-    final HepPlanner planner = new HepPlanner(program);
-    final String query = "SELECT sum(\"salary\") FROM \"employee\" group by \"gender\" limit 10";
-    final String expected = "SELECT \"EXPR$0\"\n"
-        + "FROM (SELECT \"gender\", SUM(\"salary\") AS \"EXPR$0\"\n"
-        + "FROM \"foodmart\".\"employee\"\n"
-        + "GROUP BY \"gender\"\n"
-        + "FETCH NEXT 10 ROWS ONLY) AS \"t1\"";
+  @Test
+  public void testToNumberFunctionHandlingHexaToInt() {
+    String query = "select TO_NUMBER('03ea02653f6938ba','XXXXXXXXXXXXXXXX')";
+    final String expectedBigQuery = "SELECT CAST(CONCAT('0x', '03ea02653f6938ba') AS INTEGER)";
+    final String expected = "SELECT CONV('03ea02653f6938ba', 16, 10)";
     sql(query)
-        .optimize(RuleSets.ofList(SortProjectTransposeRule.INSTANCE), planner)
-        .ok(expected);
+      .withBigQuery()
+      .ok(expectedBigQuery)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingFloatingPoint() {
+    String query = "select TO_NUMBER('1.789','9.999')";
+    final String expected = "SELECT CAST('1.789' AS FLOAT)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingFloatingPointWithD() {
+    String query = "select TO_NUMBER('1.789','9D999')";
+    final String expected = "SELECT CAST('1.789' AS FLOAT)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithComma() {
+    String query = "SELECT TO_NUMBER ('1,789', '9,999')";
+    final String expected = "SELECT CAST('1789' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithCurrency() {
+    String query = "SELECT TO_NUMBER ('$1789', '$9999')";
+    final String expected = "SELECT CAST('1789' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithCurrencyAndL() {
+    String query = "SELECT TO_NUMBER ('$1789', 'L9999')";
+    final String expected = "SELECT CAST('1789' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithMinus() {
+    String query = "SELECT TO_NUMBER ('-12334', 'S99999')";
+    final String expected = "SELECT CAST('-12334' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithMinusLast() {
+    String query = "SELECT TO_NUMBER ('12334-', '99999S')";
+    final String expected = "SELECT CAST('-12334' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithE() {
+    String query = "SELECT TO_NUMBER ('12E3', '99EEEE')";
+    final String expected = "SELECT CAST('12E3' AS DECIMAL)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithCurrencyName() {
+    String query = "SELECT TO_NUMBER('dollar1234','L9999','NLS_CURRENCY=''dollar''')";
+    final String expected = "SELECT CAST('1234' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithG() {
+    String query = "SELECT TO_NUMBER ('1,2345', '9G9999')";
+    final String expected = "SELECT CAST('12345' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithU() {
+    String query = "SELECT TO_NUMBER ('$1234', 'U9999')";
+    final String expected = "SELECT CAST('1234' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithPR() {
+    String query = "SELECT TO_NUMBER (' 123 ', '999PR')";
+    final String expected = "SELECT CAST('123' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithMI() {
+    String query = "SELECT TO_NUMBER ('1234-', '9999MI')";
+    final String expected = "SELECT CAST('-1234' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithMIDecimal() {
+    String query = "SELECT TO_NUMBER ('1.234-', '9.999MI')";
+    final String expected = "SELECT CAST('-1.234' AS FLOAT)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithZero() {
+    String query = "select TO_NUMBER('01234','09999')";
+    final String expected = "SELECT CAST('01234' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithB() {
+    String query = "select TO_NUMBER('1234','B9999')";
+    final String expected = "SELECT CAST('1234' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithC() {
+    String query = "select TO_NUMBER('USD1234','C9999')";
+    final String expected = "SELECT CAST('1234' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandling() {
+    final String query = "SELECT TO_NUMBER ('1234', '9999')";
+    final String expected = "SELECT CAST('1234' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingSingleArgumentInt() {
+    final String query = "SELECT TO_NUMBER ('1234')";
+    final String expected = "SELECT CAST('1234' AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingSingleArgumentFloat() {
+    final String query = "SELECT TO_NUMBER ('-1.234')";
+    final String expected = "SELECT CAST('-1.234' AS FLOAT)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingNull() {
+    final String query = "SELECT TO_NUMBER ('-1.234',null)";
+    final String expected = "SELECT CAST(NULL AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingSecoNull() {
+    final String query = "SELECT TO_NUMBER(null,'9D99')";
+    final String expected = "SELECT CAST(NULL AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingFunctionAsArgument() {
+    final String query = "SELECT TO_NUMBER(SUBSTRING('12345',2))";
+    final String expected = "SELECT CAST(SUBSTR('12345', 2) AS INTEGER)";
+    final String expectedSpark = "SELECT CAST(SUBSTRING('12345', 2) AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expectedSpark);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithNullArgument() {
+    final String query = "SELECT TO_NUMBER (null)";
+    final String expected = "SELECT CAST(NULL AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingCaseWhenThen() {
+    final String query = "select case when TO_NUMBER('12.77') is not null then "
+        + "'is_numeric' else 'is not numeric' end";
+    final String expected = "SELECT CASE WHEN CAST('12.77' AS FLOAT) IS NOT NULL THEN "
+        + "'is_numeric    ' ELSE 'is not numeric' END";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithGDS() {
+    String query = "SELECT TO_NUMBER ('12,454.8-', '99G999D9S')";
+    final String expected = "SELECT CAST('-12454.8' AS FLOAT)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithCurrencyNameFloat() {
+    String query = "SELECT TO_NUMBER('dollar12.34','L99D99','NLS_CURRENCY=''dollar''')";
+    final String expected = "SELECT CAST('12.34' AS FLOAT)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
+  }
+
+  @Test
+  public void testToNumberFunctionHandlingWithCurrencyNameNull() {
+    String query = "SELECT TO_NUMBER('dollar12.34','L99D99',null)";
+    final String expected = "SELECT CAST(NULL AS INTEGER)";
+    sql(query)
+      .withBigQuery()
+      .ok(expected)
+      .withHive()
+      .ok(expected)
+      .withSpark()
+      .ok(expected);
   }
 
   /** Fluid interface to run tests. */
@@ -4577,3 +4823,5 @@ public class RelToSqlConverterTest {
     }
   }
 }
+
+// End RelToSqlConverterTest.java
