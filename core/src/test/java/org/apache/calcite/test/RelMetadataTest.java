@@ -20,7 +20,6 @@ import org.apache.calcite.adapter.enumerable.EnumerableMergeJoin;
 import org.apache.calcite.config.CalciteSystemProperty;
 import org.apache.calcite.linq4j.tree.Types;
 import org.apache.calcite.plan.RelOptCluster;
-import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelOptPredicateList;
 import org.apache.calcite.plan.RelOptTable;
@@ -29,7 +28,6 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.plan.hep.HepPlanner;
 import org.apache.calcite.plan.hep.HepProgram;
 import org.apache.calcite.plan.hep.HepProgramBuilder;
-import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelCollationTraitDef;
 import org.apache.calcite.rel.RelCollations;
@@ -66,14 +64,13 @@ import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.rel.logical.LogicalUnion;
 import org.apache.calcite.rel.logical.LogicalValues;
 import org.apache.calcite.rel.metadata.BuiltInMetadata;
+import org.apache.calcite.rel.metadata.CachingRelMetadataProvider;
 import org.apache.calcite.rel.metadata.ChainedRelMetadataProvider;
 import org.apache.calcite.rel.metadata.DefaultRelMetadataProvider;
-import org.apache.calcite.rel.metadata.JaninoMetadataHandlerProvider;
+import org.apache.calcite.rel.metadata.JaninoRelMetadataProvider;
 import org.apache.calcite.rel.metadata.Metadata;
-import org.apache.calcite.rel.metadata.MetadataCache;
 import org.apache.calcite.rel.metadata.MetadataDef;
 import org.apache.calcite.rel.metadata.MetadataHandler;
-import org.apache.calcite.rel.metadata.MetadataHandlerProvider;
 import org.apache.calcite.rel.metadata.ReflectiveRelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelColumnOrigin;
 import org.apache.calcite.rel.metadata.RelMdCollation;
@@ -81,7 +78,6 @@ import org.apache.calcite.rel.metadata.RelMdColumnUniqueness;
 import org.apache.calcite.rel.metadata.RelMdUtil;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
-import org.apache.calcite.rel.metadata.UnboundMetadata;
 import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
@@ -96,7 +92,6 @@ import org.apache.calcite.rex.RexTableInputRef;
 import org.apache.calcite.rex.RexTableInputRef.RelTableRef;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.runtime.SqlFunctions;
-import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlSpecialOperator;
@@ -109,21 +104,18 @@ import org.apache.calcite.test.catalog.MockCatalogReaderSimple;
 import org.apache.calcite.tools.FrameworkConfig;
 import org.apache.calcite.tools.Frameworks;
 import org.apache.calcite.tools.RelBuilder;
+import org.apache.calcite.util.BuiltInMethod;
 import org.apache.calcite.util.Holder;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.ImmutableIntList;
-import org.apache.calcite.util.Util;
 
-import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
-import com.google.common.collect.Table;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.Matcher;
 import org.junit.jupiter.api.Disabled;
@@ -145,7 +137,6 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
-import java.util.function.Supplier;
 
 import static org.apache.calcite.test.Matchers.within;
 
@@ -201,11 +192,6 @@ public class RelMetadataTest extends SqlToRelTestBase {
 
   //~ Methods ----------------------------------------------------------------
 
-  /** Creates a tester. */
-  Sql sql(String sql) {
-    return new Sql(tester, sql);
-  }
-
   // ----------------------------------------------------------------------
   // Tests for getPercentageOriginalRows
   // ----------------------------------------------------------------------
@@ -215,7 +201,9 @@ public class RelMetadataTest extends SqlToRelTestBase {
   }
 
   private static RelNode convertSql(Tester tester, String sql) {
-    return tester.convertSqlToRel(sql).rel;
+    final RelRoot root = tester.convertSqlToRel(sql);
+    root.rel.getCluster().setMetadataProvider(DefaultRelMetadataProvider.INSTANCE);
+    return root.rel;
   }
 
   private RelNode convertSql(String sql, boolean typeCoercion) {
@@ -544,33 +532,6 @@ public class RelMetadataTest extends SqlToRelTestBase {
         false);
   }
 
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-4192">[CALCITE-4192]
-   * RelMdColumnOrigins get the wrong index of group by columns after RelNode
-   * was optimized by AggregateProjectMergeRule rule</a>. */
-  @Test void testColumnOriginAfterAggProjectMergeRule() {
-    final String sql = "select count(ename), SAL from emp group by SAL";
-    final RelNode rel = tester.convertSqlToRel(sql).rel;
-    final HepProgramBuilder programBuilder = HepProgram.builder();
-    programBuilder.addRuleInstance(CoreRules.AGGREGATE_PROJECT_MERGE);
-    final HepPlanner planner = new HepPlanner(programBuilder.build());
-    planner.setRoot(rel);
-    final RelNode optimizedRel = planner.findBestExp();
-
-    Set<RelColumnOrigin> origins = RelMetadataQuery.instance()
-        .getColumnOrigins(optimizedRel, 1);
-    assertThat(origins.size(), equalTo(1));
-
-    RelColumnOrigin columnOrigin = origins.iterator().next();
-    assertThat(columnOrigin.getOriginColumnOrdinal(), equalTo(5));
-    assertThat(columnOrigin.getOriginTable().getRowType().getFieldNames().get(5),
-        equalTo("SAL"));
-  }
-
-  // ----------------------------------------------------------------------
-  // Tests for getRowCount, getMinRowCount, getMaxRowCount
-  // ----------------------------------------------------------------------
-
   private void checkRowCount(String sql, double expected, double expectedMin,
       double expectedMax) {
     RelNode rel = convertSql(sql);
@@ -682,6 +643,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
     checkRowCount(sql, 1D, // 0, rounded up to row count's minimum 1
         0D, 0D); // 0 * 4
   }
+
 
   @Test void testRowCountJoinEmptyEmpty() {
     final String sql = "select * from (select * from emp limit 0) as emp\n"
@@ -846,69 +808,6 @@ public class RelMetadataTest extends SqlToRelTestBase {
     checkRowCount(sql, 1D, 1D, 1D);
   }
 
-  // ----------------------------------------------------------------------
-  // Tests for computeSelfCost.cpu
-  // ----------------------------------------------------------------------
-
-  @Test void testSortCpuCostOffsetLimit() {
-    final String sql = "select ename, deptno from emp\n"
-        + "order by ename limit 5 offset 5";
-    // inputRows = EMP_SIZE = 14
-    // offset + fetch = 5 + 5 = 10
-    // rowBytes = (2 real columns + 3 virtual columns) * 4 bytes per column
-    //   = 5 * 4
-    //   = 20
-    double cpuCost = Util.nLogM(EMP_SIZE, 10) * 5 * 4;
-    sql(sql).assertCpuCost(is(cpuCost), "offset + fetch smaller than table size "
-        + "=> cpu cost should be: inputRows * log(offset + fetch) * rowBytes");
-  }
-
-  @Test void testSortCpuCostLimit() {
-    final String sql = "select ename, deptno from emp limit 10";
-    final double cpuCost = 10 * 5 * 4;
-    sql(sql).assertCpuCost(is(cpuCost), "no order by clause "
-        + "=> cpu cost should be min(fetch + offset, inputRows) * rowBytes");
-  }
-
-  @Test void testSortCpuCostOffset() {
-    final String sql = "select ename from emp order by ename offset 10";
-    double cpuCost = Util.nLogM(EMP_SIZE, EMP_SIZE) * 4 * 4;
-    sql(sql).assertCpuCost(is(cpuCost), "offset smaller than table size "
-        + "=> cpu cost should be: inputRows * log(inputRows) * rowBytes");
-  }
-
-  @Test void testSortCpuCostLargeOffset() {
-    final String sql = "select ename from emp order by ename offset 100";
-    double cpuCost = Util.nLogM(EMP_SIZE, EMP_SIZE) * 4 * 4;
-    sql(sql).assertCpuCost(is(cpuCost), "offset larger than table size "
-        + "=> cpu cost should be: inputRows * log(inputRows) * rowBytes");
-  }
-
-  @Test void testSortCpuCostLimit0() {
-    final String sql = "select ename from emp order by ename limit 0";
-    sql(sql).assertCpuCost(is(0d), "fetch zero => cpu cost should be 0");
-  }
-
-  @Test void testSortCpuCostLimit1() {
-    final String sql = "select ename, deptno from emp\n"
-        + "order by ename limit 1";
-    double cpuCost = EMP_SIZE * 5 * 4;
-    sql(sql).assertCpuCost(is(cpuCost), "fetch 1 "
-        + "=> cpu cost should be inputRows * rowBytes");
-  }
-
-  @Test void testSortCpuCostLargeLimit() {
-    final String sql = "select ename, deptno from emp\n"
-        + "order by ename limit 10000";
-    double cpuCost = Util.nLogM(EMP_SIZE, EMP_SIZE) * 5 * 4;
-    sql(sql).assertCpuCost(is(cpuCost), "sort limit exceeds table size "
-        + "=> cpu cost should be dominated by table size");
-  }
-
-  // ----------------------------------------------------------------------
-  // Tests for getSelectivity
-  // ----------------------------------------------------------------------
-
   private void checkFilterSelectivity(
       String sql,
       double expected) {
@@ -999,6 +898,10 @@ public class RelMetadataTest extends SqlToRelTestBase {
     RelNode rel =
         convertSql("select deptno, count(*) from emp where deptno > 10 "
             + "group by deptno having count(*) = 0");
+    rel.getCluster().setMetadataProvider(
+        new CachingRelMetadataProvider(
+            rel.getCluster().getMetadataProvider(),
+            rel.getCluster().getPlanner()));
     final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
     Double result = mq.getSelectivity(rel, null);
     assertThat(result,
@@ -1019,32 +922,11 @@ public class RelMetadataTest extends SqlToRelTestBase {
     final RelNode rel = convertSql("select * from emp");
     final RelMetadataProvider metadataProvider =
         rel.getCluster().getMetadataProvider();
+    final RelOptPlanner planner = rel.getCluster().getPlanner();
     for (int i = 0; i < iterationCount; i++) {
-      RelMetadataProvider wrappedProvider = new RelMetadataProvider() {
-        @Deprecated // to be removed before 2.0
-        @Override public @Nullable <M extends @Nullable Metadata> UnboundMetadata<M> apply(
-            Class<? extends RelNode> relClass, Class<? extends M> metadataClass) {
-          return metadataProvider.apply(relClass, metadataClass);
-        }
-
-        @Deprecated // to be removed before 2.0
-        @Override public <M extends Metadata> Multimap<Method, MetadataHandler<M>> handlers(
-            MetadataDef<M> def) {
-          return metadataProvider.handlers(def);
-        }
-
-        @Override public List<MetadataHandler<?>> handlers(
-            Class<? extends MetadataHandler<?>> handlerClass) {
-          return metadataProvider.handlers(handlerClass);
-        }
-      };
-
-      RelOptCluster cluster = rel.getCluster();
-      cluster.setMetadataQuerySupplier(
-          RelMetadataQuery.builder()
-              .withProviders(wrappedProvider)
-              .createSupplier());
-      cluster.invalidateMetadataQuery();
+      RelMetadataQuery.THREAD_PROVIDERS.set(
+          JaninoRelMetadataProvider.of(
+              new CachingRelMetadataProvider(metadataProvider, planner)));
       final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
       final Double result = mq.getRowCount(rel);
       assertThat(result, within(14d, 0.1d));
@@ -1088,7 +970,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
     ImmutableBitSet groupKey =
         ImmutableBitSet.of(rel.getRowType().getFieldNames().indexOf("DEPTNO"));
     Double result = mq.getDistinctRowCount(rel, groupKey, null);
-    assertThat(result, nullValue());
+    assertThat(result, is(1.0));
   }
 
   @Test void testDistinctRowCountTableEmptyKey() {
@@ -1294,16 +1176,6 @@ public class RelMetadataTest extends SqlToRelTestBase {
     assertThat(mq.areColumnsUnique(rel, ImmutableBitSet.of(0, 1)), is(true));
   }
 
-  @Test void testRowUniquenessForSortWithLimit() {
-    final String sql = ""
-        + "select sal\n"
-        + "from emp\n"
-        + "limit 1";
-    final RelNode rel = convertSql(sql);
-    final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
-    assertThat(mq.areRowsUnique(rel), is(true));
-  }
-
   @Test void testColumnUniquenessForJoinWithConstantColumns() {
     final String sql = ""
         + "select *\n"
@@ -1352,7 +1224,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
         .distinct()
         .filter(builder.equals(builder.field("SAL"), builder.literal(1)))
         .build();
-    final Holder<@Nullable RexCorrelVariable> v = Holder.empty();
+    final Holder<RexCorrelVariable> v = Holder.of(null);
     final RelNode rel1 = builder.scan("EMP")
         .variable(v)
         .project(builder.field("DEPTNO"), builder.field("SAL"))
@@ -1443,26 +1315,26 @@ public class RelMetadataTest extends SqlToRelTestBase {
   @Test void calcColumnsAreUniqueSimpleCalc() {
     checkGetUniqueKeys("select empno, empno*0 from emp",
         ImmutableSet.of(bitSetOf(0)),
-        this::convertProjectAsCalc);
+        convertProjectAsCalc());
   }
 
   @Test void calcColumnsAreUniqueCalcWithFirstConstant() {
     checkGetUniqueKeys("select 1, empno, empno*0 from emp",
         ImmutableSet.of(bitSetOf(1)),
-        this::convertProjectAsCalc);
-  }
+        convertProjectAsCalc());
 
+  }
   @Test void calcMultipleColumnsAreUniqueCalc() {
     checkGetUniqueKeys("select empno, empno from emp",
         ImmutableSet.of(bitSetOf(0), bitSetOf(1), bitSetOf(0, 1)),
-        this::convertProjectAsCalc);
+        convertProjectAsCalc());
   }
 
   @Test void calcMultipleColumnsAreUniqueCalc2() {
     checkGetUniqueKeys(
         "select a1.empno, a2.empno from emp a1 join emp a2 on (a1.empno=a2.empno)",
         ImmutableSet.of(bitSetOf(0), bitSetOf(1), bitSetOf(0, 1)),
-        this::convertProjectAsCalc);
+        convertProjectAsCalc());
   }
 
   @Test void calcMultipleColumnsAreUniqueCalc3() {
@@ -1473,67 +1345,26 @@ public class RelMetadataTest extends SqlToRelTestBase {
         ImmutableSet.of(
             bitSetOf(0), bitSetOf(0, 1), bitSetOf(0, 1, 2), bitSetOf(0, 2),
             bitSetOf(1), bitSetOf(1, 2), bitSetOf(2)),
-        this::convertProjectAsCalc);
+        convertProjectAsCalc());
   }
 
   @Test void calcColumnsAreNonUniqueCalc() {
     checkGetUniqueKeys("select empno*0 from emp",
         ImmutableSet.of(),
-        this::convertProjectAsCalc);
+        convertProjectAsCalc());
   }
 
-  private RelNode convertProjectAsCalc(String s) {
-    Project project = (Project) convertSql(s);
-    RexProgram program = RexProgram.create(
-        project.getInput().getRowType(),
-        project.getProjects(),
-        null,
-        project.getRowType(),
-        project.getCluster().getRexBuilder());
-    return LogicalCalc.create(project.getInput(), program);
-  }
-
-  /** Unit test for
-   * {@link org.apache.calcite.rel.metadata.RelMetadataQuery#areRowsUnique(RelNode)}. */
-  @Test void testRowsUnique() {
-    sql("select * from emp")
-        .assertRowsUnique(is(true), "table has primary key");
-    sql("select deptno from emp")
-        .assertRowsUnique(is(false), "table has primary key");
-    sql("select empno from emp")
-        .assertRowsUnique(is(true), "primary key is unique");
-    sql("select empno from emp, dept")
-        .assertRowsUnique(is(false), "cartesian product destroys uniqueness");
-    sql("select empno from emp join dept using (deptno)")
-        .assertRowsUnique(is(true),
-            "many-to-one join does not destroy uniqueness");
-    sql("select empno, job from emp join dept using (deptno) order by job desc")
-        .assertRowsUnique(is(true),
-            "project and sort does not destroy uniqueness");
-    sql("select deptno from emp limit 1")
-        .assertRowsUnique(is(true), "1 row table is always unique");
-    sql("select distinct deptno from emp")
-        .assertRowsUnique(is(true), "distinct table is always unique");
-    sql("select count(*) from emp")
-        .assertRowsUnique(is(true), "grand total is always unique");
-    sql("select count(*) from emp group by deptno")
-        .assertRowsUnique(is(false), "several depts may have same count");
-    sql("select deptno, count(*) from emp group by deptno")
-        .assertRowsUnique(is(true), "group by keys are unique");
-    sql("select deptno, count(*) from emp group by grouping sets ((), (deptno))")
-        .assertRowsUnique(true, is(true),
-            "group by keys are unique and not null");
-    sql("select deptno, count(*) from emp group by grouping sets ((), (deptno))")
-        .assertRowsUnique(false, nullValue(Boolean.class),
-            "is actually unique; TODO: deduce it");
-    sql("select distinct deptno from emp join dept using (deptno)")
-        .assertRowsUnique(is(true), "distinct table is always unique");
-    sql("select deptno from emp union select deptno from dept")
-        .assertRowsUnique(is(true), "set query is always unique");
-    sql("select deptno from emp intersect select deptno from dept")
-        .assertRowsUnique(is(true), "set query is always unique");
-    sql("select deptno from emp except select deptno from dept")
-        .assertRowsUnique(is(true), "set query is always unique");
+  private Function<String, RelNode> convertProjectAsCalc() {
+    return s -> {
+      Project project = (Project) convertSql(s);
+      RexProgram program = RexProgram.create(
+          project.getInput().getRowType(),
+          project.getProjects(),
+          null,
+          project.getRowType(),
+          project.getCluster().getRexBuilder());
+      return LogicalCalc.create(project.getInput(), program);
+    };
   }
 
   @Test void testBrokenCustomProviderWithMetadataFactory() {
@@ -1544,26 +1375,25 @@ public class RelMetadataTest extends SqlToRelTestBase {
         + "group by deptno having count(*) = 0";
     final RelRoot root = tester
         .withClusterFactory(cluster -> {
-          cluster.setMetadataQuerySupplier(
-              RelMetadataQuery.builder(MyRelMetadataQuery::new, MyRelMetadataQuery::new)
-                  .withProviders(BrokenColTypeImpl.SOURCE)
-                  .createSupplier());
+          cluster.setMetadataProvider(
+              ChainedRelMetadataProvider.of(
+                  ImmutableList.of(BrokenColTypeImpl.SOURCE,
+                      cluster.getMetadataProvider())));
           return cluster;
         })
         .convertSqlToRel(sql);
 
     final RelNode rel = root.rel;
     assertThat(rel, instanceOf(LogicalFilter.class));
-    final MyRelMetadataQuery mq = (MyRelMetadataQuery) rel.getCluster().getMetadataQuery();
+    final MyRelMetadataQuery mq = new MyRelMetadataQuery();
 
     try {
       assertThat(colType(mq, rel, 0), equalTo("DEPTNO-rel"));
       fail("expected error");
     } catch (IllegalArgumentException e) {
-      final String value = "No handler for method [public abstract "
-          + "java.lang.String org.apache.calcite.test.RelMetadataTest$ColType$Handler.getColType("
-          + "org.apache.calcite.rel.RelNode,org.apache.calcite.rel.metadata.RelMetadataQuery,int)] "
-          + "applied to argument of type [class org.apache.calcite.rel.logical.LogicalFilter]; "
+      final String value = "No handler for method [public abstract java.lang.String "
+          + "org.apache.calcite.test.RelMetadataTest$ColType.getColType(int)] "
+          + "applied to argument of type [interface org.apache.calcite.rel.RelNode]; "
           + "we recommend you create a catch-all (RelNode) handler";
       assertThat(e.getMessage(), is(value));
     }
@@ -1577,10 +1407,11 @@ public class RelMetadataTest extends SqlToRelTestBase {
         + "group by deptno having count(*) = 0";
     final RelRoot root = tester
         .withClusterFactory(cluster -> {
-          cluster.setMetadataQuerySupplier(
-              RelMetadataQuery.builder(MyRelMetadataQuery::new, MyRelMetadataQuery::new)
-                  .withProviders(BrokenColTypeImpl.SOURCE)
-                  .createSupplier());
+          cluster.setMetadataProvider(
+              ChainedRelMetadataProvider.of(
+                  ImmutableList.of(BrokenColTypeImpl.SOURCE,
+                      cluster.getMetadataProvider())));
+          cluster.setMetadataQuerySupplier(MyRelMetadataQuery::new);
           return cluster;
         })
         .convertSqlToRel(sql);
@@ -1595,15 +1426,13 @@ public class RelMetadataTest extends SqlToRelTestBase {
       fail("expected error");
     } catch (IllegalArgumentException e) {
       final String value = "No handler for method [public abstract java.lang.String "
-          + "org.apache.calcite.test.RelMetadataTest$ColType$Handler.getColType("
-          + "org.apache.calcite.rel.RelNode,org.apache.calcite.rel.metadata.RelMetadataQuery,int)]"
-          + " applied to argument of type [class org.apache.calcite.rel.logical.LogicalFilter];"
-          + " we recommend you create a catch-all (RelNode) handler";
+          + "org.apache.calcite.test.RelMetadataTest$ColType.getColType(int)] "
+          + "applied to argument of type [interface org.apache.calcite.rel.RelNode]; "
+          + "we recommend you create a catch-all (RelNode) handler";
       assertThat(e.getMessage(), is(value));
     }
   }
 
-  @Deprecated // to be removed before 2.0
   public String colType(RelMetadataQuery mq, RelNode rel, int column) {
     return rel.metadata(ColType.class, mq).getColType(column);
   }
@@ -1612,7 +1441,6 @@ public class RelMetadataTest extends SqlToRelTestBase {
     return myRelMetadataQuery.colType(rel, column);
   }
 
-  @Deprecated // to be removed before 2.0
   @Test void testCustomProviderWithRelMetadataFactory() {
     final List<String> buf = new ArrayList<>();
     ColTypeImpl.THREAD_LIST.set(buf);
@@ -1655,7 +1483,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
     // generates a new call to the provider.
     final RelOptPlanner planner = rel.getCluster().getPlanner();
     rel.getCluster().setMetadataProvider(
-        new org.apache.calcite.rel.metadata.CachingRelMetadataProvider(
+        new CachingRelMetadataProvider(
             rel.getCluster().getMetadataProvider(), planner));
     assertThat(colType(mq, input, 0), equalTo("DEPTNO-agg"));
     assertThat(buf.size(), equalTo(5));
@@ -1678,107 +1506,6 @@ public class RelMetadataTest extends SqlToRelTestBase {
     assertThat(buf.size(), equalTo(7));
   }
 
-  /**
-   * Cache for testing supported legacy behavior.
-   *
-   * @see MetadataCache that adds @see RelOptPlanner.getRelMetadataTimestamp()
-   * to the key.
-   */
-  @Deprecated
-  static class LegacyInvalidationMetadataCache implements MetadataCache {
-    public final Table<RelNode, Object, Object> map = HashBasedTable.create();
-
-    @Deprecated
-    @Override public boolean clear(RelNode rel) {
-      Map<Object, Object> row = map.row(rel);
-      if (row.isEmpty()) {
-        return false;
-      }
-
-      row.clear();
-      return true;
-    }
-
-    @Deprecated
-    @Override public @Nullable Object remove(RelNode relNode, Object args) {
-      return map.remove(relNode, toArgList(relNode, args));
-    }
-
-    @Deprecated
-    @Override public @Nullable Object get(RelNode relNode, Object args) {
-      return map.get(relNode, toArgList(relNode, args));
-    }
-
-    @Deprecated
-    @Override public @Nullable Object put(RelNode relNode,
-        Object args, Object value) {
-      return map.put(relNode, toArgList(relNode, args), value);
-    }
-
-    @Deprecated
-    private List<?> toArgList(RelNode relNode, Object args) {
-      return ImmutableList.builder().add(args)
-          .add(relNode.getCluster().getPlanner().getRelMetadataTimestamp(relNode))
-          .build();
-    }
-  }
-
-  @Deprecated
-  @Test void testSupportLegacyCachingBehaviorViaMetadataQuery() {
-    JaninoMetadataHandlerProvider provider = new JaninoMetadataHandlerProvider(
-        ColTypeImpl.SOURCE) {
-      @Override public MetadataCache buildCache() {
-        return new LegacyInvalidationMetadataCache();
-      }
-    };
-    RelMetadataQuery prototype = new CustomMq(provider);
-
-    final List<String> buf = new ArrayList<>();
-    ColTypeImpl.THREAD_LIST.set(buf);
-
-    final String sql = "select deptno, count(*) from emp where deptno > 10 "
-        + "group by deptno having count(*) = 0";
-    final RelRoot root = tester.convertSqlToRel(sql);
-    final RelNode rel = root.rel;
-    final RelMetadataQuery mq = new CustomMq(prototype);
-
-    // Top node is a filter. Its metadata uses getColType(RelNode, int).
-    assertThat(rel, instanceOf(LogicalFilter.class));
-
-    // Next node is an aggregate. Its metadata uses
-    // getColType(LogicalAggregate, int).
-    final RelNode input = rel.getInput(0);
-    assertThat(input, instanceOf(LogicalAggregate.class));
-    try {
-      provider.initialHandler(ColType.Handler.class).getColType(input, mq, 0);
-      fail();
-    } catch (MetadataHandlerProvider.NoHandler noHandler) {
-      //ignore
-    }
-    ColType.Handler colTypeHandler = provider.revise(ColType.Handler.class);
-
-    assertThat(colTypeHandler.getColType(input, mq, 0), equalTo("DEPTNO-agg"));
-    assertThat(buf.size(), equalTo(1));
-    assertThat(colTypeHandler.getColType(input, mq, 0), equalTo("DEPTNO-agg"));
-    assertThat(buf.size(), equalTo(1));
-    assertThat(colTypeHandler.getColType(input, mq, 1), equalTo("EXPR$1-agg"));
-    assertThat(buf.size(), equalTo(2));
-    assertThat(colTypeHandler.getColType(input, mq, 1), equalTo("EXPR$1-agg"));
-    assertThat(buf.size(), equalTo(2));
-    assertThat(colTypeHandler.getColType(input, mq, 0), equalTo("DEPTNO-agg"));
-    assertThat(buf.size(), equalTo(2));
-
-    // With a different timestamp, a metadata item is re-computed on first call.
-    final RelOptPlanner planner = rel.getCluster().getPlanner();
-    long timestamp = planner.getRelMetadataTimestamp(rel);
-    assertThat(timestamp, equalTo(0L));
-    ((MockRelOptPlanner) planner).setRelMetadataTimestamp(timestamp + 1);
-    assertThat(colTypeHandler.getColType(input, mq, 0), equalTo("DEPTNO-agg"));
-    assertThat(buf.size(), equalTo(3));
-    assertThat(colTypeHandler.getColType(input, mq, 0), equalTo("DEPTNO-agg"));
-    assertThat(buf.size(), equalTo(3));
-  }
-
   @Test void testCustomProviderWithRelMetadataQuery() {
     final List<String> buf = new ArrayList<>();
     ColTypeImpl.THREAD_LIST.set(buf);
@@ -1789,10 +1516,12 @@ public class RelMetadataTest extends SqlToRelTestBase {
         .withClusterFactory(cluster -> {
           // Create a custom provider that includes ColType.
           // Include the same provider twice just to be devious.
-          cluster.setMetadataQuerySupplier(
-              RelMetadataQuery.builder(MyRelMetadataQuery::new, MyRelMetadataQuery::new)
-                  .withProviders(ColTypeImpl.SOURCE, ColTypeImpl.SOURCE)
-                  .createSupplier());
+          final ImmutableList<RelMetadataProvider> list =
+              ImmutableList.of(ColTypeImpl.SOURCE, ColTypeImpl.SOURCE,
+                  cluster.getMetadataProvider());
+          cluster.setMetadataProvider(
+              ChainedRelMetadataProvider.of(list));
+          cluster.setMetadataQuerySupplier(MyRelMetadataQuery::new);
           return cluster;
         })
         .convertSqlToRel(sql);
@@ -2001,8 +1730,10 @@ public class RelMetadataTest extends SqlToRelTestBase {
 
       // Repeat the above tests directly against the handler.
       final RelMdColumnUniqueness handler =
-          (RelMdColumnUniqueness) Iterables.getOnlyElement(RelMdColumnUniqueness.SOURCE
-              .handlers(BuiltInMetadata.ColumnUniqueness.Handler.class));
+          (RelMdColumnUniqueness) RelMdColumnUniqueness.SOURCE
+              .handlers(BuiltInMetadata.ColumnUniqueness.DEF)
+              .get(BuiltInMethod.COLUMN_UNIQUENESS.method)
+              .iterator().next();
       assertThat(handler.areColumnsUnique(values, mq, col0, false),
           is(true));
       assertThat(handler.areColumnsUnique(values, mq, col1, false),
@@ -2162,7 +1893,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
             ImmutableList.of(
                 AggregateCall.create(SqlStdOperatorTable.COUNT,
                     false, false, false, ImmutableIntList.of(),
-                    -1, null, RelCollations.EMPTY, 2, join, null, null)));
+                    -1, RelCollations.EMPTY, 2, join, null, null)));
     rowSize = mq.getAverageRowSize(aggregate);
     columnSizes = mq.getAverageColumnSizes(aggregate);
     assertThat(columnSizes.size(), equalTo(3));
@@ -3411,59 +3142,6 @@ public class RelMetadataTest extends SqlToRelTestBase {
     checkNodeTypeCount(sql, expected);
   }
 
-  @Test void testConstColumnsNdv() {
-    final String sql = "select ename, 100, 200 from emp";
-    final RelNode rel = convertSql(sql);
-    RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
-
-    assertThat(rel, instanceOf(Project.class));
-
-    Project project = (Project) rel;
-    assertThat(project.getProjects().size(), is(3));
-
-    // a non-const column, followed by two constant columns.
-    assertThat(RexUtil.isLiteral(project.getProjects().get(0), true), is(false));
-    assertThat(RexUtil.isLiteral(project.getProjects().get(1), true), is(true));
-    assertThat(RexUtil.isLiteral(project.getProjects().get(2), true), is(true));
-
-    // the distinct row count of const columns should be 1
-    assertThat(mq.getDistinctRowCount(rel, ImmutableBitSet.of(), null), is(1.0));
-    assertThat(mq.getDistinctRowCount(rel, ImmutableBitSet.of(1), null), is(1.0));
-    assertThat(mq.getDistinctRowCount(rel, ImmutableBitSet.of(1, 2), null), is(1.0));
-
-    // the population size of const columns should be 1
-    assertThat(mq.getPopulationSize(rel, ImmutableBitSet.of()), is(1.0));
-    assertThat(mq.getPopulationSize(rel, ImmutableBitSet.of(1)), is(1.0));
-    assertThat(mq.getPopulationSize(rel, ImmutableBitSet.of(1, 2)), is(1.0));
-
-    // the distinct row count of mixed columns depends on the distinct row
-    // count of non-const columns
-    assertThat(mq.getDistinctRowCount(rel, ImmutableBitSet.of(0, 1), null),
-        is(mq.getDistinctRowCount(rel, ImmutableBitSet.of(0), null)));
-    assertThat(mq.getDistinctRowCount(rel, ImmutableBitSet.of(0, 1, 2), null),
-        is(mq.getDistinctRowCount(rel, ImmutableBitSet.of(0), null)));
-
-    // the population size of mixed columns depends on the population size of
-    // non-const columns
-    assertThat(mq.getPopulationSize(rel, ImmutableBitSet.of(0, 1)),
-        is(mq.getPopulationSize(rel, ImmutableBitSet.of(0))));
-    assertThat(mq.getPopulationSize(rel, ImmutableBitSet.of(0, 1, 2)),
-        is(mq.getPopulationSize(rel, ImmutableBitSet.of(0))));
-  }
-
-  /**
-   * Custom Metadata Query for using a different MetadataHandlerProvider.
-   */
-  static class CustomMq extends RelMetadataQuery {
-    CustomMq(MetadataHandlerProvider metadataHandlerProvider) {
-      super(metadataHandlerProvider);
-    }
-
-    CustomMq(RelMetadataQuery prototype) {
-      super(prototype);
-    }
-  }
-
   private static final SqlOperator NONDETERMINISTIC_OP = new SqlSpecialOperator(
           "NDC",
           SqlKind.OTHER_FUNCTION,
@@ -3593,8 +3271,6 @@ public class RelMetadataTest extends SqlToRelTestBase {
     });
   }
 
-  //~ Inner classes and interfaces -------------------------------------------
-
   /** Custom metadata interface. */
   public interface ColType extends Metadata {
     Method METHOD = Types.lookupMethod(ColType.class, "getColType", int.class);
@@ -3616,7 +3292,6 @@ public class RelMetadataTest extends SqlToRelTestBase {
       implements MetadataHandler<ColType> {
     static final ThreadLocal<List<String>> THREAD_LIST = new ThreadLocal<>();
 
-    @Deprecated
     public MetadataDef<ColType> getDef() {
       return ColType.DEF;
     }
@@ -3637,7 +3312,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
    * reflection. */
   public static class ColTypeImpl extends PartialColTypeImpl {
     public static final RelMetadataProvider SOURCE =
-        ReflectiveRelMetadataProvider.reflectiveSource(new ColTypeImpl(), ColType.Handler.class);
+        ReflectiveRelMetadataProvider.reflectiveSource(ColType.METHOD, new ColTypeImpl());
 
     /** Implementation of {@link ColType#getColType(int)} for
      * {@link RelNode}, called via reflection. */
@@ -3653,34 +3328,26 @@ public class RelMetadataTest extends SqlToRelTestBase {
   /** Implementation of {@link ColType} that has no fall-back for {@link RelNode}. */
   public static class BrokenColTypeImpl extends PartialColTypeImpl {
     public static final RelMetadataProvider SOURCE =
-        ReflectiveRelMetadataProvider.reflectiveSource(
-            new BrokenColTypeImpl(), ColType.Handler.class);
+        ReflectiveRelMetadataProvider.reflectiveSource(ColType.METHOD,
+            new BrokenColTypeImpl());
   }
 
   /** Extension to {@link RelMetadataQuery} to support {@link ColType}.
    *
    * <p>Illustrates how you would package up a user-defined metadata type. */
   private static class MyRelMetadataQuery extends RelMetadataQuery {
-    private static final Supplier<RelMetadataQuery> SUPPLIER = builder(
-        MyRelMetadataQuery::new, MyRelMetadataQuery::new).createSupplier();
     private ColType.Handler colTypeHandler;
 
-    private MyRelMetadataQuery(MetadataHandlerProvider metadataHandlerProvider) {
-      super(metadataHandlerProvider);
-      colTypeHandler = metadataHandlerProvider.initialHandler(ColType.Handler.class);
-    }
-
-    private MyRelMetadataQuery(MyRelMetadataQuery prototype) {
-      super(prototype);
-      colTypeHandler = prototype.colTypeHandler;
+    MyRelMetadataQuery() {
+      colTypeHandler = initialHandler(ColType.Handler.class);
     }
 
     public String colType(RelNode rel, int column) {
       for (;;) {
         try {
           return colTypeHandler.getColType(rel, this, column);
-        } catch (MetadataHandlerProvider.NoHandler e) {
-          colTypeHandler = metadataHandlerProvider.revise(ColType.Handler.class);
+        } catch (JaninoRelMetadataProvider.NoHandler e) {
+          colTypeHandler = revise(e.relClass, ColType.DEF);
         }
       }
     }
@@ -3689,7 +3356,8 @@ public class RelMetadataTest extends SqlToRelTestBase {
   /**
    * Dummy rel node used for testing.
    */
-  private static class DummyRelNode extends SingleRel {
+  private class DummyRelNode extends SingleRel {
+
     /**
      * Creates a <code>DummyRelNode</code>.
      */
@@ -3701,8 +3369,8 @@ public class RelMetadataTest extends SqlToRelTestBase {
   /**
    * Mocked catalog reader for registering table with composite keys.
    */
-  private static class CompositeKeysCatalogReader
-      extends MockCatalogReaderSimple {
+  private class CompositeKeysCatalogReader extends MockCatalogReaderSimple {
+
     CompositeKeysCatalogReader(RelDataTypeFactory typeFactory, boolean caseSensitive) {
       super(typeFactory, caseSensitive);
     }
@@ -3722,54 +3390,67 @@ public class RelMetadataTest extends SqlToRelTestBase {
     }
   }
 
-  /** Parameters for a test. */
-  private static class Sql {
-    private final Tester tester;
-    private final String sql;
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-4192">[CALCITE-4192]
+   * RelMdColumnOrigins get the wrong index of group by columns after RelNode was optimized by
+   * AggregateProjectMergeRule rule</a>. */
+  @Test void testColumnOriginAfterAggProjectMergeRule() {
+    final String sql = "select count(ename), SAL from emp group by SAL";
+    final RelNode rel = tester.convertSqlToRel(sql).rel;
+    final HepProgramBuilder programBuilder = HepProgram.builder();
+    programBuilder.addRuleInstance(CoreRules.AGGREGATE_PROJECT_MERGE);
+    final HepPlanner planner = new HepPlanner(programBuilder.build());
+    planner.setRoot(rel);
+    final RelNode optimizedRel = planner.findBestExp();
 
-    Sql(Tester tester, String sql) {
-      this.tester = tester;
-      this.sql = sql;
-    }
+    Set<RelColumnOrigin> origins = RelMetadataQuery.instance()
+        .getColumnOrigins(optimizedRel, 1);
+    assertThat(origins.size(), equalTo(1));
 
-    Sql assertCpuCost(Matcher<Double> matcher, String reason) {
-      RelNode rel = convertSql(tester, sql);
-      RelOptCost cost = computeRelSelfCost(rel);
-      assertThat(reason + "\n"
-          + "sql:" + sql + "\n"
-          + "plan:" + RelOptUtil.toString(rel, SqlExplainLevel.ALL_ATTRIBUTES),
-          cost.getCpu(), matcher);
-      return this;
-    }
+    RelColumnOrigin columnOrigin = origins.iterator().next();
+    assertThat(columnOrigin.getOriginColumnOrdinal(), equalTo(5));
+    assertThat(columnOrigin.getOriginTable().getRowType().getFieldNames().get(5),
+        equalTo("SAL"));
+  }
 
-    private static RelOptCost computeRelSelfCost(RelNode rel) {
-      final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
-      RelOptPlanner planner = new VolcanoPlanner();
-      return rel.computeSelfCost(planner, mq);
-    }
+  private RelNode getPlan4NdvEstimation(String sql) {
+    final RelNode node = convertSql(sql);
+    final HepProgram program = new HepProgramBuilder().
+        addRuleInstance(CoreRules.FILTER_REDUCE_EXPRESSIONS).build();
+    final HepPlanner planner = new HepPlanner(program);
+    planner.setRoot(node);
+    return planner.findBestExp();
+  }
 
-    Sql assertRowsUnique(Matcher<Boolean> matcher, String reason) {
-      return assertRowsUnique(new boolean[] {false, true}, matcher, reason);
-    }
+  private void validateNdv(
+      String sql, ImmutableBitSet cols, Double expectedNdv, Double ndvUpperBound) {
+    final RelNode plan = getPlan4NdvEstimation(sql);
 
-    Sql assertRowsUnique(boolean ignoreNulls, Matcher<Boolean> matcher,
-        String reason) {
-      return assertRowsUnique(new boolean[] {ignoreNulls}, matcher, reason);
-    }
+    assertThat(plan.getInput(0), instanceOf(Filter.class));
+    Filter filter = (Filter) plan.getInput(0);
 
-    Sql assertRowsUnique(boolean[] ignoreNulls, Matcher<Boolean> matcher,
-        String reason) {
-      RelNode rel = convertSql(tester, sql);
-      final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
-      for (boolean ignoreNull : ignoreNulls) {
-        Boolean rowsUnique = mq.areRowsUnique(rel, ignoreNull);
-        assertThat(reason + "\n"
-                + "sql:" + sql + "\n"
-                + "plan:" + RelOptUtil.toString(rel, SqlExplainLevel.ALL_ATTRIBUTES),
-            rowsUnique, matcher);
-      }
-      return this;
-    }
+    final RelMetadataQuery mq = plan.getCluster().getMetadataQuery();
+    Double ndv = mq.getDistinctRowCount(filter, cols, null);
+    assertThat(ndv, equalTo(expectedNdv));
+    assertThat(ndvUpperBound, equalTo(RexUtil.estimateColumnsNdv(cols, filter.getCondition())));
+  }
 
+  @Test void testPredicateNdv() {
+    validateNdv("select empno, ename from emp where empno = 10",
+        ImmutableBitSet.of(0), 1.0, 1.0);
+    validateNdv("select empno, ename from emp where empno in (10, 20)",
+        ImmutableBitSet.of(0), 2.0, 2.0);
+    validateNdv("select empno, ename from emp where empno >= 10 and empno <= 12",
+        ImmutableBitSet.of(0), 3.0, 3.0);
+    validateNdv("select empno, ename from emp where ename in ('a', 'b')",
+        ImmutableBitSet.of(1), 2.0, 2.0);
+    validateNdv("select empno, ename from emp where empno >= 10 and empno <= 12 "
+            + "and ename in ('a', 'b')",
+        ImmutableBitSet.of(0, 1), 1.0, 6.0);
+    validateNdv("select empno, ename from emp where empno >= 10 "
+            + "and ename in ('a', 'b')",
+        ImmutableBitSet.of(0, 1), 1.75, null);
+    validateNdv("select empno, ename from emp where empno >= 12 or empno <= 10",
+        ImmutableBitSet.of(0), 3.5, null);
   }
 }

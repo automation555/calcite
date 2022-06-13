@@ -16,7 +16,6 @@
  */
 package org.apache.calcite.rex;
 
-import org.apache.calcite.DataContexts;
 import org.apache.calcite.linq4j.function.Predicate1;
 import org.apache.calcite.plan.RelOptPredicateList;
 import org.apache.calcite.plan.RelOptUtil;
@@ -31,6 +30,7 @@ import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeFamily;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexTableInputRef.RelTableRef;
+import org.apache.calcite.schema.Schemas;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
@@ -69,6 +69,8 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
 
+import static org.apache.calcite.linq4j.Nullness.castNonNull;
+
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -78,7 +80,7 @@ public class RexUtil {
 
   /** Executor for a bit of constant reduction. The user can pass in another executor. */
   public static final RexExecutor EXECUTOR =
-      new RexExecutorImpl(DataContexts.EMPTY);
+      new RexExecutorImpl(Schemas.createDataContext(castNonNull(null), null));
 
   private RexUtil() {
   }
@@ -596,14 +598,17 @@ public class RexUtil {
   }
 
   @SuppressWarnings("BetaApi")
-  public static <C extends Comparable<C>> RexNode sargRef(RexBuilder rexBuilder,
-      RexNode ref, Sarg<C> sarg, RelDataType type, RexUnknownAs unknownAs) {
-    if (sarg.isAll() || sarg.isNone()) {
-      return simpleSarg(rexBuilder, ref, sarg, unknownAs);
+  public static <C extends Comparable<C>> RexNode sargRef(
+      RexBuilder rexBuilder, RexNode ref, Sarg<C> sarg, RelDataType type) {
+    if (sarg.isAll()) {
+      if (sarg.containsNull) {
+        return rexBuilder.makeLiteral(true);
+      } else {
+        return rexBuilder.makeCall(SqlStdOperatorTable.IS_NOT_NULL, ref);
+      }
     }
     final List<RexNode> orList = new ArrayList<>();
-    if (sarg.nullAs == RexUnknownAs.TRUE
-        && unknownAs == RexUnknownAs.UNKNOWN) {
+    if (sarg.containsNull) {
       orList.add(rexBuilder.makeCall(SqlStdOperatorTable.IS_NULL, ref));
     }
     if (sarg.isPoints()) {
@@ -627,50 +632,7 @@ public class RexUtil {
           new RangeToRex<>(ref, orList, rexBuilder, type);
       RangeSets.forEach(sarg.rangeSet, consumer);
     }
-    RexNode node = composeDisjunction(rexBuilder, orList);
-    if (sarg.nullAs == RexUnknownAs.FALSE
-        && unknownAs == RexUnknownAs.UNKNOWN) {
-      node =
-          rexBuilder.makeCall(SqlStdOperatorTable.AND,
-              rexBuilder.makeCall(SqlStdOperatorTable.IS_NOT_NULL, ref),
-              node);
-    }
-    return node;
-  }
-
-  /** Expands an 'all' or 'none' sarg. */
-  public static <C extends Comparable<C>> RexNode simpleSarg(RexBuilder rexBuilder,
-      RexNode ref, Sarg<C> sarg, RexUnknownAs unknownAs) {
-    assert sarg.isAll() || sarg.isNone();
-    final RexUnknownAs nullAs =
-        sarg.nullAs == RexUnknownAs.UNKNOWN ? unknownAs
-            : sarg.nullAs;
-    if (sarg.isAll()) {
-      switch (nullAs) {
-      case TRUE:
-        return rexBuilder.makeLiteral(true);
-      case FALSE:
-        return rexBuilder.makeCall(SqlStdOperatorTable.IS_NOT_NULL, ref);
-      case UNKNOWN:
-        // "x IS NOT NULL OR UNKNOWN"
-        return rexBuilder.makeCall(SqlStdOperatorTable.OR,
-            rexBuilder.makeCall(SqlStdOperatorTable.IS_NOT_NULL, ref),
-            rexBuilder.makeNullLiteral(
-                rexBuilder.typeFactory.createSqlType(SqlTypeName.BOOLEAN)));
-      }
-    }
-    if (sarg.isNone()) {
-      switch (nullAs) {
-      case TRUE:
-        return rexBuilder.makeCall(SqlStdOperatorTable.IS_NULL, ref);
-      case FALSE:
-        return rexBuilder.makeLiteral(false);
-      case UNKNOWN:
-        // "CASE WHEN x IS NULL THEN UNKNOWN ELSE FALSE END", or "x <> x"
-        return rexBuilder.makeCall(SqlStdOperatorTable.NOT_EQUALS, ref, ref);
-      }
-    }
-    throw new AssertionError();
+    return composeDisjunction(rexBuilder, orList);
   }
 
   private static RexNode deref(@Nullable RexProgram program, RexNode node) {
@@ -1244,7 +1206,7 @@ public class RexUtil {
   public static RexNode composeConjunction(RexBuilder rexBuilder,
       Iterable<? extends @Nullable RexNode> nodes) {
     final RexNode e = composeConjunction(rexBuilder, nodes, false);
-    return requireNonNull(e, "e");
+    return requireNonNull(e);
   }
 
   /**
@@ -1318,7 +1280,7 @@ public class RexUtil {
   public static RexNode composeDisjunction(RexBuilder rexBuilder,
       Iterable<? extends RexNode> nodes) {
     final RexNode e = composeDisjunction(rexBuilder, nodes, false);
-    return requireNonNull(e, "e");
+    return requireNonNull(e);
   }
 
   /**
@@ -2090,11 +2052,12 @@ public class RexUtil {
     case GREATER_THAN:
     case LESS_THAN_OR_EQUAL:
     case GREATER_THAN_OR_EQUAL:
-      final SqlOperator op = requireNonNull(call.getOperator().reverse());
+      final SqlOperator op = op(call.getKind().reverse());
       return rexBuilder.makeCall(op, Lists.reverse(call.getOperands()));
     default:
-      return null;
+      break;
     }
+    return null;
   }
 
   @Deprecated // to be removed before 2.0
@@ -2208,10 +2171,7 @@ public class RexUtil {
     return e -> not(rexBuilder, e);
   }
 
-  /** Applies NOT to an expression.
-   *
-   * <p>Unlike {@link #not}, may strengthen the type from {@code BOOLEAN}
-   * to {@code BOOLEAN NOT NULL}. */
+  /** Applies NOT to an expression. */
   static RexNode not(final RexBuilder rexBuilder, RexNode input) {
     return input.isAlwaysTrue()
         ? rexBuilder.makeLiteral(false)
@@ -2330,28 +2290,6 @@ public class RexUtil {
       }
     }.visitEach(nodes);
     return occurrences;
-  }
-
-  /**
-   * Given some expressions, gets the indices of the non-constant ones.
-   */
-  public static ImmutableBitSet getNonConstColumns(List<RexNode> expressions) {
-    ImmutableBitSet cols = ImmutableBitSet.range(0, expressions.size());
-    return getNonConstColumns(cols, expressions);
-  }
-
-  /**
-   * Given some expressions and columns, gets the indices of the non-constant ones.
-   */
-  public static ImmutableBitSet getNonConstColumns(
-      ImmutableBitSet columns, List<RexNode> expressions) {
-    ImmutableBitSet.Builder nonConstCols = ImmutableBitSet.builder();
-    for (int col : columns) {
-      if (!isLiteral(expressions.get(col), true)) {
-        nonConstCols.set(col);
-      }
-    }
-    return nonConstCols.build();
   }
 
   //~ Inner Classes ----------------------------------------------------------
@@ -2681,6 +2619,99 @@ public class RexUtil {
   /** Transforms a list of expressions to the list of digests. */
   public static List<String> strings(List<RexNode> list) {
     return Util.transform(list, Object::toString);
+  }
+
+  /** Estimate the number of distinct values for the specified columns (if possible),
+   * given the condition. */
+  public static @Nullable Double estimateColumnsNdv(
+      ImmutableBitSet columns, @Nullable RexNode condition) {
+    if (condition == null) {
+      return null;
+    }
+    if (condition.isAlwaysFalse()) {
+      return 0.0;
+    }
+    double ndv = 1.0;
+    List<RexNode> conditions = RelOptUtil.conjunctions(condition);
+    for (int col : columns) {
+      Double colNdv = estimateColumnNdv(col, conditions);
+      if (colNdv == null) {
+        // if one column's ndv cannot be estimated, we cannot
+        // estimate the ndv for the column set.
+        return null;
+      }
+      // ndv's should be multiplied.
+      // for example, NDV(x) <= a, and NDV(y) <= b;
+      // then we have NDV(x, y) <= a * b;
+      ndv *= colNdv;
+    }
+    return ndv;
+  }
+
+  /** Estimate the number of distinct values for a single column (if possible),
+   * given the condition. */
+  private static @Nullable Double estimateColumnNdv(int colIdx, List<RexNode> conditions) {
+    Double ndv = null;
+    for (RexNode condition : conditions) {
+      Double singleNdv = estimateColumnNdvSingleCondition(colIdx, condition);
+      if (singleNdv != null) {
+        // if there are multiple ndv estimations, we select the minimum one.
+        // for example, if we have two conditions
+        // 1) x in (a, b)
+        // 2) x in (a, b, c)
+        // the first estimation gives NDV(x) = 2, while the second gives NDV(x) = 3
+        // the final ndv estimation should be NDV(x) = min(2, 3) = 2.
+        ndv = ndv == null ? singleNdv : Math.min(ndv, singleNdv);
+      }
+    }
+    return ndv;
+  }
+
+  /** Estimate the ndv for a single column, given a single condition. */
+  private static @Nullable Double estimateColumnNdvSingleCondition(int colIdx, RexNode condition) {
+    if (condition.getKind() == SqlKind.IS_NULL) {
+      assert condition instanceof RexCall;
+      RexNode op = ((RexCall) condition).getOperands().get(0);
+      if (op instanceof RexInputRef && ((RexInputRef) op).getIndex() == colIdx) {
+        // Given condition x is null,
+        // NDV(x) = 1 if x is nullable, or 0 otherwise.
+        return op.getType().isNullable() ? 1.0 : 0.0;
+      }
+    }
+    if (condition instanceof RexCall
+        && ((RexCall) condition).getOperands().size() == 2) {
+      // process x = a, or Search(x, Sarg).
+
+      List<RexNode> operands = ((RexCall) condition).getOperands();
+      if (operands.get(0).getKind() != SqlKind.LITERAL
+          && operands.get(1).getKind() != SqlKind.LITERAL) {
+        // one of the operands must be a literal, otherwise we cannot estimate
+        return null;
+      }
+      RexNode literalOp = operands.get(0).getKind() == SqlKind.LITERAL
+          ? operands.get(0) : operands.get(1);
+      RexNode otherOp = operands.get(0).getKind() == SqlKind.LITERAL
+          ? operands.get(1) : operands.get(0);
+
+      if (otherOp instanceof RexInputRef && ((RexInputRef) otherOp).getIndex() == colIdx) {
+        switch (condition.getKind()) {
+        case EQUALS:
+          // expression of the form: x = a
+          return 1.0;
+        case SEARCH:
+          // expression of the form: Search(x, Sarg)
+          Comparable value = ((RexLiteral) literalOp).getValue();
+          if (value instanceof Sarg) {
+            Sarg sarg = (Sarg) value;
+            return sarg.numDistinctVals(literalOp.getType());
+          }
+          break;
+        default:
+          return null;
+        }
+      }
+    }
+    return null;
   }
 
   /** Helps {@link org.apache.calcite.rex.RexUtil#toDnf}. */
@@ -3015,10 +3046,10 @@ public class RexUtil {
 
     RangeToRex(RexNode ref, List<RexNode> list, RexBuilder rexBuilder,
         RelDataType type) {
-      this.ref = requireNonNull(ref, "ref");
-      this.list = requireNonNull(list, "list");
-      this.rexBuilder = requireNonNull(rexBuilder, "rexBuilder");
-      this.type = requireNonNull(type, "type");
+      this.ref = requireNonNull(ref);
+      this.list = requireNonNull(list);
+      this.rexBuilder = requireNonNull(rexBuilder);
+      this.type = requireNonNull(type);
     }
 
     private void addAnd(RexNode... nodes) {
@@ -3117,8 +3148,7 @@ public class RexUtil {
             (RexLiteral) deref(program, call.operands.get(1));
         final Sarg sarg = requireNonNull(literal.getValueAs(Sarg.class), "Sarg");
         if (maxComplexity < 0 || sarg.complexity() < maxComplexity) {
-          return sargRef(rexBuilder, ref, sarg, literal.getType(),
-              RexUnknownAs.UNKNOWN);
+          return sargRef(rexBuilder, ref, sarg, literal.getType());
         }
         // Sarg is complex (therefore useful); fall through
       default:
