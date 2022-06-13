@@ -21,13 +21,11 @@ import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.prepare.Prepare;
+import org.apache.calcite.rel.LogicalNode;
 import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.RelShuttle;
 import org.apache.calcite.rel.core.TableModify;
 import org.apache.calcite.rex.RexNode;
-
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
 
@@ -35,7 +33,7 @@ import java.util.List;
  * Sub-class of {@link org.apache.calcite.rel.core.TableModify}
  * not targeted at any particular engine or calling convention.
  */
-public final class LogicalTableModify extends TableModify {
+public final class LogicalTableModify extends TableModify implements LogicalNode {
   //~ Constructors -----------------------------------------------------------
 
   /**
@@ -45,8 +43,8 @@ public final class LogicalTableModify extends TableModify {
    */
   public LogicalTableModify(RelOptCluster cluster, RelTraitSet traitSet,
       RelOptTable table, Prepare.CatalogReader schema, RelNode input,
-      Operation operation, @Nullable List<String> updateColumnList,
-      @Nullable List<RexNode> sourceExpressionList, boolean flattened) {
+      Operation operation, List<String> updateColumnList,
+      List<RexNode> sourceExpressionList, boolean flattened) {
     super(cluster, traitSet, table, schema, input, operation, updateColumnList,
         sourceExpressionList, flattened);
   }
@@ -76,8 +74,8 @@ public final class LogicalTableModify extends TableModify {
   /** Creates a LogicalTableModify. */
   public static LogicalTableModify create(RelOptTable table,
       Prepare.CatalogReader schema, RelNode input,
-      Operation operation, @Nullable List<String> updateColumnList,
-      @Nullable List<RexNode> sourceExpressionList, boolean flattened) {
+      Operation operation, List<String> updateColumnList,
+      List<RexNode> sourceExpressionList, boolean flattened) {
     final RelOptCluster cluster = input.getCluster();
     final RelTraitSet traitSet = cluster.traitSetOf(Convention.NONE);
     return new LogicalTableModify(cluster, traitSet, table, schema, input,
@@ -92,9 +90,5 @@ public final class LogicalTableModify extends TableModify {
     return new LogicalTableModify(getCluster(), traitSet, table, catalogReader,
         sole(inputs), getOperation(), getUpdateColumnList(),
         getSourceExpressionList(), isFlattened());
-  }
-
-  @Override public RelNode accept(RelShuttle shuttle) {
-    return shuttle.visit(this);
   }
 }

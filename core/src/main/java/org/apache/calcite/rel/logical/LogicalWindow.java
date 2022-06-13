@@ -20,10 +20,10 @@ import org.apache.calcite.linq4j.Ord;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelTraitSet;
+import org.apache.calcite.rel.LogicalNode;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Window;
-import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
@@ -44,12 +44,9 @@ import com.google.common.collect.LinkedListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -60,7 +57,7 @@ import java.util.Objects;
  * Sub-class of {@link org.apache.calcite.rel.core.Window}
  * not targeted at any particular engine or calling convention.
  */
-public final class LogicalWindow extends Window {
+public final class LogicalWindow extends Window implements LogicalNode {
   /**
    * Creates a LogicalWindow.
    *
@@ -68,39 +65,21 @@ public final class LogicalWindow extends Window {
    *
    * @param cluster Cluster
    * @param traitSet Trait set
-   * @param hints   Hints for this node
    * @param input   Input relational expression
    * @param constants List of constants that are additional inputs
    * @param rowType Output row type
    * @param groups Window groups
    */
   public LogicalWindow(RelOptCluster cluster, RelTraitSet traitSet,
-      List<RelHint> hints, RelNode input, List<RexLiteral> constants,
-      RelDataType rowType, List<Group> groups) {
-    super(cluster, traitSet, hints, input, constants, rowType, groups);
-  }
-
-  /**
-   * Creates a LogicalWindow.
-   *
-   * <p>Use {@link #create} unless you know what you're doing.
-   *
-   * @param cluster Cluster
-   * @param traitSet Trait set
-   * @param input   Input relational expression
-   * @param constants List of constants that are additional inputs
-   * @param rowType Output row type
-   * @param groups Window groups
-   */
-  public LogicalWindow(RelOptCluster cluster, RelTraitSet traitSet, RelNode input,
-      List<RexLiteral> constants, RelDataType rowType, List<Group> groups) {
-    this(cluster, traitSet, Collections.emptyList(), input, constants, rowType, groups);
+      RelNode input, List<RexLiteral> constants, RelDataType rowType,
+      List<Group> groups) {
+    super(cluster, traitSet, input, constants, rowType, groups);
   }
 
   @Override public LogicalWindow copy(RelTraitSet traitSet,
       List<RelNode> inputs) {
     return new LogicalWindow(getCluster(), traitSet, sole(inputs), constants,
-      getRowType(), groups);
+      rowType, groups);
   }
 
   /**
@@ -154,7 +133,7 @@ public final class LogicalWindow extends Window {
     // Build a list of groups, partitions, and aggregate functions. Each
     // aggregate function will add its arguments as outputs of the input
     // program.
-    final IdentityHashMap<RexOver, RexOver> origToNewOver = new IdentityHashMap<>();
+    final Map<RexOver, RexOver> origToNewOver = new IdentityHashMap<>();
     for (RexNode agg : program.getExprList()) {
       if (agg instanceof RexOver) {
         final RexOver origOver = (RexOver) agg;
@@ -234,7 +213,7 @@ public final class LogicalWindow extends Window {
     // the output calc (if it exists).
     RexShuttle shuttle =
         new RexShuttle() {
-          @Override public RexNode visitOver(RexOver over) {
+          public RexNode visitOver(RexOver over) {
             // Look up the aggCall which this expr was translated to.
             final Window.RexWinAggCall aggCall =
                 aggMap.get(origToNewOver.get(over));
@@ -265,7 +244,7 @@ public final class LogicalWindow extends Window {
                 over.getType());
           }
 
-          @Override public RexNode visitLocalRef(RexLocalRef localRef) {
+          public RexNode visitLocalRef(RexLocalRef localRef) {
             final int index = localRef.getIndex();
             if (index < inputFieldCount) {
               // Reference to input field.
@@ -303,11 +282,11 @@ public final class LogicalWindow extends Window {
   private static List<RexNode> toInputRefs(
       final List<? extends RexNode> operands) {
     return new AbstractList<RexNode>() {
-      @Override public int size() {
+      public int size() {
         return operands.size();
       }
 
-      @Override public RexNode get(int index) {
+      public RexNode get(int index) {
         final RexNode operand = operands.get(index);
         if (operand instanceof RexInputRef) {
           return operand;
@@ -346,7 +325,7 @@ public final class LogicalWindow extends Window {
       return Objects.hash(groupSet, orderKeys, isRows, lowerBound, upperBound);
     }
 
-    @Override public boolean equals(@Nullable Object obj) {
+    @Override public boolean equals(Object obj) {
       return obj == this
           || obj instanceof WindowKey
           && groupSet.equals(((WindowKey) obj).groupSet)
@@ -385,10 +364,5 @@ public final class LogicalWindow extends Window {
             groupSet, orderKeys, aggWindow.isRows(),
             aggWindow.getLowerBound(), aggWindow.getUpperBound());
     windowMap.put(windowKey, over);
-  }
-
-  @Override public RelNode withHints(List<RelHint> hintList) {
-    return new LogicalWindow(getCluster(), traitSet, hintList,
-        input, constants, getRowType(), groups);
   }
 }

@@ -23,28 +23,27 @@ import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelTrait;
 import org.apache.calcite.plan.RelTraitDef;
 import org.apache.calcite.plan.RelTraitSet;
+import org.apache.calcite.rel.LogicalNode;
+import org.apache.calcite.rel.PhysicalNode;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.convert.Converter;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.Spool;
+import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.trace.CalciteTrace;
 
 import com.google.common.collect.ImmutableList;
 
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
-
-import static org.apache.calcite.linq4j.Nullness.castNonNull;
-
-import static java.util.Objects.requireNonNull;
 
 /**
  * A <code>RelSet</code> is an equivalence-set of expressions; that is, a set of
@@ -74,13 +73,26 @@ class RelSet {
    * Set to the superseding set when this is found to be equivalent to another
    * set.
    */
-  @MonotonicNonNull RelSet equivalentSet;
-  @MonotonicNonNull RelNode rel;
+  RelSet equivalentSet;
 
   /**
-   * Exploring state of current RelSet.
+   * The first RelNode added to the set or the RelNode with highest confidence
+   * level of estimated statistics.
+   * The logical properties of the RelSet, including row count, uniqueness, etc,
+   * are determined by this RelNode.
    */
-  @Nullable ExploringState exploringState;
+  RelNode originalRel;
+
+  /**
+   * The position indicator of rel node that is to be processed.
+   */
+  private int relCursor = 0;
+
+  /**
+   * The relnodes after applying logical rules and physical rules,
+   * before trait propagation and enforcement.
+   */
+  final Set<RelNode> seeds = new HashSet<>();
 
   /**
    * Records conversions / enforcements that have happened on the
@@ -127,7 +139,7 @@ class RelSet {
   }
 
   /**
-   * Returns the child RelSet for the current set.
+   * Returns the child Relset for current set
    */
   public Set<RelSet> getChildSets(VolcanoPlanner planner) {
     Set<RelSet> childSets = new HashSet<>();
@@ -146,20 +158,46 @@ class RelSet {
   }
 
   /**
-   * Returns all of the {@link RelNode}s contained by any subset of this set
-   * (does not include the subset objects themselves).
+   * @return all of the {@link RelNode}s contained by any subset of this set
+   * (does not include the subset objects themselves)
    */
   public List<RelNode> getRelsFromAllSubsets() {
     return rels;
   }
 
-  public @Nullable RelSubset getSubset(RelTraitSet traits) {
+  public RelSubset getSubset(RelTraitSet traits) {
     for (RelSubset subset : subsets) {
-      if (subset.getTraitSet().equals(traits)) {
+      if (subset.getTraitSet() == traits) {
         return subset;
       }
     }
     return null;
+  }
+
+  public int getSeedSize() {
+    if (seeds.isEmpty()) {
+      seeds.addAll(rels);
+    }
+    return seeds.size();
+  }
+
+  public boolean hasNextPhysicalNode() {
+    while (relCursor < rels.size()) {
+      RelNode node = rels.get(relCursor);
+      if (node instanceof PhysicalNode
+          && node.getConvention() != Convention.NONE) {
+        // enforcer may be manually created for some reason
+        if (relCursor < getSeedSize() || !node.isEnforcer()) {
+          return true;
+        }
+      }
+      relCursor++;
+    }
+    return false;
+  }
+
+  public RelNode nextPhysicalNode() {
+    return rels.get(relCursor++);
   }
 
   /**
@@ -181,6 +219,7 @@ class RelSet {
     final RelSubset subset = getOrCreateSubset(
         rel.getCluster(), traitSet, rel.isEnforcer());
     subset.add(rel);
+    checkAndUpdateOriginalRel(rel);
     return subset;
   }
 
@@ -206,12 +245,9 @@ class RelSet {
         to = subset;
       }
 
-      if (from == to
-          || to.isEnforceDisabled()
-          || useAbstractConverter
-              && from.getConvention() != null
-              && !from.getConvention().useAbstractConvertersForConversion(
-                  from.getTraitSet(), to.getTraitSet())) {
+      if (from == to || useAbstractConverter
+          && !from.getConvention().useAbstractConvertersForConversion(
+              from.getTraitSet(), to.getTraitSet())) {
         continue;
       }
 
@@ -245,10 +281,7 @@ class RelSet {
           enforcer = new AbstractConverter(
               cluster, from, null, to.getTraitSet());
         } else {
-          Convention convention = requireNonNull(
-              subset.getConvention(),
-              () -> "convention is null for " + subset);
-          enforcer = convention.enforce(from, to.getTraitSet());
+          enforcer = subset.getConvention().enforce(from, to.getTraitSet());
         }
 
         if (enforcer != null) {
@@ -289,25 +322,21 @@ class RelSet {
       subset.setDelivered();
     }
 
-    if (needsConverter) {
-      addConverters(subset, required, !planner.topDownOpt);
+    if (needsConverter && !planner.topDownOpt) {
+      addConverters(subset, required, true);
     }
 
     return subset;
   }
 
   private void postEquivalenceEvent(VolcanoPlanner planner, RelNode rel) {
-    RelOptListener listener = planner.getListener();
-    if (listener == null) {
-      return;
-    }
     RelOptListener.RelEquivalenceEvent event =
         new RelOptListener.RelEquivalenceEvent(
             planner,
             rel,
             "equivalence class " + id,
             false);
-    listener.relEquivalenceFound(event);
+    planner.getListener().relEquivalenceFound(event);
   }
 
   /**
@@ -330,15 +359,16 @@ class RelSet {
         postEquivalenceEvent(planner, rel);
       }
     }
-    if (this.rel == null) {
-      this.rel = rel;
+    if (this.originalRel == null) {
+      this.originalRel = rel;
     } else {
       // Row types must be the same, except for field names.
       RelOptUtil.verifyTypeEquivalence(
-          this.rel,
+          this.originalRel,
           rel,
           this);
     }
+    checkAndUpdateOriginalRel(rel);
   }
 
   /**
@@ -363,13 +393,14 @@ class RelSet {
     assert otherSet.equivalentSet == null;
     LOGGER.trace("Merge set#{} into set#{}", otherSet.id, id);
     otherSet.equivalentSet = this;
-    RelOptCluster cluster = castNonNull(rel).getCluster();
+    RelOptCluster cluster = originalRel.getCluster();
+    RelMetadataQuery mq = cluster.getMetadataQuery();
 
     // remove from table
     boolean existed = planner.allSets.remove(otherSet);
     assert existed : "merging with a dead otherSet";
 
-    Set<RelNode> changedRels = new HashSet<>();
+    Map<RelSubset, RelNode> changedSubsets = new IdentityHashMap<>();
 
     // merge subsets
     for (RelSubset otherSubset : otherSet.subsets) {
@@ -387,16 +418,9 @@ class RelSet {
         subset = getOrCreateSubset(cluster, otherTraits, true);
       }
 
-      assert subset != null;
-      if (subset.passThroughCache == null) {
-        subset.passThroughCache = otherSubset.passThroughCache;
-      } else if (otherSubset.passThroughCache != null) {
-        subset.passThroughCache.addAll(otherSubset.passThroughCache);
-      }
-
       // collect RelSubset instances, whose best should be changed
-      if (otherSubset.bestCost.isLt(subset.bestCost) && otherSubset.best != null) {
-        changedRels.add(otherSubset.best);
+      if (otherSubset.bestCost.isLt(subset.bestCost)) {
+        changedSubsets.put(subset, otherSubset.best);
       }
     }
 
@@ -420,10 +444,17 @@ class RelSet {
     // Has another set merged with this?
     assert equivalentSet == null;
 
-    // propagate the new best information from changed relNodes.
-    for (RelNode rel : changedRels) {
-      planner.propagateCostImprovements(rel);
+    // calls propagateCostImprovements() for RelSubset instances,
+    // whose best should be changed to check whether that
+    // subset's parents get cheaper.
+    Set<RelSubset> activeSet = new HashSet<>();
+    for (Map.Entry<RelSubset, RelNode> subsetBestPair : changedSubsets.entrySet()) {
+      RelSubset relSubset = subsetBestPair.getKey();
+      relSubset.propagateCostImprovements(
+          planner, mq, subsetBestPair.getValue(),
+          activeSet);
     }
+    assert activeSet.isEmpty();
 
     // Update all rels which have a child in the other set, to reflect the
     // fact that the child has been renamed.
@@ -444,8 +475,12 @@ class RelSet {
 
     // Make sure the cost changes as a result of merging are propagated.
     for (RelNode parentRel : getParentRels()) {
-      planner.propagateCostImprovements(parentRel);
+      final RelSubset parentSubset = planner.getSubset(parentRel);
+      parentSubset.propagateCostImprovements(
+          planner, mq, parentRel,
+          activeSet);
     }
+    assert activeSet.isEmpty();
     assert equivalentSet == null;
 
     // Each of the relations in the old set now has new parents, so
@@ -462,22 +497,49 @@ class RelSet {
     }
   }
 
-  //~ Inner Classes ----------------------------------------------------------
+  private void checkAndUpdateOriginalRel(RelNode newRel) {
+    if (newRel instanceof LogicalNode && this.originalRel instanceof LogicalNode
+        && ((LogicalNode) newRel).getStatsEstimateConfidence().compareTo(
+            ((LogicalNode) this.originalRel).getStatsEstimateConfidence()) > 0) {
+      this.originalRel = newRel;
 
-  /**
-   * An enum representing exploring state of current RelSet.
-   */
-  enum ExploringState {
-    /**
-     * The RelSet is exploring.
-     * It means all possible rule matches are scheduled, but not fully applied.
-     * This RelSet will refuse to explore again, but cannot provide a valid LB.
-     */
-    EXPLORING,
+      // Invalidate parent sets original rel meta cache since child set properties might
+      // have been changed.
+      HashSet<RelSet> newParentSets = getParentSets();
+      HashSet<RelSet> allParentSets = new HashSet<>();
+      while (!newParentSets.isEmpty()) {
+        allParentSets.addAll(newParentSets);
+        HashSet<RelSet> validParents = new HashSet<>();
+        for (RelSet set : newParentSets) {
+          HashSet<RelSet> parents = set.getParentSets();
+          for (RelSet s : parents) {
+            // To handle cycle references between sets
+            if (!allParentSets.contains(s)) {
+              validParents.add(s);
+            }
+          }
+        }
+        newParentSets = validParents;
+      }
+      for (RelSet set : allParentSets) {
+        final RelMetadataQuery mq = set.originalRel.getCluster().getMetadataQuery();
+        mq.clearCache(set.originalRel);
+      }
+    }
+  }
 
-    /**
-     * The RelSet is fully explored and is able to provide a valid LB.
-     */
-    EXPLORED
+  private HashSet<RelSet> getParentSets() {
+    HashSet<RelSet> results = new HashSet<>();
+    VolcanoPlanner planner = (VolcanoPlanner) this.originalRel.getCluster().getPlanner();
+    assert planner != null;
+
+    for (RelNode rel : getParentRels()) {
+      RelSet set = planner.getSet(rel);
+      if (set.id != this.id && !planner.isPruned(rel)) {
+        results.add(set);
+      }
+    }
+
+    return results;
   }
 }

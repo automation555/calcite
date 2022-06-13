@@ -20,6 +20,7 @@ import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexExecutor;
 import org.apache.calcite.util.CancelFlag;
 import org.apache.calcite.util.Pair;
@@ -28,14 +29,11 @@ import org.apache.calcite.util.trace.CalciteTrace;
 
 import com.google.common.collect.ImmutableList;
 
-import org.checkerframework.checker.initialization.qual.UnknownInitialization;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
-import org.checkerframework.checker.nullness.qual.Nullable;
-import org.checkerframework.dataflow.qual.Pure;
 import org.slf4j.Logger;
 
 import java.text.NumberFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -43,7 +41,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
@@ -69,11 +66,11 @@ public abstract class AbstractRelOptPlanner implements RelOptPlanner {
 
   protected final RelOptCostFactory costFactory;
 
-  private @MonotonicNonNull MulticastRelOptListener listener;
+  private MulticastRelOptListener listener;
 
-  private @MonotonicNonNull RuleAttemptsListener ruleAttemptsListener;
+  private RuleAttemptsListener ruleAttemptsListener;
 
-  private @Nullable Pattern ruleDescExclusionFilter;
+  private Pattern ruleDescExclusionFilter;
 
   protected final AtomicBoolean cancelFlag;
 
@@ -84,7 +81,7 @@ public abstract class AbstractRelOptPlanner implements RelOptPlanner {
   /** External context. Never null. */
   protected final Context context;
 
-  private @Nullable RexExecutor executor;
+  private RexExecutor executor;
 
   //~ Constructors -----------------------------------------------------------
 
@@ -92,17 +89,17 @@ public abstract class AbstractRelOptPlanner implements RelOptPlanner {
    * Creates an AbstractRelOptPlanner.
    */
   protected AbstractRelOptPlanner(RelOptCostFactory costFactory,
-      @Nullable Context context) {
-    this.costFactory = Objects.requireNonNull(costFactory, "costFactory");
+      Context context) {
+    assert costFactory != null;
+    this.costFactory = costFactory;
     if (context == null) {
       context = Contexts.empty();
     }
     this.context = context;
 
-    this.cancelFlag =
-        context.maybeUnwrap(CancelFlag.class)
-            .map(flag -> flag.atomicBoolean)
-            .orElseGet(AtomicBoolean::new);
+    final CancelFlag cancelFlag = context.unwrap(CancelFlag.class);
+    this.cancelFlag = cancelFlag != null ? cancelFlag.atomicBoolean
+        : new AtomicBoolean();
 
     // Add abstract RelNode classes. No RelNodes will ever be registered with
     // these types, but some operands may use them.
@@ -113,23 +110,22 @@ public abstract class AbstractRelOptPlanner implements RelOptPlanner {
       this.ruleAttemptsListener = new RuleAttemptsListener();
       addListener(this.ruleAttemptsListener);
     }
-    addListener(new RuleEventLogger());
   }
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public void clear() {}
+  public void clear() {}
 
-  @Override public Context getContext() {
+  public Context getContext() {
     return context;
   }
 
-  @Override public RelOptCostFactory getCostFactory() {
+  public RelOptCostFactory getCostFactory() {
     return costFactory;
   }
 
   @SuppressWarnings("deprecation")
-  @Override public void setCancelFlag(CancelFlag cancelFlag) {
+  public void setCancelFlag(CancelFlag cancelFlag) {
     // ignored
   }
 
@@ -143,11 +139,11 @@ public abstract class AbstractRelOptPlanner implements RelOptPlanner {
     }
   }
 
-  @Override public List<RelOptRule> getRules() {
+  public List<RelOptRule> getRules() {
     return ImmutableList.copyOf(mapDescToRule.values());
   }
 
-  @Override public boolean addRule(RelOptRule rule) {
+  public boolean addRule(RelOptRule rule) {
     // Check that there isn't a rule with the same description
     final String description = rule.toString();
     assert description != null;
@@ -167,23 +163,23 @@ public abstract class AbstractRelOptPlanner implements RelOptPlanner {
     return true;
   }
 
-  @Override public boolean removeRule(RelOptRule rule) {
+  public boolean removeRule(RelOptRule rule) {
     String description = rule.toString();
     RelOptRule removed = mapDescToRule.remove(description);
     return removed != null;
   }
 
   /**
-   * Returns the rule with a given description.
+   * Returns the rule with a given description
    *
    * @param description Description
    * @return Rule with given description, or null if not found
    */
-  protected @Nullable RelOptRule getRuleByDescription(String description) {
+  protected RelOptRule getRuleByDescription(String description) {
     return mapDescToRule.get(description);
   }
 
-  @Override public void setRuleDescExclusionFilter(@Nullable Pattern exclusionFilter) {
+  public void setRuleDescExclusionFilter(Pattern exclusionFilter) {
     ruleDescExclusionFilter = exclusionFilter;
   }
 
@@ -198,46 +194,48 @@ public abstract class AbstractRelOptPlanner implements RelOptPlanner {
         && ruleDescExclusionFilter.matcher(rule.toString()).matches();
   }
 
-  @Override public RelOptPlanner chooseDelegate() {
+  public RelOptPlanner chooseDelegate() {
     return this;
   }
 
-  @Override public void addMaterialization(RelOptMaterialization materialization) {
+  public void addMaterialization(RelOptMaterialization materialization) {
     // ignore - this planner does not support materializations
   }
 
-  @Override public List<RelOptMaterialization> getMaterializations() {
+  public List<RelOptMaterialization> getMaterializations() {
     return ImmutableList.of();
   }
 
-  @Override public void addLattice(RelOptLattice lattice) {
+  public void addLattice(RelOptLattice lattice) {
     // ignore - this planner does not support lattices
   }
 
-  @Override public @Nullable RelOptLattice getLattice(RelOptTable table) {
+  public RelOptLattice getLattice(RelOptTable table) {
     // this planner does not support lattices
     return null;
   }
 
-  @Override public void registerSchema(RelOptSchema schema) {
+  public void registerSchema(RelOptSchema schema) {
   }
 
-  @Deprecated // to be removed before 2.0
-  @Override public long getRelMetadataTimestamp(RelNode rel) {
+  public long getRelMetadataTimestamp(RelNode rel) {
     return 0;
   }
 
   @Override public void prune(RelNode rel) {
   }
 
-  @Override public void registerClass(RelNode node) {
+  @Override public boolean isPruned(RelNode rel) {
+    return false;
+  }
+
+  public void registerClass(RelNode node) {
     final Class<? extends RelNode> clazz = node.getClass();
     if (classes.add(clazz)) {
       onNewClass(node);
     }
-    Convention convention = node.getConvention();
-    if (convention != null && conventions.add(convention)) {
-      convention.register(this);
+    if (conventions.add(node.getConvention())) {
+      node.getConvention().register(this);
     }
   }
 
@@ -246,52 +244,49 @@ public abstract class AbstractRelOptPlanner implements RelOptPlanner {
     node.register(this);
   }
 
-  @Override public RelTraitSet emptyTraitSet() {
+  public RelTraitSet emptyTraitSet() {
     return RelTraitSet.createEmpty();
   }
 
-  @Override public @Nullable RelOptCost getCost(RelNode rel, RelMetadataQuery mq) {
+  public RelOptCost getCost(RelNode rel, RelMetadataQuery mq) {
     return mq.getCumulativeCost(rel);
   }
 
-  @Deprecated // to be removed before 2.0
-  @Override public @Nullable RelOptCost getCost(RelNode rel) {
+  @SuppressWarnings("deprecation")
+  public RelOptCost getCost(RelNode rel) {
     final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
     return getCost(rel, mq);
   }
 
-  @Override public void addListener(
-      @UnknownInitialization AbstractRelOptPlanner this,
-      RelOptListener newListener) {
+  public void addListener(RelOptListener newListener) {
     if (listener == null) {
       listener = new MulticastRelOptListener();
     }
     listener.addListener(newListener);
   }
 
-  @Deprecated // to be removed before 2.0
-  @Override public void registerMetadataProviders(List<RelMetadataProvider> list) {
+  public void registerMetadataProviders(List<RelMetadataProvider> list) {
   }
 
-  @Override public boolean addRelTraitDef(RelTraitDef relTraitDef) {
+  public boolean addRelTraitDef(RelTraitDef relTraitDef) {
     return false;
   }
 
-  @Override public void clearRelTraitDefs() {}
+  public void clearRelTraitDefs() {}
 
-  @Override public List<RelTraitDef> getRelTraitDefs() {
+  public List<RelTraitDef> getRelTraitDefs() {
     return ImmutableList.of();
   }
 
-  @Override public void setExecutor(@Nullable RexExecutor executor) {
+  public void setExecutor(RexExecutor executor) {
     this.executor = executor;
   }
 
-  @Override public @Nullable RexExecutor getExecutor() {
+  public RexExecutor getExecutor() {
     return executor;
   }
 
-  @Override public void onCopy(RelNode rel, RelNode newRel) {
+  public void onCopy(RelNode rel, RelNode newRel) {
     // do nothing
   }
 
@@ -322,6 +317,12 @@ public abstract class AbstractRelOptPlanner implements RelOptPlanner {
       LOGGER.debug("call#{}: Rule [{}] not fired due to exclusion hint",
           ruleCall.id, ruleCall.getRule());
       return;
+    }
+
+    if (LOGGER.isDebugEnabled()) {
+      // Leave this wrapped in a conditional to prevent unnecessarily calling Arrays.toString(...)
+      LOGGER.debug("call#{}: Apply rule [{}] to {}",
+          ruleCall.id, ruleCall.getRule(), Arrays.toString(ruleCall.rels));
     }
 
     if (listener != null) {
@@ -359,6 +360,11 @@ public abstract class AbstractRelOptPlanner implements RelOptPlanner {
       RelOptRuleCall ruleCall,
       RelNode newRel,
       boolean before) {
+    if (before && LOGGER.isDebugEnabled()) {
+      LOGGER.debug("call#{}: Rule {} arguments {} produced {}",
+          ruleCall.id, ruleCall.getRule(), Arrays.toString(ruleCall.rels), newRel);
+    }
+
     if (listener != null) {
       RelOptListener.RuleProductionEvent event =
           new RelOptListener.RuleProductionEvent(
@@ -410,11 +416,12 @@ public abstract class AbstractRelOptPlanner implements RelOptPlanner {
   }
 
   /**
-   * Takes care of tracing and listener notification when a rel is discarded.
+   * Takes care of tracing and listener notification when a rel is discarded
    *
-   * @param rel Discarded rel
+   * @param rel discarded rel
    */
-  protected void notifyDiscard(RelNode rel) {
+  protected void notifyDiscard(
+      RelNode rel) {
     if (listener != null) {
       RelOptListener.RelDiscardedEvent event =
           new RelOptListener.RelDiscardedEvent(
@@ -424,8 +431,7 @@ public abstract class AbstractRelOptPlanner implements RelOptPlanner {
     }
   }
 
-  @Pure
-  public @Nullable RelOptListener getListener() {
+  public RelOptListener getListener() {
     return listener;
   }
 
@@ -441,8 +447,21 @@ public abstract class AbstractRelOptPlanner implements RelOptPlanner {
     });
   }
 
+  /** Computes the key for relational expression digest cache. */
+  protected static Pair<String, List<RelDataType>> key(RelNode rel) {
+    return key(rel.getDigest(), rel.getRowType());
+  }
+
+  /** Computes the key for relational expression digest cache. */
+  protected static Pair<String, List<RelDataType>> key(String digest, RelDataType relType) {
+    final List<RelDataType> v = relType.isStruct()
+        ? Pair.right(relType.getFieldList())
+        : Collections.singletonList(relType);
+    return Pair.of(digest, v);
+  }
+
   /** Listener for counting the attempts of each rule. Only enabled under DEBUG level.*/
-  private static class RuleAttemptsListener implements RelOptListener {
+  private class RuleAttemptsListener implements RelOptListener {
     private long beforeTimestamp;
     private Map<String, Pair<Long, Long>> ruleAttempts;
 

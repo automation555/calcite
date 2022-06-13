@@ -19,6 +19,7 @@ package org.apache.calcite.rel.logical;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
+import org.apache.calcite.rel.LogicalNode;
 import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttle;
@@ -28,8 +29,6 @@ import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.util.ImmutableBitSet;
 
 import com.google.common.collect.ImmutableList;
-
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
 
@@ -45,7 +44,7 @@ import java.util.List;
  * <li>{@link org.apache.calcite.rel.rules.AggregateReduceFunctionsRule}.
  * </ul>
  */
-public final class LogicalAggregate extends Aggregate {
+public final class LogicalAggregate extends Aggregate implements LogicalNode {
   //~ Constructors -----------------------------------------------------------
 
   /**
@@ -67,7 +66,7 @@ public final class LogicalAggregate extends Aggregate {
       List<RelHint> hints,
       RelNode input,
       ImmutableBitSet groupSet,
-      @Nullable List<ImmutableBitSet> groupSets,
+      List<ImmutableBitSet> groupSets,
       List<AggregateCall> aggCalls) {
     super(cluster, traitSet, hints, input, groupSet, groupSets, aggCalls);
   }
@@ -111,7 +110,7 @@ public final class LogicalAggregate extends Aggregate {
   public static LogicalAggregate create(final RelNode input,
       List<RelHint> hints,
       ImmutableBitSet groupSet,
-      @Nullable List<ImmutableBitSet> groupSets,
+      List<ImmutableBitSet> groupSets,
       List<AggregateCall> aggCalls) {
     return create_(input, hints, groupSet, groupSets, aggCalls);
   }
@@ -137,7 +136,7 @@ public final class LogicalAggregate extends Aggregate {
   private static LogicalAggregate create_(final RelNode input,
       List<RelHint> hints,
       ImmutableBitSet groupSet,
-      @Nullable List<ImmutableBitSet> groupSets,
+      List<ImmutableBitSet> groupSets,
       List<AggregateCall> aggCalls) {
     final RelOptCluster cluster = input.getCluster();
     final RelTraitSet traitSet = cluster.traitSetOf(Convention.NONE);
@@ -149,7 +148,7 @@ public final class LogicalAggregate extends Aggregate {
 
   @Override public LogicalAggregate copy(RelTraitSet traitSet, RelNode input,
       ImmutableBitSet groupSet,
-      @Nullable List<ImmutableBitSet> groupSets, List<AggregateCall> aggCalls) {
+      List<ImmutableBitSet> groupSets, List<AggregateCall> aggCalls) {
     assert traitSet.containsIfApplicable(Convention.NONE);
     return new LogicalAggregate(getCluster(), traitSet, hints, input,
         groupSet, groupSets, aggCalls);

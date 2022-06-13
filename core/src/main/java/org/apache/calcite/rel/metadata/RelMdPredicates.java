@@ -16,12 +16,14 @@
  */
 package org.apache.calcite.rel.metadata;
 
+import org.apache.calcite.linq4j.Linq4j;
 import org.apache.calcite.linq4j.Ord;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptPredicateList;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RexImplicationChecker;
 import org.apache.calcite.plan.Strong;
+import org.apache.calcite.plan.hep.HepRelVertex;
 import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
@@ -51,7 +53,7 @@ import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.util.BitSets;
-import org.apache.calcite.util.Bug;
+import org.apache.calcite.util.BuiltInMethod;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Util;
 import org.apache.calcite.util.mapping.Mapping;
@@ -60,8 +62,6 @@ import org.apache.calcite.util.mapping.Mappings;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -72,13 +72,12 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
-
-import static java.util.Objects.requireNonNull;
+import javax.annotation.Nonnull;
 
 /**
  * Utility to infer Predicates that are applicable above a RelNode.
@@ -128,11 +127,11 @@ import static java.util.Objects.requireNonNull;
 public class RelMdPredicates
     implements MetadataHandler<BuiltInMetadata.Predicates> {
   public static final RelMetadataProvider SOURCE = ReflectiveRelMetadataProvider
-      .reflectiveSource(new RelMdPredicates(), BuiltInMetadata.Predicates.Handler.class);
+      .reflectiveSource(BuiltInMethod.PREDICATES.method, new RelMdPredicates());
 
   private static final List<RexNode> EMPTY_LIST = ImmutableList.of();
 
-  @Override public MetadataDef<BuiltInMetadata.Predicates> getDef() {
+  public MetadataDef<BuiltInMetadata.Predicates> getDef() {
     return BuiltInMetadata.Predicates.DEF;
   }
 
@@ -144,6 +143,11 @@ public class RelMdPredicates
    */
   public RelOptPredicateList getPredicates(RelNode rel, RelMetadataQuery mq) {
     return RelOptPredicateList.EMPTY;
+  }
+
+  public RelOptPredicateList getPredicates(HepRelVertex rel,
+      RelMetadataQuery mq) {
+    return mq.getPulledUpPredicates(rel.getCurrentRel());
   }
 
   /**
@@ -245,7 +249,7 @@ public class RelMdPredicates
    * @param columnsMapped Columns which the final predicate can reference
    * @return Predicate expression narrowed to reference only certain columns
    */
-  private static RexNode projectPredicate(final RexBuilder rexBuilder, RelNode input,
+  private RexNode projectPredicate(final RexBuilder rexBuilder, RelNode input,
       RexNode r, ImmutableBitSet columnsMapped) {
     ImmutableBitSet rCols = RelOptUtil.InputFinder.bits(r);
     if (columnsMapped.contains(rCols)) {
@@ -278,18 +282,11 @@ public class RelMdPredicates
     final RexBuilder rexBuilder = filter.getCluster().getRexBuilder();
     final RelOptPredicateList inputInfo = mq.getPulledUpPredicates(input);
 
-    // Simplify condition using RexSimplify.
-    final RexNode condition = filter.getCondition();
-    final RexExecutor executor =
-        Util.first(filter.getCluster().getPlanner().getExecutor(), RexUtil.EXECUTOR);
-    final RexSimplify simplify = new RexSimplify(rexBuilder, RelOptPredicateList.EMPTY, executor);
-    final RexNode simplifiedCondition = simplify.simplify(condition);
-
     return Util.first(inputInfo, RelOptPredicateList.EMPTY)
         .union(rexBuilder,
             RelOptPredicateList.of(rexBuilder,
                 RexUtil.retainDeterministic(
-                    RelOptUtil.conjunctions(simplifiedCondition))));
+                    RelOptUtil.conjunctions(filter.getCondition()))));
   }
 
   /**
@@ -487,26 +484,10 @@ public class RelMdPredicates
     return mq.getPulledUpPredicates(input);
   }
 
-  // CHECKSTYLE: IGNORE 1
-  /**
-   * Returns the
-   * {@link BuiltInMetadata.Predicates#getPredicates()}
-   * statistic.
-   * @see RelMetadataQuery#getPulledUpPredicates(RelNode) */
+  /** @see RelMetadataQuery#getPulledUpPredicates(RelNode) */
   public RelOptPredicateList getPredicates(RelSubset r,
       RelMetadataQuery mq) {
-    if (!Bug.CALCITE_1048_FIXED) {
-      return RelOptPredicateList.EMPTY;
-    }
-    final RexBuilder rexBuilder = r.getCluster().getRexBuilder();
-    RelOptPredicateList list = null;
-    for (RelNode r2 : r.getRels()) {
-      RelOptPredicateList list2 = mq.getPulledUpPredicates(r2);
-      if (list2 != null) {
-        list = list == null ? list2 : list.union(rexBuilder, list2);
-      }
-    }
-    return Util.first(list, RelOptPredicateList.EMPTY);
+    return getPredicates(r.getOriginal(), mq);
   }
 
   /**
@@ -540,18 +521,16 @@ public class RelMdPredicates
     final ImmutableBitSet leftFieldsBitSet;
     final ImmutableBitSet rightFieldsBitSet;
     final ImmutableBitSet allFieldsBitSet;
-    @SuppressWarnings("JdkObsolete")
     SortedMap<Integer, BitSet> equivalence;
     final Map<RexNode, ImmutableBitSet> exprFields;
     final Set<RexNode> allExprs;
     final Set<RexNode> equalityPredicates;
-    final @Nullable RexNode leftChildPredicates;
-    final @Nullable RexNode rightChildPredicates;
+    final RexNode leftChildPredicates;
+    final RexNode rightChildPredicates;
     final RexSimplify simplify;
 
-    @SuppressWarnings("JdkObsolete")
-    JoinConditionBasedPredicateInference(Join joinRel, @Nullable RexNode leftPredicates,
-        @Nullable RexNode rightPredicates, RexSimplify simplify) {
+    JoinConditionBasedPredicateInference(Join joinRel, RexNode leftPredicates,
+        RexNode rightPredicates, RexSimplify simplify) {
       super();
       this.joinRel = joinRel;
       this.simplify = simplify;
@@ -607,7 +586,10 @@ public class RelMdPredicates
       // Only process equivalences found in the join conditions. Processing
       // Equivalences from the left or right side infer predicates that are
       // already present in the Tree below the join.
-      List<RexNode> exprs = RelOptUtil.conjunctions(joinRel.getCondition());
+      RexBuilder rexBuilder = joinRel.getCluster().getRexBuilder();
+      List<RexNode> exprs =
+          RelOptUtil.conjunctions(
+              compose(rexBuilder, ImmutableList.of(joinRel.getCondition())));
 
       final EquivalenceFinder eF = new EquivalenceFinder();
       exprs.forEach(input -> input.accept(eF));
@@ -642,8 +624,6 @@ public class RelMdPredicates
             joinType == JoinRelType.LEFT ? rightFieldsBitSet
                 : allFieldsBitSet);
         break;
-      default:
-        break;
       }
       switch (joinType) {
       case SEMI:
@@ -653,8 +633,6 @@ public class RelMdPredicates
             includeEqualityInference,
             joinType == JoinRelType.RIGHT ? leftFieldsBitSet
                 : allFieldsBitSet);
-        break;
-      default:
         break;
       }
 
@@ -711,15 +689,15 @@ public class RelMdPredicates
       }
     }
 
-    public @Nullable RexNode left() {
+    public RexNode left() {
       return leftChildPredicates;
     }
 
-    public @Nullable RexNode right() {
+    public RexNode right() {
       return rightChildPredicates;
     }
 
-    private void infer(@Nullable RexNode predicates, Set<RexNode> allExprs,
+    private void infer(RexNode predicates, Set<RexNode> allExprs,
         List<RexNode> inferredPredicates, boolean includeEqualityInference,
         ImmutableBitSet inferringFields) {
       for (RexNode r : RelOptUtil.conjunctions(predicates)) {
@@ -736,9 +714,6 @@ public class RelMdPredicates
           // some duplicates in in result pulledUpPredicates
           RexNode simplifiedTarget =
               simplify.simplifyFilterPredicates(RelOptUtil.conjunctions(tr));
-          if (simplifiedTarget == null) {
-            simplifiedTarget = joinRel.getCluster().getRexBuilder().makeLiteral(false);
-          }
           if (checkTarget(inferringFields, allExprs, tr)
               && checkTarget(inferringFields, allExprs, simplifiedTarget)) {
             inferredPredicates.add(simplifiedTarget);
@@ -749,30 +724,31 @@ public class RelMdPredicates
     }
 
     Iterable<Mapping> mappings(final RexNode predicate) {
-      final ImmutableBitSet fields = requireNonNull(exprFields.get(predicate),
-          () -> "exprFields.get(predicate) is null for " + predicate);
+      final ImmutableBitSet fields = exprFields.get(predicate);
       if (fields.cardinality() == 0) {
         return Collections.emptyList();
       }
       return () -> new ExprsItr(fields);
     }
 
-    private static boolean checkTarget(ImmutableBitSet inferringFields,
+    private boolean checkTarget(ImmutableBitSet inferringFields,
         Set<RexNode> allExprs, RexNode tr) {
       return inferringFields.contains(RelOptUtil.InputFinder.bits(tr))
           && !allExprs.contains(tr)
           && !isAlwaysTrue(tr);
     }
 
-    @SuppressWarnings("JdkObsolete")
     private void markAsEquivalent(int p1, int p2) {
-      BitSet b = requireNonNull(equivalence.get(p1),
-          () -> "equivalence.get(p1) for " + p1);
+      BitSet b = equivalence.get(p1);
       b.set(p2);
 
-      b = requireNonNull(equivalence.get(p2),
-          () -> "equivalence.get(p2) for " + p2);
+      b = equivalence.get(p2);
       b.set(p1);
+    }
+
+    @Nonnull RexNode compose(RexBuilder rexBuilder, Iterable<RexNode> exprs) {
+      exprs = Linq4j.asEnumerable(exprs).where(Objects::nonNull);
+      return RexUtil.composeConjunction(rexBuilder, exprs);
     }
 
     /**
@@ -834,10 +810,9 @@ public class RelMdPredicates
       final int[] columns;
       final BitSet[] columnSets;
       final int[] iterationIdx;
-      @Nullable Mapping nextMapping;
+      Mapping nextMapping;
       boolean firstCall;
 
-      @SuppressWarnings("JdkObsolete")
       ExprsItr(ImmutableBitSet fields) {
         nextMapping = null;
         columns = new int[fields.cardinality()];
@@ -846,15 +821,13 @@ public class RelMdPredicates
         for (int j = 0, i = fields.nextSetBit(0); i >= 0; i = fields
             .nextSetBit(i + 1), j++) {
           columns[j] = i;
-          int fieldIndex = i;
-          columnSets[j] = requireNonNull(equivalence.get(i),
-              () -> "equivalence.get(i) is null for " + fieldIndex + ", " + equivalence);
+          columnSets[j] = equivalence.get(i);
           iterationIdx[j] = 0;
         }
         firstCall = true;
       }
 
-      @Override public boolean hasNext() {
+      public boolean hasNext() {
         if (firstCall) {
           initializeMapping();
           firstCall = false;
@@ -864,14 +837,11 @@ public class RelMdPredicates
         return nextMapping != null;
       }
 
-      @Override public Mapping next() {
-        if (nextMapping == null) {
-          throw new NoSuchElementException();
-        }
+      public Mapping next() {
         return nextMapping;
       }
 
-      @Override public void remove() {
+      public void remove() {
         throw new UnsupportedOperationException();
       }
 
@@ -882,12 +852,12 @@ public class RelMdPredicates
             nextMapping = null;
           } else {
             int tmp = columnSets[level].nextSetBit(0);
-            requireNonNull(nextMapping, "nextMapping").set(columns[level], tmp);
+            nextMapping.set(columns[level], tmp);
             iterationIdx[level] = tmp + 1;
             computeNextMapping(level - 1);
           }
         } else {
-          requireNonNull(nextMapping, "nextMapping").set(columns[level], t);
+          nextMapping.set(columns[level], t);
           iterationIdx[level] = t + 1;
         }
       }
@@ -909,14 +879,14 @@ public class RelMdPredicates
       }
     }
 
-    private static int pos(RexNode expr) {
+    private int pos(RexNode expr) {
       if (expr instanceof RexInputRef) {
         return ((RexInputRef) expr).getIndex();
       }
       return -1;
     }
 
-    private static boolean isAlwaysTrue(RexNode predicate) {
+    private boolean isAlwaysTrue(RexNode predicate) {
       if (predicate instanceof RexCall) {
         RexCall c = (RexCall) predicate;
         if (c.getOperator().getKind() == SqlKind.EQUALS) {

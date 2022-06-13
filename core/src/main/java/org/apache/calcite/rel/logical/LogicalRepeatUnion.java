@@ -19,12 +19,10 @@ package org.apache.calcite.rel.logical;
 import org.apache.calcite.linq4j.function.Experimental;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCluster;
-import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelTraitSet;
+import org.apache.calcite.rel.LogicalNode;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.RepeatUnion;
-
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
 
@@ -36,28 +34,26 @@ import java.util.List;
  * notice.
  */
 @Experimental
-public class LogicalRepeatUnion extends RepeatUnion {
+public class LogicalRepeatUnion extends RepeatUnion implements LogicalNode {
 
   //~ Constructors -----------------------------------------------------------
   private LogicalRepeatUnion(RelOptCluster cluster, RelTraitSet traitSet,
-      RelNode seed, RelNode iterative, boolean all, int iterationLimit,
-      @Nullable RelOptTable transientTable) {
-    super(cluster, traitSet, seed, iterative, all, iterationLimit, transientTable);
+      RelNode seed, RelNode iterative, boolean all, int iterationLimit) {
+    super(cluster, traitSet, seed, iterative, all, iterationLimit);
   }
 
   /** Creates a LogicalRepeatUnion. */
   public static LogicalRepeatUnion create(RelNode seed, RelNode iterative,
-      boolean all, @Nullable RelOptTable transientTable) {
-    return create(seed, iterative, all, -1, transientTable);
+      boolean all) {
+    return create(seed, iterative, all, -1);
   }
 
   /** Creates a LogicalRepeatUnion. */
   public static LogicalRepeatUnion create(RelNode seed, RelNode iterative,
-      boolean all, int iterationLimit, @Nullable RelOptTable transientTable) {
+      boolean all, int iterationLimit) {
     RelOptCluster cluster = seed.getCluster();
     RelTraitSet traitSet = cluster.traitSetOf(Convention.NONE);
-    return new LogicalRepeatUnion(cluster, traitSet, seed, iterative, all, iterationLimit,
-        transientTable);
+    return new LogicalRepeatUnion(cluster, traitSet, seed, iterative, all, iterationLimit);
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -67,6 +63,6 @@ public class LogicalRepeatUnion extends RepeatUnion {
     assert traitSet.containsIfApplicable(Convention.NONE);
     assert inputs.size() == 2;
     return new LogicalRepeatUnion(getCluster(), traitSet,
-        inputs.get(0), inputs.get(1), all, iterationLimit, transientTable);
+        inputs.get(0), inputs.get(1), all, iterationLimit);
   }
 }

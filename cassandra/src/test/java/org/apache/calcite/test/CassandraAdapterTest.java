@@ -16,7 +16,7 @@
  */
 package org.apache.calcite.test;
 
-import com.datastax.oss.driver.api.core.CqlSession;
+import com.datastax.driver.core.Session;
 import com.google.common.collect.ImmutableMap;
 
 import org.cassandraunit.CQLDataLoader;
@@ -47,7 +47,7 @@ class CassandraAdapterTest {
           CassandraExtension.getDataset("/model.json");
 
   @BeforeAll
-  static void load(CqlSession session) {
+  static void load(Session session) {
     new CQLDataLoader(session)
         .load(new ClassPathCQLDataSet("twissandra.cql"));
   }
@@ -100,8 +100,8 @@ class CassandraAdapterTest {
         .returns("tweet_id=f3c329de-d05b-11e5-b58b-90e2ba530b12\n"
                + "tweet_id=f3dbb03a-d05b-11e5-b58b-90e2ba530b12\n")
         .explainContains("PLAN=CassandraToEnumerableConverter\n"
-                + "  CassandraLimit(fetch=[2])\n"
-                + "    CassandraProject(tweet_id=[$2])\n"
+                + "  CassandraProject(tweet_id=[$2])\n"
+                + "    CassandraLimit(fetch=[2])\n"
                 + "      CassandraFilter(condition=[=($0, '!PUBLIC!')])\n");
   }
 
@@ -149,8 +149,7 @@ class CassandraAdapterTest {
   @Test void testMaterializedView() {
     CalciteAssert.that()
         .with(TWISSANDRA)
-        .query("select \"tweet_id\" from \"tweets\" where "
-            + "\"username\"='JmuhsAaMdw' and \"tweet_id\"='f3d3d4dc-d05b-11e5-b58b-90e2ba530b12'")
+        .query("select \"tweet_id\" from \"tweets\" where \"username\"='JmuhsAaMdw'")
         .enableMaterializations(true)
         .explainContains("CassandraTableScan(table=[[twissandra, Tweets_By_User]])");
   }

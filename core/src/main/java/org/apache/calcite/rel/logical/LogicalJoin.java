@@ -19,6 +19,7 @@ package org.apache.calcite.rel.logical;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
+import org.apache.calcite.rel.LogicalNode;
 import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttle;
@@ -33,14 +34,10 @@ import org.apache.calcite.rex.RexNode;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-
-import static java.util.Objects.requireNonNull;
 
 /**
  * Sub-class of {@link org.apache.calcite.rel.core.Join}
@@ -58,7 +55,7 @@ import static java.util.Objects.requireNonNull;
  *
  * </ul>
  */
-public final class LogicalJoin extends Join {
+public final class LogicalJoin extends Join implements LogicalNode {
   //~ Instance fields --------------------------------------------------------
 
   // NOTE jvs 14-Mar-2006:  Normally we don't use state like this
@@ -105,7 +102,7 @@ public final class LogicalJoin extends Join {
       ImmutableList<RelDataTypeField> systemFieldList) {
     super(cluster, traitSet, hints, left, right, condition, variablesSet, joinType);
     this.semiJoinDone = semiJoinDone;
-    this.systemFieldList = requireNonNull(systemFieldList, "systemFieldList");
+    this.systemFieldList = Objects.requireNonNull(systemFieldList);
   }
 
   @Deprecated // to be removed before 2.0
@@ -151,10 +148,8 @@ public final class LogicalJoin extends Join {
     this(input.getCluster(), input.getCluster().traitSetOf(Convention.NONE),
         new ArrayList<>(),
         input.getInputs().get(0), input.getInputs().get(1),
-        requireNonNull(input.getExpression("condition"), "condition"),
-        ImmutableSet.of(),
-        requireNonNull(input.getEnum("joinType", JoinRelType.class), "joinType"),
-        false,
+        input.getExpression("condition"), ImmutableSet.of(),
+        input.getEnum("joinType", JoinRelType.class), false,
         ImmutableList.of());
   }
 
@@ -190,31 +185,18 @@ public final class LogicalJoin extends Join {
     return shuttle.visit(this);
   }
 
-  @Override public RelWriter explainTerms(RelWriter pw) {
+  public RelWriter explainTerms(RelWriter pw) {
     // Don't ever print semiJoinDone=false. This way, we
     // don't clutter things up in optimizers that don't use semi-joins.
     return super.explainTerms(pw)
         .itemIf("semiJoinDone", semiJoinDone, semiJoinDone);
   }
 
-  @Override public boolean deepEquals(@Nullable Object obj) {
-    if (this == obj) {
-      return true;
-    }
-    return deepEquals0(obj)
-        && semiJoinDone == ((LogicalJoin) obj).semiJoinDone
-        && systemFieldList.equals(((LogicalJoin) obj).systemFieldList);
-  }
-
-  @Override public int deepHashCode() {
-    return Objects.hash(deepHashCode0(), semiJoinDone, systemFieldList);
-  }
-
   @Override public boolean isSemiJoinDone() {
     return semiJoinDone;
   }
 
-  @Override public List<RelDataTypeField> getSystemFieldList() {
+  public List<RelDataTypeField> getSystemFieldList() {
     return systemFieldList;
   }
 

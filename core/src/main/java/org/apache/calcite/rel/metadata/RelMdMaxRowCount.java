@@ -35,10 +35,7 @@ import org.apache.calcite.rel.core.Union;
 import org.apache.calcite.rel.core.Values;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexLiteral;
-import org.apache.calcite.util.Bug;
-import org.apache.calcite.util.Util;
-
-import org.checkerframework.checker.nullness.qual.Nullable;
+import org.apache.calcite.util.BuiltInMethod;
 
 /**
  * RelMdMaxRowCount supplies a default implementation of
@@ -48,15 +45,15 @@ public class RelMdMaxRowCount
     implements MetadataHandler<BuiltInMetadata.MaxRowCount> {
   public static final RelMetadataProvider SOURCE =
       ReflectiveRelMetadataProvider.reflectiveSource(
-          new RelMdMaxRowCount(), BuiltInMetadata.MaxRowCount.Handler.class);
+          BuiltInMethod.MAX_ROW_COUNT.method, new RelMdMaxRowCount());
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public MetadataDef<BuiltInMetadata.MaxRowCount> getDef() {
+  public MetadataDef<BuiltInMetadata.MaxRowCount> getDef() {
     return BuiltInMetadata.MaxRowCount.DEF;
   }
 
-  public @Nullable Double getMaxRowCount(Union rel, RelMetadataQuery mq) {
+  public Double getMaxRowCount(Union rel, RelMetadataQuery mq) {
     double rowCount = 0.0;
     for (RelNode input : rel.getInputs()) {
       Double partialRowCount = mq.getMaxRowCount(input);
@@ -68,7 +65,7 @@ public class RelMdMaxRowCount
     return rowCount;
   }
 
-  public @Nullable Double getMaxRowCount(Intersect rel, RelMetadataQuery mq) {
+  public Double getMaxRowCount(Intersect rel, RelMetadataQuery mq) {
     // max row count is the smallest of the inputs
     Double rowCount = null;
     for (RelNode input : rel.getInputs()) {
@@ -81,26 +78,26 @@ public class RelMdMaxRowCount
     return rowCount;
   }
 
-  public @Nullable Double getMaxRowCount(Minus rel, RelMetadataQuery mq) {
+  public Double getMaxRowCount(Minus rel, RelMetadataQuery mq) {
     return mq.getMaxRowCount(rel.getInput(0));
   }
 
-  public @Nullable Double getMaxRowCount(Filter rel, RelMetadataQuery mq) {
+  public Double getMaxRowCount(Filter rel, RelMetadataQuery mq) {
     if (rel.getCondition().isAlwaysFalse()) {
       return 0D;
     }
     return mq.getMaxRowCount(rel.getInput());
   }
 
-  public @Nullable Double getMaxRowCount(Calc rel, RelMetadataQuery mq) {
+  public Double getMaxRowCount(Calc rel, RelMetadataQuery mq) {
     return mq.getMaxRowCount(rel.getInput());
   }
 
-  public @Nullable Double getMaxRowCount(Project rel, RelMetadataQuery mq) {
+  public Double getMaxRowCount(Project rel, RelMetadataQuery mq) {
     return mq.getMaxRowCount(rel.getInput());
   }
 
-  public @Nullable Double getMaxRowCount(Exchange rel, RelMetadataQuery mq) {
+  public Double getMaxRowCount(Exchange rel, RelMetadataQuery mq) {
     return mq.getMaxRowCount(rel.getInput());
   }
 
@@ -109,13 +106,16 @@ public class RelMdMaxRowCount
     if (rowCount == null) {
       rowCount = Double.POSITIVE_INFINITY;
     }
-
-    final int offset = rel.offset instanceof RexLiteral ? RexLiteral.intValue(rel.offset) : 0;
+    final int offset = rel.offset == null ? 0 : RexLiteral.intValue(rel.offset);
     rowCount = Math.max(rowCount - offset, 0D);
 
-    final double limit =
-        rel.fetch instanceof RexLiteral ? RexLiteral.intValue(rel.fetch) : rowCount;
-    return limit < rowCount ? limit : rowCount;
+    if (rel.fetch != null) {
+      final int limit = RexLiteral.intValue(rel.fetch);
+      if (limit < rowCount) {
+        return (double) limit;
+      }
+    }
+    return rowCount;
   }
 
   public Double getMaxRowCount(EnumerableLimit rel, RelMetadataQuery mq) {
@@ -123,16 +123,19 @@ public class RelMdMaxRowCount
     if (rowCount == null) {
       rowCount = Double.POSITIVE_INFINITY;
     }
-
-    final int offset = rel.offset instanceof RexLiteral ? RexLiteral.intValue(rel.offset) : 0;
+    final int offset = rel.offset == null ? 0 : RexLiteral.intValue(rel.offset);
     rowCount = Math.max(rowCount - offset, 0D);
 
-    final double limit =
-        rel.fetch instanceof RexLiteral ? RexLiteral.intValue(rel.fetch) : rowCount;
-    return limit < rowCount ? limit : rowCount;
+    if (rel.fetch != null) {
+      final int limit = RexLiteral.intValue(rel.fetch);
+      if (limit < rowCount) {
+        return (double) limit;
+      }
+    }
+    return rowCount;
   }
 
-  public @Nullable Double getMaxRowCount(Aggregate rel, RelMetadataQuery mq) {
+  public Double getMaxRowCount(Aggregate rel, RelMetadataQuery mq) {
     if (rel.getGroupSet().isEmpty()) {
       // Aggregate with no GROUP BY always returns 1 row (even on empty table).
       return 1D;
@@ -142,7 +145,7 @@ public class RelMdMaxRowCount
     if (rel.getGroupType() == Aggregate.Group.SIMPLE) {
       final RelOptPredicateList predicateList =
           mq.getPulledUpPredicates(rel.getInput());
-      if (!RelOptPredicateList.isEmpty(predicateList)
+      if (predicateList != null
           && allGroupKeysAreConstant(rel, predicateList)) {
         return 1D;
       }
@@ -166,7 +169,7 @@ public class RelMdMaxRowCount
     return true;
   }
 
-  public @Nullable Double getMaxRowCount(Join rel, RelMetadataQuery mq) {
+  public Double getMaxRowCount(Join rel, RelMetadataQuery mq) {
     Double left = mq.getMaxRowCount(rel.getLeft());
     Double right = mq.getMaxRowCount(rel.getRight());
     if (left == null || right == null) {
@@ -192,28 +195,16 @@ public class RelMdMaxRowCount
     return (double) values.getTuples().size();
   }
 
-  public @Nullable Double getMaxRowCount(TableModify rel, RelMetadataQuery mq) {
+  public Double getMaxRowCount(TableModify rel, RelMetadataQuery mq) {
     return mq.getMaxRowCount(rel.getInput());
   }
 
   public Double getMaxRowCount(RelSubset rel, RelMetadataQuery mq) {
-    // FIXME This is a short-term fix for [CALCITE-1018]. A complete
-    // solution will come with [CALCITE-1048].
-    Util.discard(Bug.CALCITE_1048_FIXED);
-    for (RelNode node : rel.getRels()) {
-      if (node instanceof Sort) {
-        Sort sort = (Sort) node;
-        if (sort.fetch != null) {
-          return (double) RexLiteral.intValue(sort.fetch);
-        }
-      }
-    }
-
-    return Double.POSITIVE_INFINITY;
+    return mq.getMaxRowCount(rel.getOriginal());
   }
 
   // Catch-all rule when none of the others apply.
-  public @Nullable Double getMaxRowCount(RelNode rel, RelMetadataQuery mq) {
+  public Double getMaxRowCount(RelNode rel, RelMetadataQuery mq) {
     return null;
   }
 }

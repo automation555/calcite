@@ -16,23 +16,19 @@
  */
 package org.apache.calcite.rel.logical;
 
+import org.apache.calcite.config.CalciteSystemProperty;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
+import org.apache.calcite.rel.LogicalNode;
 import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttle;
 import org.apache.calcite.rel.core.Correlate;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.JoinRelType;
-import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.util.ImmutableBitSet;
-
-import com.google.common.collect.ImmutableList;
-
-import java.util.List;
-
-import static java.util.Objects.requireNonNull;
+import org.apache.calcite.util.Litmus;
 
 /**
  * A relational operator that performs nested-loop joins.
@@ -46,7 +42,7 @@ import static java.util.Objects.requireNonNull;
  *
  * @see org.apache.calcite.rel.core.CorrelationId
  */
-public final class LogicalCorrelate extends Correlate {
+public final class LogicalCorrelate extends Correlate implements LogicalNode {
   //~ Instance fields --------------------------------------------------------
 
   //~ Constructors -----------------------------------------------------------
@@ -63,7 +59,6 @@ public final class LogicalCorrelate extends Correlate {
   public LogicalCorrelate(
       RelOptCluster cluster,
       RelTraitSet traitSet,
-      List<RelHint> hints,
       RelNode left,
       RelNode right,
       CorrelationId correlationId,
@@ -72,55 +67,33 @@ public final class LogicalCorrelate extends Correlate {
     super(
         cluster,
         traitSet,
-        hints,
         left,
         right,
         correlationId,
         requiredColumns,
         joinType);
-  }
-
-  @Deprecated // to be removed before 2.0
-  public LogicalCorrelate(
-      RelOptCluster cluster,
-      RelTraitSet traitSet,
-      RelNode left,
-      RelNode right,
-      CorrelationId correlationId,
-      ImmutableBitSet requiredColumns,
-      JoinRelType joinType) {
-    this(cluster, traitSet, ImmutableList.of(), left, right,
-        correlationId, requiredColumns, joinType);
+    assert !CalciteSystemProperty.DEBUG.value() || isValid(Litmus.THROW, null);
   }
 
   /**
    * Creates a LogicalCorrelate by parsing serialized output.
    */
   public LogicalCorrelate(RelInput input) {
-    this(input.getCluster(), input.getTraitSet(), ImmutableList.of(),
-        input.getInputs().get(0),
+    this(input.getCluster(), input.getTraitSet(), input.getInputs().get(0),
         input.getInputs().get(1),
-        new CorrelationId(
-            (Integer) requireNonNull(input.get("correlation"), "correlation")),
+        new CorrelationId((Integer) input.get("correlation")),
         input.getBitSet("requiredColumns"),
-        requireNonNull(input.getEnum("joinType", JoinRelType.class), "joinType"));
+        input.getEnum("joinType", JoinRelType.class));
   }
 
   /** Creates a LogicalCorrelate. */
-  public static LogicalCorrelate create(RelNode left, RelNode right, List<RelHint> hints,
+  public static LogicalCorrelate create(RelNode left, RelNode right,
       CorrelationId correlationId, ImmutableBitSet requiredColumns,
       JoinRelType joinType) {
     final RelOptCluster cluster = left.getCluster();
     final RelTraitSet traitSet = cluster.traitSetOf(Convention.NONE);
-    return new LogicalCorrelate(cluster, traitSet, hints, left, right, correlationId,
+    return new LogicalCorrelate(cluster, traitSet, left, right, correlationId,
         requiredColumns, joinType);
-  }
-
-  @Deprecated // to be removed before 2.0
-  public static LogicalCorrelate create(RelNode left, RelNode right,
-      CorrelationId correlationId, ImmutableBitSet requiredColumns,
-      JoinRelType joinType) {
-    return create(left, right, ImmutableList.of(), correlationId, requiredColumns, joinType);
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -129,16 +102,11 @@ public final class LogicalCorrelate extends Correlate {
       RelNode left, RelNode right, CorrelationId correlationId,
       ImmutableBitSet requiredColumns, JoinRelType joinType) {
     assert traitSet.containsIfApplicable(Convention.NONE);
-    return new LogicalCorrelate(getCluster(), traitSet, hints, left, right,
+    return new LogicalCorrelate(getCluster(), traitSet, left, right,
         correlationId, requiredColumns, joinType);
   }
 
   @Override public RelNode accept(RelShuttle shuttle) {
     return shuttle.visit(this);
-  }
-
-  @Override public RelNode withHints(List<RelHint> hintList) {
-    return new LogicalCorrelate(getCluster(), traitSet, hintList, left, right,
-        correlationId, requiredColumns, joinType);
   }
 }
