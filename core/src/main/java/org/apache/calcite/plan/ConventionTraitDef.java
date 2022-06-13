@@ -21,9 +21,9 @@ import org.apache.calcite.rel.convert.ConverterRule;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.graph.DefaultDirectedGraph;
-import org.apache.calcite.util.graph.DefaultEdge;
 import org.apache.calcite.util.graph.DirectedGraph;
 import org.apache.calcite.util.graph.Graphs;
+import org.apache.calcite.util.graph.TypedEdge;
 
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
@@ -31,12 +31,7 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.util.List;
-
-import static java.util.Objects.requireNonNull;
 
 /**
  * Definition of the convention trait.
@@ -75,19 +70,19 @@ public class ConventionTraitDef extends RelTraitDef<Convention> {
   //~ Methods ----------------------------------------------------------------
 
   // implement RelTraitDef
-  @Override public Class<Convention> getTraitClass() {
+  public Class<Convention> getTraitClass() {
     return Convention.class;
   }
 
-  @Override public String getSimpleName() {
+  public String getSimpleName() {
     return "convention";
   }
 
-  @Override public Convention getDefault() {
+  public Convention getDefault() {
     return Convention.NONE;
   }
 
-  @Override public void registerConverterRule(
+  public void registerConverterRule(
       RelOptPlanner planner,
       ConverterRule converterRule) {
     if (converterRule.isGuaranteed()) {
@@ -106,7 +101,7 @@ public class ConventionTraitDef extends RelTraitDef<Convention> {
     }
   }
 
-  @Override public void deregisterConverterRule(
+  public void deregisterConverterRule(
       RelOptPlanner planner,
       ConverterRule converterRule) {
     if (converterRule.isGuaranteed()) {
@@ -127,7 +122,7 @@ public class ConventionTraitDef extends RelTraitDef<Convention> {
   }
 
   // implement RelTraitDef
-  @Override public @Nullable RelNode convert(
+  public RelNode convert(
       RelOptPlanner planner,
       RelNode rel,
       Convention toConvention,
@@ -135,8 +130,7 @@ public class ConventionTraitDef extends RelTraitDef<Convention> {
     final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
     final ConversionData conversionData = getConversionData(planner);
 
-    final Convention fromConvention = requireNonNull(rel.getConvention(),
-        () -> "convention is null for rel " + rel);
+    final Convention fromConvention = rel.getConvention();
 
     List<List<Convention>> conversionPaths =
         conversionData.getPaths(fromConvention, toConvention);
@@ -149,8 +143,7 @@ public class ConventionTraitDef extends RelTraitDef<Convention> {
       RelNode converted = rel;
       Convention previous = null;
       for (Convention arc : conversionPath) {
-        RelOptCost cost = planner.getCost(converted, mq);
-        if ((cost == null || cost.isInfinite())
+        if (planner.getCost(converted, mq).isInfinite()
             && !allowInfiniteCostConverters) {
           continue loop;
         }
@@ -176,7 +169,7 @@ public class ConventionTraitDef extends RelTraitDef<Convention> {
    * Tries to convert a relational expression to the target convention of an
    * arc.
    */
-  private static @Nullable RelNode changeConvention(
+  private RelNode changeConvention(
       RelNode rel,
       Convention source,
       Convention target,
@@ -198,7 +191,7 @@ public class ConventionTraitDef extends RelTraitDef<Convention> {
     return null;
   }
 
-  @Override public boolean canConvert(
+  public boolean canConvert(
       RelOptPlanner planner,
       Convention fromConvention,
       Convention toConvention) {
@@ -215,18 +208,18 @@ public class ConventionTraitDef extends RelTraitDef<Convention> {
 
   /** Workspace for converting from one convention to another. */
   private static final class ConversionData {
-    final DirectedGraph<Convention, DefaultEdge> conversionGraph =
+    final DirectedGraph<Convention, TypedEdge<Convention>> conversionGraph =
         DefaultDirectedGraph.create();
 
     /**
      * For a given source/target convention, there may be several possible
-     * conversion rules. Maps {@link DefaultEdge} to a
+     * conversion rules. Maps {@link TypedEdge} to a
      * collection of {@link ConverterRule} objects.
      */
     final Multimap<Pair<Convention, Convention>, ConverterRule> mapArcToConverterRule =
         HashMultimap.create();
 
-    private Graphs.@MonotonicNonNull FrozenGraph<Convention, DefaultEdge> pathMap;
+    private Graphs.FrozenGraph<Convention, TypedEdge<Convention>> pathMap;
 
     public List<List<Convention>> getPaths(
         Convention fromConvention,
@@ -234,7 +227,7 @@ public class ConventionTraitDef extends RelTraitDef<Convention> {
       return getPathMap().getPaths(fromConvention, toConvention);
     }
 
-    private Graphs.FrozenGraph<Convention, DefaultEdge> getPathMap() {
+    private Graphs.FrozenGraph<Convention, TypedEdge<Convention>> getPathMap() {
       if (pathMap == null) {
         pathMap = Graphs.makeImmutable(conversionGraph);
       }

@@ -26,15 +26,15 @@ import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.sql2rel.RelFieldTrimmer;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.util.Pair;
-import org.apache.calcite.util.Util;
 import org.apache.calcite.util.graph.DefaultDirectedGraph;
-import org.apache.calcite.util.graph.DefaultEdge;
 import org.apache.calcite.util.graph.DirectedGraph;
 import org.apache.calcite.util.graph.Graphs;
 import org.apache.calcite.util.graph.TopologicalOrderIterator;
+import org.apache.calcite.util.graph.TypedEdge;
 
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
 
 import java.util.ArrayList;
@@ -61,23 +61,6 @@ public abstract class RelOptMaterializations {
    */
   public static List<Pair<RelNode, List<RelOptMaterialization>>> useMaterializedViews(
       final RelNode rel, List<RelOptMaterialization> materializations) {
-    return useMaterializedViews(rel, materializations, SubstitutionVisitor.DEFAULT_RULES);
-  }
-
-  /**
-   * Returns a list of RelNode transformed from all possible combination of
-   * materialized view uses. Big queries will likely have more than one
-   * transformed RelNode, e.g., (t1 group by c1) join (t2 group by c2).
-   * In addition, you can add custom materialized view recognition rules.
-   * @param rel               the original RelNode
-   * @param materializations  the materialized view list
-   * @param materializationRules the materialized view recognition rules
-   * @return the list of transformed RelNode together with their corresponding
-   *         materialized views used in the transformation.
-   */
-  public static List<Pair<RelNode, List<RelOptMaterialization>>> useMaterializedViews(
-      final RelNode rel, List<RelOptMaterialization> materializations,
-      List<SubstitutionVisitor.UnifyRule> materializationRules) {
     final List<RelOptMaterialization> applicableMaterializations =
         getApplicableMaterializations(rel, materializations);
     final List<Pair<RelNode, List<RelOptMaterialization>>> applied =
@@ -87,7 +70,7 @@ public abstract class RelOptMaterializations {
       int count = applied.size();
       for (int i = 0; i < count; i++) {
         Pair<RelNode, List<RelOptMaterialization>> current = applied.get(i);
-        List<RelNode> sub = substitute(current.left, m, materializationRules);
+        List<RelNode> sub = substitute(current.left, m);
         if (!sub.isEmpty()) {
           ImmutableList.Builder<RelOptMaterialization> builder =
               ImmutableList.builder();
@@ -119,7 +102,7 @@ public abstract class RelOptMaterializations {
     final List<Pair<RelNode, RelOptLattice>> latticeUses = new ArrayList<>();
     final Set<List<String>> queryTableNames =
         Sets.newHashSet(
-            Util.transform(queryTables, RelOptTable::getQualifiedName));
+            Iterables.transform(queryTables, RelOptTable::getQualifiedName));
     // Remember leaf-join form of root so we convert at most once.
     final Supplier<RelNode> leafJoinRoot =
         Suppliers.memoize(() -> RelOptMaterialization.toLeafJoinForm(rel))::get;
@@ -144,7 +127,7 @@ public abstract class RelOptMaterializations {
    */
   public static List<RelOptMaterialization> getApplicableMaterializations(
       RelNode rel, List<RelOptMaterialization> materializations) {
-    DirectedGraph<List<String>, DefaultEdge> usesGraph =
+    DirectedGraph<List<String>, TypedEdge<List<String>>> usesGraph =
         DefaultDirectedGraph.create();
     final Map<List<String>, RelOptMaterialization> qnameMap = new HashMap<>();
     for (RelOptMaterialization materialization : materializations) {
@@ -171,7 +154,7 @@ public abstract class RelOptMaterializations {
     // the graph will contain
     //   (T, Emps), (T, Depts), (T2, T)
     // and therefore we can deduce T2 uses Emps.
-    final Graphs.FrozenGraph<List<String>, DefaultEdge> frozenGraph =
+    final Graphs.FrozenGraph<List<String>, TypedEdge<List<String>>> frozenGraph =
         Graphs.makeImmutable(usesGraph);
     final Set<RelOptTable> queryTablesUsed = RelOptUtil.findTables(rel);
     final List<RelOptMaterialization> applicableMaterializations =
@@ -187,11 +170,10 @@ public abstract class RelOptMaterializations {
   }
 
   private static List<RelNode> substitute(
-      RelNode root, RelOptMaterialization materialization,
-      List<SubstitutionVisitor.UnifyRule> materializationRules) {
+      RelNode root, RelOptMaterialization materialization) {
     // First, if the materialization is in terms of a star table, rewrite
     // the query in terms of the star table.
-    if (materialization.starRelOptTable != null) {
+    if (materialization.starTable != null) {
       RelNode newRoot = RelOptMaterialization.tryUseStar(root,
           materialization.starRelOptTable);
       if (newRoot != null) {
@@ -215,7 +197,6 @@ public abstract class RelOptMaterializations {
             .addRuleInstance(CoreRules.PROJECT_REMOVE)
             .addRuleInstance(CoreRules.PROJECT_JOIN_TRANSPOSE)
             .addRuleInstance(CoreRules.PROJECT_SET_OP_TRANSPOSE)
-            .addRuleInstance(CoreRules.AGGREGATE_PROJECT_PULL_UP_CONSTANTS)
             .addRuleInstance(CoreRules.FILTER_TO_CALC)
             .addRuleInstance(CoreRules.PROJECT_TO_CALC)
             .addRuleInstance(CoreRules.FILTER_CALC_MERGE)
@@ -233,10 +214,7 @@ public abstract class RelOptMaterializations {
     hepPlanner.setRoot(root);
     root = hepPlanner.findBestExp();
 
-    return new SubstitutionVisitor(target, root, ImmutableList.
-        <SubstitutionVisitor.UnifyRule>builder()
-        .addAll(materializationRules)
-        .build()).go(materialization.tableRel);
+    return new SubstitutionVisitor(target, root).go(materialization.tableRel);
   }
 
   /**
@@ -262,7 +240,7 @@ public abstract class RelOptMaterializations {
   private static boolean usesTable(
       List<String> qualifiedName,
       Set<RelOptTable> usedTables,
-      Graphs.FrozenGraph<List<String>, DefaultEdge> usesGraph) {
+      Graphs.FrozenGraph<List<String>, TypedEdge<List<String>>> usesGraph) {
     for (RelOptTable queryTable : usedTables) {
       if (usesGraph.getShortestDistance(queryTable.getQualifiedName(), qualifiedName)
           != -1) {

@@ -29,8 +29,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import static java.util.Objects.requireNonNull;
-
 /**
  * Miscellaneous graph utilities.
  */
@@ -38,23 +36,23 @@ public class Graphs {
   private Graphs() {
   }
 
-  public static <V, E extends DefaultEdge> List<V> predecessorListOf(
+  public static <V, E extends TypedEdge<V>> List<V> predecessorListOf(
       DirectedGraph<V, E> graph, V vertex) {
     final List<E> edges = graph.getInwardEdges(vertex);
     return new AbstractList<V>() {
-      @Override public V get(int index) {
+      public V get(int index) {
         //noinspection unchecked
-        return (V) edges.get(index).source;
+        return edges.get(index).source;
       }
 
-      @Override public int size() {
+      public int size() {
         return edges.size();
       }
     };
   }
 
   /** Returns a map of the shortest paths between any pair of nodes. */
-  public static <V, E extends DefaultEdge> FrozenGraph<V, E> makeImmutable(
+  public static <V, E extends TypedEdge<V>> FrozenGraph<V, E> makeImmutable(
       DirectedGraph<V, E> graph) {
     DefaultDirectedGraph<V, E> graph1 = (DefaultDirectedGraph<V, E>) graph;
     Map<Pair<V, V>, int[]> shortestDistances = new HashMap<>();
@@ -77,8 +75,7 @@ public class Graphs {
           if (edge.target.equals(edge2.left)) {
             final Pair<V, V> key = Pair.of(graph1.source(edge), edge2.right);
             int[] bestDistance = shortestDistances.get(key);
-            int[] arc2Distance = requireNonNull(shortestDistances.get(edge2),
-                () -> "shortestDistances.get(edge2) for " + edge2);
+            int[] arc2Distance = shortestDistances.get(edge2);
             if ((bestDistance == null)
                 || (bestDistance[0] > (arc2Distance[0] + 1))) {
               shortestDistances.put(key, new int[] {arc2Distance[0] + 1});
@@ -100,7 +97,7 @@ public class Graphs {
    * @param <V> Vertex type
    * @param <E> Edge type
    */
-  public static class FrozenGraph<V extends Object, E extends DefaultEdge> {
+  public static class FrozenGraph<V, E extends TypedEdge<V>> {
     private final DefaultDirectedGraph<V, E> graph;
     private final Map<Pair<V, V>, int[]> shortestDistances;
 

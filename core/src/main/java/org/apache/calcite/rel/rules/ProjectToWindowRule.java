@@ -17,8 +17,9 @@
 package org.apache.calcite.rel.rules;
 
 import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
-import org.apache.calcite.plan.RelRule;
+import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Calc;
@@ -39,16 +40,14 @@ import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RelBuilderFactory;
 import org.apache.calcite.util.ImmutableIntList;
 import org.apache.calcite.util.Pair;
-import org.apache.calcite.util.Util;
 import org.apache.calcite.util.graph.DefaultDirectedGraph;
-import org.apache.calcite.util.graph.DefaultEdge;
 import org.apache.calcite.util.graph.DirectedGraph;
 import org.apache.calcite.util.graph.TopologicalOrderIterator;
+import org.apache.calcite.util.graph.TypedEdge;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
-
-import org.immutables.value.Value;
+import com.google.common.collect.Lists;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -71,51 +70,65 @@ import java.util.Set;
  * <p>There is also a variant that matches
  * {@link org.apache.calcite.rel.core.Calc} rather than {@code Project}.
  */
-public abstract class ProjectToWindowRule
-    extends RelRule<ProjectToWindowRule.Config>
-    implements TransformationRule {
+public abstract class ProjectToWindowRule extends RelOptRule implements TransformationRule {
+  //~ Static fields/initializers ---------------------------------------------
 
-  /** Creates a ProjectToWindowRule. */
-  protected ProjectToWindowRule(Config config) {
-    super(config);
+  /** @deprecated Use {@link CoreRules#CALC_TO_WINDOW}. */
+  @Deprecated // to be removed before 1.25
+  public static final ProjectToWindowRule INSTANCE =
+      CoreRules.CALC_TO_WINDOW;
+
+  /** @deprecated Use
+   * {@link CoreRules#PROJECT_TO_LOGICAL_PROJECT_AND_WINDOW}. */
+  @Deprecated // to be removed before 1.25
+  public static final ProjectToWindowRule PROJECT =
+      CoreRules.PROJECT_TO_LOGICAL_PROJECT_AND_WINDOW;
+
+  //~ Constructors -----------------------------------------------------------
+
+  /**
+   * Creates a ProjectToWindowRule.
+   *
+   * @param operand           Root operand, must not be null
+   * @param description       Description, or null to guess description
+   * @param relBuilderFactory Builder for relational expressions
+   */
+  @SuppressWarnings("DeprecatedIsStillUsed")
+  @Deprecated // to be removed before 1.25
+  public ProjectToWindowRule(RelOptRuleOperand operand,
+      RelBuilderFactory relBuilderFactory, String description) {
+    super(operand, relBuilderFactory, description);
   }
+
+  //~ Inner Classes ----------------------------------------------------------
 
   /**
    * Instance of the rule that applies to a
    * {@link org.apache.calcite.rel.core.Calc} that contains
    * windowed aggregates and converts it into a mixture of
    * {@link org.apache.calcite.rel.logical.LogicalWindow} and {@code Calc}.
-   *
-   * @see CoreRules#CALC_TO_WINDOW
    */
   public static class CalcToWindowRule extends ProjectToWindowRule {
-    /** Creates a CalcToWindowRule. */
-    protected CalcToWindowRule(CalcToWindowRuleConfig config) {
-      super(config);
+
+    /**
+     * Creates a CalcToWindowRule.
+     *
+     * @param relBuilderFactory Builder for relational expressions
+     */
+    public CalcToWindowRule(RelBuilderFactory relBuilderFactory) {
+      super(
+          operandJ(Calc.class, null,
+              calc -> RexOver.containsOver(calc.getProgram()), any()),
+          relBuilderFactory, "ProjectToWindowRule");
     }
 
-    @Override public void onMatch(RelOptRuleCall call) {
-      final Calc calc = call.rel(0);
-      assert calc.containsOver();
+    public void onMatch(RelOptRuleCall call) {
+      Calc calc = call.rel(0);
+      assert RexOver.containsOver(calc.getProgram());
       final CalcRelSplitter transform =
           new WindowedAggRelSplitter(calc, call.builder());
       RelNode newRel = transform.execute();
       call.transformTo(newRel);
-    }
-
-    /** Rule configuration. */
-    @Value.Immutable
-    public interface CalcToWindowRuleConfig extends ProjectToWindowRule.Config {
-      CalcToWindowRuleConfig DEFAULT = ImmutableCalcToWindowRuleConfig.of()
-          .withOperandSupplier(b ->
-              b.operand(Calc.class)
-                  .predicate(Calc::containsOver)
-                  .anyInputs())
-          .withDescription("ProjectToWindowRule");
-
-      @Override default CalcToWindowRule toRule() {
-        return new CalcToWindowRule(this);
-      }
     }
   }
 
@@ -124,28 +137,26 @@ public abstract class ProjectToWindowRule
    * {@link org.apache.calcite.rel.core.Project} and that produces, in turn,
    * a mixture of {@code LogicalProject}
    * and {@link org.apache.calcite.rel.logical.LogicalWindow}.
-   *
-   * @see CoreRules#PROJECT_TO_LOGICAL_PROJECT_AND_WINDOW
    */
   public static class ProjectToLogicalProjectAndWindowRule
-        extends ProjectToWindowRule {
-    /** Creates a ProjectToLogicalProjectAndWindowRule. */
-    protected ProjectToLogicalProjectAndWindowRule(
-        ProjectToLogicalProjectAndWindowRuleConfig config) {
-      super(config);
-    }
-
-    @Deprecated // to be removed before 2.0
+      extends ProjectToWindowRule {
+    /**
+     * Creates a ProjectToWindowRule.
+     *
+     * @param relBuilderFactory Builder for relational expressions
+     */
     public ProjectToLogicalProjectAndWindowRule(
         RelBuilderFactory relBuilderFactory) {
-      this(ProjectToLogicalProjectAndWindowRuleConfig.DEFAULT
-          .withRelBuilderFactory(relBuilderFactory)
-          .as(ProjectToLogicalProjectAndWindowRuleConfig.class));
+      super(
+          operandJ(Project.class, null,
+              project -> RexOver.containsOver(project.getProjects(), null),
+              any()),
+          relBuilderFactory, "ProjectToWindowRule:project");
     }
 
     @Override public void onMatch(RelOptRuleCall call) {
       Project project = call.rel(0);
-      assert project.containsOver();
+      assert RexOver.containsOver(project.getProjects(), null);
       final RelNode input = project.getInput();
       final RexProgram program =
           RexProgram.create(
@@ -171,7 +182,8 @@ public abstract class ProjectToWindowRule
           }
           if (!program.projectsOnlyIdentity()) {
             relBuilder.project(
-                Util.transform(program.getProjectList(), program::expandLocalRef),
+                Lists.transform(program.getProjectList(),
+                    program::expandLocalRef),
                 calc.getRowType().getFieldNames());
           }
           return relBuilder.build();
@@ -179,22 +191,6 @@ public abstract class ProjectToWindowRule
       };
       RelNode newRel = transform.execute();
       call.transformTo(newRel);
-    }
-
-    /** Rule configuration. */
-    @Value.Immutable
-    public interface ProjectToLogicalProjectAndWindowRuleConfig extends ProjectToWindowRule.Config {
-      ProjectToLogicalProjectAndWindowRuleConfig DEFAULT =
-          ImmutableProjectToLogicalProjectAndWindowRuleConfig.of()
-              .withOperandSupplier(b ->
-                  b.operand(Project.class)
-                      .predicate(Project::containsOver)
-                      .anyInputs())
-              .withDescription("ProjectToWindowRule:project");
-
-      @Override default ProjectToLogicalProjectAndWindowRule toRule() {
-        return new ProjectToLogicalProjectAndWindowRule(this);
-      }
     }
   }
 
@@ -205,23 +201,23 @@ public abstract class ProjectToWindowRule
   static class WindowedAggRelSplitter extends CalcRelSplitter {
     private static final RelType[] REL_TYPES = {
         new RelType("CalcRelType") {
-            @Override protected boolean canImplement(RexFieldAccess field) {
+            protected boolean canImplement(RexFieldAccess field) {
               return true;
             }
 
-            @Override protected boolean canImplement(RexDynamicParam param) {
+            protected boolean canImplement(RexDynamicParam param) {
               return true;
             }
 
-            @Override protected boolean canImplement(RexLiteral literal) {
+            protected boolean canImplement(RexLiteral literal) {
               return true;
             }
 
-            @Override protected boolean canImplement(RexCall call) {
+            protected boolean canImplement(RexCall call) {
               return !(call instanceof RexOver);
             }
 
-            @Override protected RelNode makeRel(RelOptCluster cluster,
+            protected RelNode makeRel(RelOptCluster cluster,
                 RelTraitSet traitSet, RelBuilder relBuilder, RelNode input,
                 RexProgram program) {
               assert !program.containsAggs();
@@ -231,27 +227,27 @@ public abstract class ProjectToWindowRule
             }
         },
         new RelType("WinAggRelType") {
-          @Override protected boolean canImplement(RexFieldAccess field) {
+          protected boolean canImplement(RexFieldAccess field) {
             return false;
           }
 
-          @Override protected boolean canImplement(RexDynamicParam param) {
+          protected boolean canImplement(RexDynamicParam param) {
             return false;
           }
 
-          @Override protected boolean canImplement(RexLiteral literal) {
+          protected boolean canImplement(RexLiteral literal) {
             return false;
           }
 
-          @Override protected boolean canImplement(RexCall call) {
+          protected boolean canImplement(RexCall call) {
             return call instanceof RexOver;
           }
 
-          @Override protected boolean supportsCondition() {
+          protected boolean supportsCondition() {
             return false;
           }
 
-          @Override protected RelNode makeRel(RelOptCluster cluster, RelTraitSet traitSet,
+          protected RelNode makeRel(RelOptCluster cluster, RelTraitSet traitSet,
               RelBuilder relBuilder, RelNode input, RexProgram program) {
             Preconditions.checkArgument(program.getCondition() == null,
                 "WindowedAggregateRel cannot accept a condition");
@@ -271,7 +267,7 @@ public abstract class ProjectToWindowRule
       // (1). They have the same RexWindow
       // (2). They are not dependent on each other
       final List<RexNode> exprs = this.program.getExprList();
-      final DirectedGraph<Integer, DefaultEdge> graph =
+      final DirectedGraph<Integer, TypedEdge<Integer>> graph =
           createGraphFromExpression(exprs);
       final List<Integer> rank = getRank(graph);
 
@@ -319,7 +315,7 @@ public abstract class ProjectToWindowRule
       return cohorts;
     }
 
-    private static boolean isDependent(final DirectedGraph<Integer, DefaultEdge> graph,
+    private boolean isDependent(final DirectedGraph<Integer, TypedEdge<Integer>> graph,
         final List<Integer> rank,
         final int ordinal1,
         final int ordinal2) {
@@ -343,8 +339,8 @@ public abstract class ProjectToWindowRule
         }
 
         visited.add(source);
-        for (DefaultEdge e : graph.getOutwardEdges(source)) {
-          int target = (int) e.target;
+        for (TypedEdge<Integer> e : graph.getOutwardEdges(source)) {
+          int target = e.target;
           if (rank.get(target) <= rank.get(ordinal1)) {
             dfs.push(target);
           }
@@ -354,7 +350,7 @@ public abstract class ProjectToWindowRule
       return false;
     }
 
-    private static List<Integer> getRank(DirectedGraph<Integer, DefaultEdge> graph) {
+    private List<Integer> getRank(DirectedGraph<Integer, TypedEdge<Integer>> graph) {
       final int[] rankArr = new int[graph.vertexSet().size()];
       int rank = 0;
       for (int i : TopologicalOrderIterator.of(graph)) {
@@ -363,16 +359,16 @@ public abstract class ProjectToWindowRule
       return ImmutableIntList.of(rankArr);
     }
 
-    private static DirectedGraph<Integer, DefaultEdge> createGraphFromExpression(
+    private DirectedGraph<Integer, TypedEdge<Integer>> createGraphFromExpression(
         final List<RexNode> exprs) {
-      final DirectedGraph<Integer, DefaultEdge> graph =
+      final DirectedGraph<Integer, TypedEdge<Integer>> graph =
           DefaultDirectedGraph.create();
       for (int i = 0; i < exprs.size(); i++) {
         graph.addVertex(i);
       }
 
       new RexBiVisitorImpl<Void, Integer>(true) {
-        @Override public Void visitLocalRef(RexLocalRef localRef, Integer i) {
+        public Void visitLocalRef(RexLocalRef localRef, Integer i) {
           graph.addEdge(localRef.getIndex(), i);
           return null;
         }
@@ -381,10 +377,5 @@ public abstract class ProjectToWindowRule
       assert graph.vertexSet().size() == exprs.size();
       return graph;
     }
-  }
-
-  /** Rule configuration. */
-  public interface Config extends RelRule.Config {
-    @Override ProjectToWindowRule toRule();
   }
 }
