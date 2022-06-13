@@ -17,8 +17,8 @@
 package org.apache.calcite.test;
 
 import org.apache.calcite.plan.RelOptSchema;
+import org.apache.calcite.rel.RelBasicShuttle;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.externalize.RelJsonReader;
 import org.apache.calcite.rel.externalize.RelJsonWriter;
@@ -26,32 +26,27 @@ import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.tools.Frameworks;
 import org.apache.calcite.util.TestUtil;
 
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.After;
+import org.junit.Before;
 
 import java.io.IOException;
 
 /**
  * Runs {@link org.apache.calcite.test.SqlToRelConverterTest} with extensions.
  */
-class SqlToRelConverterExtendedTest extends SqlToRelConverterTest {
+public class SqlToRelConverterExtendedTest extends SqlToRelConverterTest {
   Hook.Closeable closeable;
 
-  @BeforeEach public void before() {
+  @Before public void before() {
     this.closeable =
         Hook.CONVERTED.addThread(SqlToRelConverterExtendedTest::foo);
   }
 
-  @AfterEach public void after() {
+  @After public void after() {
     if (this.closeable != null) {
       this.closeable.close();
       this.closeable = null;
     }
-  }
-
-  SqlToRelConverterExtendedTest(
-      @DiffRepositoryName(SqlToRelConverterTest.class) DiffRepository repository) {
-    super(repository);
   }
 
   public static void foo(RelNode rel) {
@@ -62,7 +57,7 @@ class SqlToRelConverterExtendedTest extends SqlToRelConverterTest {
 
     // Find the schema. If there are no tables in the plan, we won't need one.
     final RelOptSchema[] schemas = {null};
-    rel.accept(new RelShuttleImpl() {
+    rel.accept(new RelBasicShuttle() {
       @Override public RelNode visit(TableScan scan) {
         schemas[0] = scan.getTable().getRelOptSchema();
         return super.visit(scan);
@@ -83,3 +78,5 @@ class SqlToRelConverterExtendedTest extends SqlToRelConverterTest {
     });
   }
 }
+
+// End SqlToRelConverterExtendedTest.java
