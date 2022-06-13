@@ -19,16 +19,19 @@ package org.apache.calcite.test;
 import org.apache.calcite.avatica.util.DateTimeUtils;
 import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.dialect.AnsiSqlDialect;
 import org.apache.calcite.sql.parser.SqlParserPos;
-import org.apache.calcite.sql.test.SqlTests;
 import org.apache.calcite.sql.type.BasicSqlType;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.testlib.annotations.LocaleEnUs;
 
+import com.google.common.collect.ImmutableList;
+
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -41,17 +44,49 @@ import java.util.Locale;
 /**
  * Unit test for SQL limits.
  */
+@ExtendWith(DiffRepositoryExtension.class)
 @LocaleEnUs
 public class SqlLimitsTest {
-  protected DiffRepository getDiffRepos() {
-    return DiffRepository.lookup(SqlLimitsTest.class);
+  private final DiffRepository repository;
+
+  public SqlLimitsTest(DiffRepository repository) {
+    this.repository = repository;
+  }
+
+  /** Returns a list of typical types. */
+  public static List<RelDataType> getTypes(RelDataTypeFactory typeFactory) {
+    final int maxPrecision =
+        typeFactory.getTypeSystem().getMaxPrecision(SqlTypeName.DECIMAL);
+    return ImmutableList.of(
+        typeFactory.createSqlType(SqlTypeName.BOOLEAN),
+        typeFactory.createSqlType(SqlTypeName.TINYINT),
+        typeFactory.createSqlType(SqlTypeName.SMALLINT),
+        typeFactory.createSqlType(SqlTypeName.INTEGER),
+        typeFactory.createSqlType(SqlTypeName.BIGINT),
+        typeFactory.createSqlType(SqlTypeName.DECIMAL),
+        typeFactory.createSqlType(SqlTypeName.DECIMAL, 5),
+        typeFactory.createSqlType(SqlTypeName.DECIMAL, 6, 2),
+        typeFactory.createSqlType(SqlTypeName.DECIMAL, maxPrecision, 0),
+        typeFactory.createSqlType(SqlTypeName.DECIMAL, maxPrecision, 5),
+
+        // todo: test IntervalDayTime and IntervalYearMonth
+        // todo: test Float, Real, Double
+
+        typeFactory.createSqlType(SqlTypeName.CHAR, 5),
+        typeFactory.createSqlType(SqlTypeName.VARCHAR, 1),
+        typeFactory.createSqlType(SqlTypeName.VARCHAR, 20),
+        typeFactory.createSqlType(SqlTypeName.BINARY, 3),
+        typeFactory.createSqlType(SqlTypeName.VARBINARY, 4),
+        typeFactory.createSqlType(SqlTypeName.DATE),
+        typeFactory.createSqlType(SqlTypeName.TIME, 0),
+        typeFactory.createSqlType(SqlTypeName.TIMESTAMP, 0));
   }
 
   @Test void testPrintLimits() {
     StringWriter sw = new StringWriter();
     PrintWriter pw = new PrintWriter(sw);
     final List<RelDataType> types =
-        SqlTests.getTypes(new JavaTypeFactoryImpl(RelDataTypeSystem.DEFAULT));
+        getTypes(new JavaTypeFactoryImpl(RelDataTypeSystem.DEFAULT));
     for (RelDataType type : types) {
       pw.println(type.toString());
       printLimit(
@@ -120,7 +155,7 @@ public class SqlLimitsTest {
       pw.println();
     }
     pw.flush();
-    getDiffRepos().assertEquals("output", "${output}", sw.toString());
+    repository.assertEquals("output", "${output}", sw.toString());
   }
 
   private void printLimit(
