@@ -30,6 +30,7 @@ import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql.validate.SqlValidatorScope;
 import org.apache.calcite.util.Util;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.apache.calcite.util.Static.RESOURCE;
@@ -64,7 +65,7 @@ public class SqlAsOperator extends SqlSpecialOperator {
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public void unparse(
+  public void unparse(
       SqlWriter writer,
       SqlCall call,
       int leftPrec,
@@ -93,7 +94,7 @@ public class SqlAsOperator extends SqlSpecialOperator {
     writer.endList(frame);
   }
 
-  @Override public void validateCall(
+  public void validateCall(
       SqlCall call,
       SqlValidator validator,
       SqlValidatorScope scope,
@@ -102,16 +103,30 @@ public class SqlAsOperator extends SqlSpecialOperator {
     // we don't want to validate the identifier.
     final List<SqlNode> operands = call.getOperandList();
     assert operands.size() == 2;
-    assert operands.get(1) instanceof SqlIdentifier;
     operands.get(0).validateExpr(validator, scope);
-    SqlIdentifier id = (SqlIdentifier) operands.get(1);
-    if (!id.isSimple()) {
-      throw validator.newValidationError(id,
-          RESOURCE.aliasMustBeSimpleIdentifier());
+
+    SqlNode asIdentifier = operands.get(1);
+    assert asIdentifier instanceof SqlIdentifier
+        || (asIdentifier instanceof SqlNodeList
+            && validator.config().sqlConformance().allowSelectTableFunction());
+
+    List<SqlNode> ids = new ArrayList<>();
+    if (asIdentifier instanceof SqlIdentifier) {
+      ids.add(operands.get(1));
+    } else {
+      ids.addAll(((SqlNodeList) operands.get(1)).getList());
+    }
+    for (int i = 0; i < ids.size(); i++) {
+      assert ids.get(i) instanceof SqlIdentifier;
+      SqlIdentifier id = (SqlIdentifier) ids.get(i);
+      if (!id.isSimple()) {
+        throw validator.newValidationError(id,
+              RESOURCE.aliasMustBeSimpleIdentifier());
+      }
     }
   }
 
-  @Override public <R> void acceptCall(
+  public <R> void acceptCall(
       SqlVisitor<R> visitor,
       SqlCall call,
       boolean onlyExpressions,
@@ -124,7 +139,7 @@ public class SqlAsOperator extends SqlSpecialOperator {
     }
   }
 
-  @Override public RelDataType deriveType(
+  public RelDataType deriveType(
       SqlValidator validator,
       SqlValidatorScope scope,
       SqlCall call) {

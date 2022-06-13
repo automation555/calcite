@@ -1167,10 +1167,11 @@ public class SqlToRelConverter {
                 ImmutableBitSet.of(),
                 null,
                 ImmutableList.of(
-                    AggregateCall.builder().aggFunction(SqlStdOperatorTable.COUNT)
-                        .type(longType).build(),
-                    AggregateCall.builder().aggFunction(SqlStdOperatorTable.COUNT)
-                        .argList(args).type(longType).build()));
+                    AggregateCall.create(SqlStdOperatorTable.COUNT, false,
+                        false, false, ImmutableList.of(), -1, RelCollations.EMPTY,
+                        longType, null),
+                    AggregateCall.create(SqlStdOperatorTable.COUNT, false,
+                        false, false, args, -1, RelCollations.EMPTY, longType, null)));
         LogicalJoin join =
             LogicalJoin.create(bb.root, aggregate, ImmutableList.of(),
                 rexBuilder.makeLiteral(true), ImmutableSet.of(), JoinRelType.INNER);
@@ -3967,10 +3968,6 @@ public class SqlToRelConverter {
       RexInputRef inputRef) {
     RelDataTypeField field = bb.getRootField(inputRef);
     if (field != null) {
-      if (!SqlTypeUtil.equalSansNullability(typeFactory,
-          field.getType(), inputRef.getType())) {
-        return inputRef;
-      }
       return rexBuilder.makeInputRef(
           field.getType(),
           inputRef.getIndex());
@@ -4123,6 +4120,8 @@ public class SqlToRelConverter {
     SqlNodeList selectList = select.getSelectList();
     selectList = validator.expandStar(selectList, select, false);
 
+    convertTableFunctionInSelect(bb, select);
+
     replaceSubQueries(bb, selectList, RelOptUtil.Logic.TRUE_FALSE_UNKNOWN);
 
     List<String> fieldNames = new ArrayList<>();
@@ -4168,6 +4167,31 @@ public class SqlToRelConverter {
     for (SqlNode selectItem : selectList) {
       bb.columnMonotonicities.add(
           selectItem.getMonotonicity(bb.scope));
+    }
+  }
+
+  /**
+   * Converts the table function in select to Join or TableFunctionScan.
+   *
+   * @param bb       Blackboard
+   * @param select   SqlSelect
+   * */
+  private void convertTableFunctionInSelect(Blackboard bb, SqlSelect select) {
+    SqlBasicCall tableFunction = validator.getTableFunctionInSelect(select);
+    // rewrite the table function if select list contain one
+    if (tableFunction != null) {
+      SqlValidatorScope tableScope = validator.getJoinScope(tableFunction);
+      final Blackboard rightBb =
+          createBlackboard(tableScope, null, false);
+      convertCollectionTable(rightBb, tableFunction);
+
+      if (select.getFrom() != null) {
+        RelNode join = createJoin(bb, bb.root, rightBb.root,
+            rexBuilder.makeLiteral(true), JoinRelType.INNER);
+        bb.setRoot(join, false);
+      } else {
+        bb.setRoot(rightBb.root, false);
+      }
     }
   }
 
@@ -5401,16 +5425,16 @@ public class SqlToRelConverter {
                 .collect(Collectors.toList()));
       }
       final AggregateCall aggCall =
-          AggregateCall.builder()
-              .aggFunction(aggFunction)
-              .distinct(distinct)
-              .approximate(approximate)
-              .ignoreNulls(ignoreNulls)
-              .argList(args)
-              .filterArg(filterArg)
-              .collation(collation)
-              .type(type)
-              .name(nameMap.get(outerCall.toString())).build();
+          AggregateCall.create(
+              aggFunction,
+              distinct,
+              approximate,
+              ignoreNulls,
+              args,
+              filterArg,
+              collation,
+              type,
+              nameMap.get(outerCall.toString()));
       RexNode rex =
           rexBuilder.addAggCall(
               aggCall,

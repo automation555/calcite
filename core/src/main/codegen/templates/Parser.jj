@@ -29,7 +29,7 @@ PARSER_BEGIN(${parser.class})
 
 package ${parser.package};
 
-<#list (parser.imports!default.parser.imports) as importStr>
+<#list parser.imports as importStr>
 import ${importStr};
 </#list>
 
@@ -84,7 +84,6 @@ import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlNumericLiteral;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlOrderBy;
-import org.apache.calcite.sql.SqlPivot;
 import org.apache.calcite.sql.SqlPostfixOperator;
 import org.apache.calcite.sql.SqlPrefixOperator;
 import org.apache.calcite.sql.SqlRowTypeNameSpec;
@@ -98,7 +97,6 @@ import org.apache.calcite.sql.SqlTimeLiteral;
 import org.apache.calcite.sql.SqlTimestampLiteral;
 import org.apache.calcite.sql.SqlTypeNameSpec;
 import org.apache.calcite.sql.SqlUnnestOperator;
-import org.apache.calcite.sql.SqlUnpivot;
 import org.apache.calcite.sql.SqlUpdate;
 import org.apache.calcite.sql.SqlUserDefinedTypeNameSpec;
 import org.apache.calcite.sql.SqlUtil;
@@ -106,7 +104,6 @@ import org.apache.calcite.sql.SqlWindow;
 import org.apache.calcite.sql.SqlWith;
 import org.apache.calcite.sql.SqlWithItem;
 import org.apache.calcite.sql.fun.SqlCase;
-import org.apache.calcite.sql.fun.SqlInternalOperators;
 import org.apache.calcite.sql.fun.SqlLibraryOperators;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.fun.SqlTrimFunction;
@@ -126,8 +123,6 @@ import org.apache.calcite.util.SourceStringReader;
 import org.apache.calcite.util.Util;
 import org.apache.calcite.util.trace.CalciteTrace;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import org.slf4j.Logger;
 
 import java.io.Reader;
@@ -138,7 +133,6 @@ import java.util.Calendar;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 import static org.apache.calcite.util.Static.RESOURCE;
 
@@ -163,7 +157,6 @@ public class ${parser.class} extends SqlAbstractParserImpl
     private Casing unquotedCasing;
     private Casing quotedCasing;
     private int identifierMaxLength;
-    private ImmutableMap<String, TimeUnit> timeUnitCodes;
     private SqlConformance conformance;
 
     /**
@@ -206,11 +199,10 @@ public class ${parser.class} extends SqlAbstractParserImpl
         jj_input_stream.setTabSize(tabSize);
     }
 
-    public void switchTo(SqlAbstractParserImpl.LexicalState state) {
-        final int stateOrdinal =
-            Arrays.asList(${parser.class}TokenManager.lexStateNames)
-                .indexOf(state.name());
-        token_source.SwitchTo(stateOrdinal);
+    public void switchTo(String stateName) {
+        int state = Arrays.asList(${parser.class}TokenManager.lexStateNames)
+            .indexOf(stateName);
+        token_source.SwitchTo(state);
     }
 
     public void setQuotedCasing(Casing quotedCasing) {
@@ -223,10 +215,6 @@ public class ${parser.class} extends SqlAbstractParserImpl
 
     public void setIdentifierMaxLength(int identifierMaxLength) {
         this.identifierMaxLength = identifierMaxLength;
-    }
-
-    public void setTimeUnitCodes(Map<String, TimeUnit> timeUnitCodes) {
-        this.timeUnitCodes = ImmutableMap.copyOf(timeUnitCodes);
     }
 
     public void setConformance(SqlConformance conformance) {
@@ -279,7 +267,8 @@ void debug_message1() {
 }
 
 JAVACODE String unquotedIdentifier() {
-    return SqlParserUtil.toCase(getToken(0).image, unquotedCasing);
+    return SqlParserUtil.strip(getToken(0).image, null, null, null,
+        unquotedCasing);
 }
 
 /**
@@ -428,15 +417,6 @@ JAVACODE void checkNonQueryExpression(ExprContext exprContext)
         throw SqlUtil.newContextException(getPos(),
             RESOURCE.illegalNonQueryExpression());
     }
-}
-
-JAVACODE SqlNode checkNotJoin(SqlNode e)
-{
-    if (e instanceof SqlJoin) {
-        throw SqlUtil.newContextException(e.getParserPosition(),
-            RESOURCE.illegalJoinExpression());
-    }
-    return e;
 }
 
 /**
@@ -612,25 +592,6 @@ JAVACODE boolean matchesPrefix(int[] seq, int[][] prefixes)
  * Syntactical Descriptions              *
  *****************************************/
 
-SqlNode ExprOrJoinOrOrderedQuery(ExprContext exprContext) :
-{
-    SqlNode e;
-}
-{
-    // Lookhead to distinguish between "TABLE emp" (which will be
-    // matched by ExplicitTable() via Query())
-    // and "TABLE fun(args)" (which will be matched by TableRef())
-    (
-        LOOKAHEAD(2)
-        e = Query(exprContext)
-        e = OrderByLimitOpt(e)
-    |
-        e = TableRef1(ExprContext.ACCEPT_QUERY_OR_JOIN)
-        ( e = JoinTable(e) )*
-    )
-    { return e; }
-}
-
 /**
  * Parses either a row expression or a query expression with an optional
  * ORDER BY.
@@ -640,13 +601,6 @@ SqlNode ExprOrJoinOrOrderedQuery(ExprContext exprContext) :
  * <blockquote><pre>
  *    [ LIMIT { count | ALL } ]
  *    [ OFFSET start ]</pre>
- * </blockquote>
- *
- * <p>Trino syntax for limit:
- *
- * <blockquote><pre>
- *    [ OFFSET start ]
- *    [ LIMIT { count | ALL } ]</pre>
  * </blockquote>
  *
  * <p>MySQL syntax for limit:
@@ -665,109 +619,59 @@ SqlNode ExprOrJoinOrOrderedQuery(ExprContext exprContext) :
 SqlNode OrderedQueryOrExpr(ExprContext exprContext) :
 {
     SqlNode e;
-}
-{
-    e = QueryOrExpr(exprContext)
-    e = OrderByLimitOpt(e)
-    { return e; }
-}
-
-/** Reads optional "ORDER BY", "LIMIT", "OFFSET", "FETCH" following a query,
- * {@code e}. If any of them are present, adds them to the query;
- * otherwise returns the query unchanged.
- * Throws if they are present and {@code e} is not a query. */
-SqlNode OrderByLimitOpt(SqlNode e) :
-{
     SqlNodeList orderBy = null;
-    final Span s = Span.of();
-    SqlNode[] offsetFetch = {null, null};
+    SqlNode start = null;
+    SqlNode count = null;
 }
 {
+    (
+        e = QueryOrExpr(exprContext)
+    )
     [
         // use the syntactic type of the expression we just parsed
         // to decide whether ORDER BY makes sense
         orderBy = OrderBy(e.isA(SqlKind.QUERY))
     ]
     [
-        LimitClause(s, offsetFetch)
-        [ OffsetClause(s, offsetFetch) ]
-    |
-        OffsetClause(s, offsetFetch)
-        [
-            LimitClause(s, offsetFetch) {
-                if (!this.conformance.isOffsetLimitAllowed()) {
-                    throw SqlUtil.newContextException(s.end(this),
-                        RESOURCE.offsetLimitNotAllowed());
+        // Postgres-style syntax. "LIMIT ... OFFSET ..."
+        <LIMIT>
+        (
+            // MySQL-style syntax. "LIMIT start, count"
+            LOOKAHEAD(2)
+            start = UnsignedNumericLiteralOrParam()
+            <COMMA> count = UnsignedNumericLiteralOrParam() {
+                if (!this.conformance.isLimitStartCountAllowed()) {
+                    throw SqlUtil.newContextException(getPos(), RESOURCE.limitStartCountNotAllowed());
                 }
             }
         |
-            FetchClause(offsetFetch)
-        ]
-    |
-        FetchClause(offsetFetch)
+            count = UnsignedNumericLiteralOrParam()
+        |
+            <ALL>
+        )
+    ]
+    [
+        // ROW or ROWS is required in SQL:2008 but we make it optional
+        // because it is not present in Postgres-style syntax.
+        // If you specify both LIMIT start and OFFSET, OFFSET wins.
+        <OFFSET> start = UnsignedNumericLiteralOrParam() [ <ROW> | <ROWS> ]
+    ]
+    [
+        // SQL:2008-style syntax. "OFFSET ... FETCH ...".
+        // If you specify both LIMIT and FETCH, FETCH wins.
+        <FETCH> ( <FIRST> | <NEXT> ) count = UnsignedNumericLiteralOrParam()
+        ( <ROW> | <ROWS> ) <ONLY>
     ]
     {
-        if (orderBy != null || offsetFetch[0] != null || offsetFetch[1] != null) {
+        if (orderBy != null || start != null || count != null) {
             if (orderBy == null) {
                 orderBy = SqlNodeList.EMPTY;
             }
-            e = new SqlOrderBy(getPos(), e, orderBy, offsetFetch[0], offsetFetch[1]);
+            e = new SqlOrderBy(getPos(), e, orderBy, start, count);
+
         }
         return e;
     }
-}
-
-/**
- * Parses an OFFSET clause in an ORDER BY expression.
- */
-void OffsetClause(Span s, SqlNode[] offsetFetch) :
-{
-}
-{
-    // ROW or ROWS is required in SQL:2008 but we make it optional
-    // because it is not present in Postgres-style syntax.
-    <OFFSET> { s.add(this); }
-    offsetFetch[0] = UnsignedNumericLiteralOrParam()
-    [ <ROW> | <ROWS> ]
-}
-
-/**
- * Parses a FETCH clause in an ORDER BY expression.
- */
-void FetchClause(SqlNode[] offsetFetch) :
-{
-}
-{
-    // SQL:2008-style syntax. "OFFSET ... FETCH ...".
-    // If you specify both LIMIT and FETCH, FETCH wins.
-    <FETCH> ( <FIRST> | <NEXT> ) offsetFetch[1] = UnsignedNumericLiteralOrParam()
-    ( <ROW> | <ROWS> ) <ONLY>
-}
-
-/**
- * Parses a LIMIT clause in an ORDER BY expression.
- */
-void LimitClause(Span s, SqlNode[] offsetFetch) :
-{
-}
-{
-    // Postgres-style syntax. "LIMIT ... OFFSET ..."
-    <LIMIT> { s.add(this); }
-    (
-        // MySQL-style syntax. "LIMIT start, count"
-        LOOKAHEAD(2)
-        offsetFetch[0] = UnsignedNumericLiteralOrParam()
-        <COMMA> offsetFetch[1] = UnsignedNumericLiteralOrParam() {
-            if (!this.conformance.isLimitStartCountAllowed()) {
-                throw SqlUtil.newContextException(s.end(this),
-                    RESOURCE.limitStartCountNotAllowed());
-            }
-        }
-    |
-        offsetFetch[1] = UnsignedNumericLiteralOrParam()
-    |
-        <ALL>
-    )
 }
 
 /**
@@ -791,7 +695,6 @@ SqlNode LeafQuery(ExprContext exprContext) :
 
 /**
  * Parses a parenthesized query or single row expression.
- * Depending on {@code exprContext}, may also accept a join.
  */
 SqlNode ParenthesizedExpression(ExprContext exprContext) :
 {
@@ -811,10 +714,9 @@ SqlNode ParenthesizedExpression(ExprContext exprContext) :
             break;
         }
     }
-    e = ExprOrJoinOrOrderedQuery(exprContext)
+    e = OrderedQueryOrExpr(exprContext)
     <RPAREN>
     {
-        exprContext.throwIfNotCompatible(e);
         return e;
     }
 }
@@ -966,16 +868,23 @@ List UnquantifiedFunctionParameterList(
 List FunctionParameterList(
     ExprContext exprContext) :
 {
-    final SqlLiteral qualifier;
-    final List list = new ArrayList();
+    SqlNode e = null;
+    List list = new ArrayList();
 }
 {
     <LPAREN>
-    (
-        qualifier = AllOrDistinct() { list.add(qualifier); }
+    [
+        <DISTINCT> {
+            e = SqlSelectKeyword.DISTINCT.symbol(getPos());
+        }
     |
-        { list.add(null); }
-    )
+        <ALL> {
+            e = SqlSelectKeyword.ALL.symbol(getPos());
+        }
+    ]
+    {
+        list.add(e);
+    }
     Arg0(list, exprContext)
     (
         <COMMA> {
@@ -988,15 +897,6 @@ List FunctionParameterList(
     {
         return list;
     }
-}
-
-SqlLiteral AllOrDistinct() :
-{
-}
-{
-    <DISTINCT> { return SqlSelectKeyword.DISTINCT.symbol(getPos()); }
-|
-    <ALL> { return SqlSelectKeyword.ALL.symbol(getPos()); }
 }
 
 void Arg0(List list, ExprContext exprContext) :
@@ -1124,7 +1024,7 @@ SqlNode SqlStmt() :
 {
     (
 <#-- Add methods to parse additional statements here -->
-<#list (parser.statementParserMethods!default.parser.statementParserMethods) as method>
+<#list parser.statementParserMethods as method>
         LOOKAHEAD(2) stmt = ${method}
     |
 </#list>
@@ -1132,11 +1032,11 @@ SqlNode SqlStmt() :
     |
         stmt = SqlAlter()
     |
-<#if (parser.createStatementParserMethods!default.parser.createStatementParserMethods)?size != 0>
+<#if parser.createStatementParserMethods?size != 0>
         stmt = SqlCreate()
     |
 </#if>
-<#if (parser.dropStatementParserMethods!default.parser.dropStatementParserMethods)?size != 0>
+<#if parser.dropStatementParserMethods?size != 0>
         stmt = SqlDrop()
     |
 </#if>
@@ -1176,7 +1076,7 @@ SqlNode SqlStmtEof() :
 }
 
 <#-- Add implementations of additional parser statement calls here -->
-<#list (parser.implementationFiles!default.parser.implementationFiles) as file>
+<#list parser.implementationFiles as file>
     <#include "/@includes/"+file />
 </#list>
 
@@ -1266,7 +1166,7 @@ SqlNodeList ParenthesizedLiteralOptionCommaList() :
     }
 }
 
-void CommaSeparatedSqlHints(List<SqlNode> hints) :
+void CommaSepatatedSqlHints(List<SqlNode> hints) :
 {
     SqlIdentifier hintName;
     SqlNodeList hintOptions;
@@ -1344,11 +1244,11 @@ SqlNode TableRefWithHintsOpt() :
 }
 {
     { s = span(); }
-    tableRef = CompoundTableIdentifier()
+    tableRef = CompoundIdentifier()
     [
         LOOKAHEAD(2)
         <HINT_BEG>
-        CommaSeparatedSqlHints(hints)
+        CommaSepatatedSqlHints(hints)
         <COMMENT_END>
         {
             hintList = new SqlNodeList(hints, s.addAll(hints).end(this));
@@ -1367,7 +1267,6 @@ SqlNode TableRefWithHintsOpt() :
 SqlSelect SqlSelect() :
 {
     final List<SqlLiteral> keywords = new ArrayList<SqlLiteral>();
-    final SqlLiteral keyword;
     final SqlNodeList keywordList;
     List<SqlNode> selectList;
     final SqlNode fromClause;
@@ -1385,7 +1284,7 @@ SqlSelect SqlSelect() :
     }
     [
         <HINT_BEG>
-        CommaSeparatedSqlHints(hints)
+        CommaSepatatedSqlHints(hints)
         <COMMENT_END>
     ]
     SqlSelectKeywords(keywords)
@@ -1395,7 +1294,12 @@ SqlSelect SqlSelect() :
         }
     )?
     (
-        keyword = AllOrDistinct() { keywords.add(keyword); }
+        <DISTINCT> {
+            keywords.add(SqlSelectKeyword.DISTINCT.symbol(getPos()));
+        }
+    |   <ALL> {
+            keywords.add(SqlSelectKeyword.ALL.symbol(getPos()));
+        }
     )?
     {
         keywordList = new SqlNodeList(keywords, s.addAll(keywords).pos());
@@ -1450,10 +1354,7 @@ SqlNode SqlExplain() :
         LOOKAHEAD(2)
         <AS> <XML> { format = SqlExplainFormat.XML; }
     |
-        LOOKAHEAD(2)
         <AS> <JSON> { format = SqlExplainFormat.JSON; }
-    |
-        <AS> <DOT_FORMAT> { format = SqlExplainFormat.DOT; }
     |
         { format = SqlExplainFormat.TEXT; }
     )
@@ -1568,13 +1469,8 @@ SqlNode SqlDescribe() :
     |
         // Use syntactic lookahead to determine whether a table name is coming.
         // We do not allow SimpleIdentifier() because that includes <STATEMENT>.
-        LOOKAHEAD( <TABLE>
-           | <IDENTIFIER>
-           | <HYPHENATED_IDENTIFIER>
-           | <QUOTED_IDENTIFIER>
-           | <BACK_QUOTED_IDENTIFIER>
-           | <BIG_QUERY_BACK_QUOTED_IDENTIFIER>
-           | <BRACKET_QUOTED_IDENTIFIER> )
+        LOOKAHEAD( <TABLE> | <IDENTIFIER> | <QUOTED_IDENTIFIER>
+           | <BACK_QUOTED_IDENTIFIER> | <BRACKET_QUOTED_IDENTIFIER> )
         (<TABLE>)?
         table = CompoundIdentifier()
         (
@@ -1926,23 +1822,50 @@ List<SqlNode> SelectList() :
 SqlNode SelectItem() :
 {
     SqlNode e;
+    SqlIdentifier columnAlias;
+    final List<SqlNode> columnAliases = new ArrayList();
+    final Span s;
     final SqlIdentifier id;
 }
 {
     e = SelectExpression()
     [
-        [ <AS> ]
         (
-            id = SimpleIdentifier()
+        LOOKAHEAD(2)
+            (
+                [ <AS> ]
+                (
+                    id = SimpleIdentifier()
+                |
+                    // Mute the warning about ambiguity between alias and continued
+                    // string literal.
+                    LOOKAHEAD(1)
+                    id = SimpleIdentifierFromStringLiteral()
+                )
+                {
+                    s = span();
+                    e = SqlStdOperatorTable.AS.createCall(s.end(e), e, id);
+                }
+            )
         |
-            // Mute the warning about ambiguity between alias and continued
-            // string literal.
-            LOOKAHEAD(1)
-            id = SimpleIdentifierFromStringLiteral()
+            (
+                 // Parse table function like TABLE_FUNC(a, b) AS (a, b, e, f).
+                 { s = span(); }
+                 <AS> <LPAREN>
+                 columnAlias = SimpleIdentifier() {
+                     columnAliases.add(columnAlias);
+                 }
+                 ( <COMMA> columnAlias = SimpleIdentifier() { columnAliases.add(columnAlias);} )*
+                   <RPAREN> {
+                       if (!this.conformance.allowSelectTableFunction()) {
+                           throw SqlUtil.newContextException(getPos(),
+                               RESOURCE.notAllowTableFunctionInSelect());
+                     }
+                     e = SqlStdOperatorTable.AS.createCall(s.end(e), e,
+                             new SqlNodeList(columnAliases, s.end(e)));
+                  }
+            )
         )
-        {
-            e = SqlStdOperatorTable.AS.createCall(span().end(e), e, id);
-        }
     ]
     {
         return e;
@@ -1982,7 +1905,7 @@ SqlLiteral JoinType() :
 {
     (
     LOOKAHEAD(3) // required for "LEFT SEMI JOIN" in Babel
-<#list (parser.joinTypes!default.parser.joinTypes) as method>
+<#list parser.joinTypes as method>
         joinType = ${method}()
     |
 </#list>
@@ -2003,60 +1926,6 @@ SqlLiteral JoinType() :
     }
 }
 
-/**
- * Parses the FROM clause for a SELECT.
- *
- * <p>FROM is mandatory in standard SQL, optional in dialects such as MySQL,
- * PostgreSQL. The parser allows SELECT without FROM, but the validator fails
- * if conformance is, say, STRICT_2003.
- */
-SqlNode FromClause() :
-{
-    SqlNode e, e2;
-    SqlLiteral joinType;
-}
-{
-    e = Join()
-    (
-        // Comma joins should only occur at top-level in the FROM clause.
-        // Valid:
-        //  * FROM a, b
-        //  * FROM (a CROSS JOIN b), c
-        // Not valid:
-        //  * FROM a CROSS JOIN (b, c)
-        LOOKAHEAD(1)
-        <COMMA> { joinType = JoinType.COMMA.symbol(getPos()); }
-        e2 = Join() {
-            e = new SqlJoin(joinType.getParserPosition(),
-                e,
-                SqlLiteral.createBoolean(false, joinType.getParserPosition()),
-                joinType,
-                e2,
-                JoinConditionType.NONE.symbol(SqlParserPos.ZERO),
-                null);
-        }
-    )*
-    { return e; }
-}
-
-SqlNode Join() :
-{
-    SqlNode e, e2, condition;
-    SqlLiteral natural, joinType, joinConditionType;
-    SqlNodeList list;
-    SqlParserPos pos;
-}
-{
-    e = TableRef1(ExprContext.ACCEPT_QUERY_OR_JOIN)
-    (
-        LOOKAHEAD(2)
-        e = JoinTable(e)
-    )*
-    {
-        return e;
-    }
-}
-
 /** Matches "LEFT JOIN t ON ...", "RIGHT JOIN t USING ...", "JOIN t". */
 SqlNode JoinTable(SqlNode e) :
 {
@@ -2065,22 +1934,9 @@ SqlNode JoinTable(SqlNode e) :
     SqlNodeList list;
 }
 {
-    // LOOKAHEAD(3) is needed here rather than a LOOKAHEAD(2) because JavaCC
-    // calculates minimum lookahead count incorrectly for choice that contains
-    // zero size child. For instance, with the generated code,
-    // "LOOKAHEAD(2, Natural(), JoinType())"
-    // returns true immediately if it sees a single "<CROSS>" token. Where we
-    // expect the lookahead succeeds after "<CROSS> <APPLY>".
-    //
-    // For more information about the issue,
-    // see https://github.com/javacc/javacc/issues/86
-    //
-    // We allow CROSS JOIN (joinType = CROSS_JOIN) to have a join condition,
-    // even though that is not valid SQL; the validator will catch it.
-    LOOKAHEAD(3)
     natural = Natural()
     joinType = JoinType()
-    e2 = TableRef1(ExprContext.ACCEPT_QUERY_OR_JOIN)
+    e2 = TableRef()
     (
         <ON> { on = JoinConditionType.ON.symbol(getPos()); }
         condition = Expression(ExprContext.ACCEPT_SUB_QUERY) {
@@ -2101,7 +1957,7 @@ SqlNode JoinTable(SqlNode e) :
                 joinType,
                 e2,
                 using,
-                new SqlNodeList(list, Span.of(using).end(this)));
+                new SqlNodeList(list.getList(), Span.of(using).end(this)));
         }
     |
         {
@@ -2114,33 +1970,135 @@ SqlNode JoinTable(SqlNode e) :
                 null);
         }
     )
-|
-    <CROSS> { joinType = JoinType.CROSS.symbol(getPos()); } <APPLY>
-    e2 = TableRef2(true) {
-        if (!this.conformance.isApplyAllowed()) {
-            throw SqlUtil.newContextException(getPos(), RESOURCE.applyNotAllowed());
-        }
-        return new SqlJoin(joinType.getParserPosition(),
-            e,
-            SqlLiteral.createBoolean(false, joinType.getParserPosition()),
-            joinType,
-            e2,
-            JoinConditionType.NONE.symbol(SqlParserPos.ZERO),
-            null);
-    }
-|
-    <OUTER> { joinType = JoinType.LEFT.symbol(getPos()); } <APPLY>
-    e2 = TableRef2(true) {
-        if (!this.conformance.isApplyAllowed()) {
-            throw SqlUtil.newContextException(getPos(), RESOURCE.applyNotAllowed());
-        }
-        return new SqlJoin(joinType.getParserPosition(),
-            e,
-            SqlLiteral.createBoolean(false, joinType.getParserPosition()),
-            joinType,
-            e2,
-            JoinConditionType.ON.symbol(SqlParserPos.ZERO),
-            SqlLiteral.createBoolean(true, joinType.getParserPosition()));
+}
+
+// TODO jvs 15-Nov-2003:  SQL standard allows parentheses in the FROM list for
+// building up non-linear join trees (e.g. OUTER JOIN two tables, and then INNER
+// JOIN the result).  Also note that aliases on parenthesized FROM expressions
+// "hide" all table names inside the parentheses (without aliases, they're
+// visible).
+//
+// We allow CROSS JOIN to have a join condition, even though that is not valid
+// SQL; the validator will catch it.
+/**
+ * Parses the FROM clause for a SELECT.
+ *
+ * <p>FROM is mandatory in standard SQL, optional in dialects such as MySQL,
+ * PostgreSQL. The parser allows SELECT without FROM, but the validator fails
+ * if conformance is, say, STRICT_2003.
+ */
+SqlNode FromClause() :
+{
+    SqlNode e, e2, condition;
+    SqlLiteral natural, joinType, joinConditionType;
+    SqlNodeList list;
+    SqlParserPos pos;
+}
+{
+    e = TableRef()
+    (
+        LOOKAHEAD(2)
+        (
+            // Decide whether to read a JOIN clause or a comma, or to quit having
+            // seen a single entry FROM clause like 'FROM emps'. See comments
+            // elsewhere regarding <COMMA> lookahead.
+            //
+            // And LOOKAHEAD(3) is needed here rather than a LOOKAHEAD(2). Because currently JavaCC
+            // calculates minimum lookahead count incorrectly for choice that contains zero size
+            // child. For instance, with the generated code, "LOOKAHEAD(2, Natural(), JoinType())"
+            // returns true immediately if it sees a single "<CROSS>" token. Where we expect
+            // the lookahead succeeds after "<CROSS> <APPLY>".
+            //
+            // For more information about the issue, see https://github.com/javacc/javacc/issues/86
+            LOOKAHEAD(3)
+            natural = Natural()
+            joinType = JoinType()
+            e2 = TableRef()
+            (
+                <ON> {
+                    joinConditionType = JoinConditionType.ON.symbol(getPos());
+                }
+                condition = Expression(ExprContext.ACCEPT_SUB_QUERY) {
+                    e = new SqlJoin(joinType.getParserPosition(),
+                        e,
+                        natural,
+                        joinType,
+                        e2,
+                        joinConditionType,
+                        condition);
+                }
+            |
+                <USING> {
+                    joinConditionType = JoinConditionType.USING.symbol(getPos());
+                }
+                list = ParenthesizedSimpleIdentifierList() {
+                    e = new SqlJoin(joinType.getParserPosition(),
+                        e,
+                        natural,
+                        joinType,
+                        e2,
+                        joinConditionType,
+                        new SqlNodeList(list.getList(), Span.of(joinConditionType).end(this)));
+                }
+            |
+                {
+                    e = new SqlJoin(joinType.getParserPosition(),
+                        e,
+                        natural,
+                        joinType,
+                        e2,
+                        JoinConditionType.NONE.symbol(joinType.getParserPosition()),
+                        null);
+                }
+            )
+        |
+            // NOTE jvs 6-Feb-2004:  See comments at top of file for why
+            // hint is necessary here.  I had to use this special semantic
+            // lookahead form to get JavaCC to shut up, which makes
+            // me even more uneasy.
+            //LOOKAHEAD({true})
+            <COMMA> { joinType = JoinType.COMMA.symbol(getPos()); }
+            e2 = TableRef() {
+                e = new SqlJoin(joinType.getParserPosition(),
+                    e,
+                    SqlLiteral.createBoolean(false, joinType.getParserPosition()),
+                    joinType,
+                    e2,
+                    JoinConditionType.NONE.symbol(SqlParserPos.ZERO),
+                    null);
+            }
+        |
+            <CROSS> { joinType = JoinType.CROSS.symbol(getPos()); } <APPLY>
+            e2 = TableRef2(true) {
+                if (!this.conformance.isApplyAllowed()) {
+                    throw SqlUtil.newContextException(getPos(), RESOURCE.applyNotAllowed());
+                }
+                e = new SqlJoin(joinType.getParserPosition(),
+                    e,
+                    SqlLiteral.createBoolean(false, joinType.getParserPosition()),
+                    joinType,
+                    e2,
+                    JoinConditionType.NONE.symbol(SqlParserPos.ZERO),
+                    null);
+            }
+        |
+            <OUTER> { joinType = JoinType.LEFT.symbol(getPos()); } <APPLY>
+            e2 = TableRef2(true) {
+                if (!this.conformance.isApplyAllowed()) {
+                    throw SqlUtil.newContextException(getPos(), RESOURCE.applyNotAllowed());
+                }
+                e = new SqlJoin(joinType.getParserPosition(),
+                    e,
+                    SqlLiteral.createBoolean(false, joinType.getParserPosition()),
+                    joinType,
+                    e2,
+                    JoinConditionType.ON.symbol(SqlParserPos.ZERO),
+                    SqlLiteral.createBoolean(true, joinType.getParserPosition()));
+            }
+        )
+    )*
+    {
+        return e;
     }
 }
 
@@ -2153,29 +2111,13 @@ SqlNode TableRef() :
     final SqlNode e;
 }
 {
-    e = TableRef3(ExprContext.ACCEPT_QUERY, false) { return e; }
-}
-
-SqlNode TableRef1(ExprContext exprContext) :
-{
-    final SqlNode e;
-}
-{
-    e = TableRef3(exprContext, false) { return e; }
+    e = TableRef2(false) { return e; }
 }
 
 /**
  * Parses a table reference in a FROM clause.
  */
 SqlNode TableRef2(boolean lateral) :
-{
-    final SqlNode e;
-}
-{
-    e = TableRef3(ExprContext.ACCEPT_QUERY, lateral) { return e; }
-}
-
-SqlNode TableRef3(ExprContext exprContext, boolean lateral) :
 {
     SqlNode tableRef;
     final SqlNode over;
@@ -2185,6 +2127,11 @@ SqlNode TableRef3(ExprContext exprContext, boolean lateral) :
     final SqlIdentifier alias;
     final Span s, s2;
     SqlNodeList args;
+    SqlNode sample;
+    boolean isBernoulli;
+    SqlNumericLiteral samplePercentage;
+    boolean isRepeatable = false;
+    int repeatableSeed = 0;
     SqlNodeList columnAliasList = null;
     SqlUnnestOperator unnestOp = SqlStdOperatorTable.UNNEST;
 }
@@ -2213,16 +2160,16 @@ SqlNode TableRef3(ExprContext exprContext, boolean lateral) :
     |
         LOOKAHEAD(2)
         [ <LATERAL> { lateral = true; } ]
-        tableRef = ParenthesizedExpression(exprContext)
+        tableRef = ParenthesizedExpression(ExprContext.ACCEPT_QUERY)
         over = TableOverOpt()
         {
             if (over != null) {
                 tableRef = SqlStdOperatorTable.OVER.createCall(
-                    getPos(), checkNotJoin(tableRef), over);
+                    getPos(), tableRef, over);
             }
             if (lateral) {
                 tableRef = SqlStdOperatorTable.LATERAL.createCall(
-                    getPos(), checkNotJoin(tableRef));
+                    getPos(), tableRef);
             }
         }
         [
@@ -2237,38 +2184,26 @@ SqlNode TableRef3(ExprContext exprContext, boolean lateral) :
             }
         ]
         {
-            tableRef = unnestOp.createCall(s.end(this), (List<SqlNode>) args);
+            tableRef = unnestOp.createCall(s.end(this), args.toArray());
         }
     |
-        [ <LATERAL> { lateral = true; } ]
-        tableRef = TableFunctionCall()
+        [<LATERAL> { lateral = true; } ]
+        <TABLE> { s = span(); } <LPAREN>
+        tableRef = TableFunctionCall(s.pos())
+        <RPAREN>
         {
             if (lateral) {
                 tableRef = SqlStdOperatorTable.LATERAL.createCall(
-                    tableRef.getParserPosition(), tableRef);
+                    s.end(this), tableRef);
             }
         }
     |
         tableRef = ExtendedTableRef()
     )
     [
-        LOOKAHEAD(2)
-        tableRef = Pivot(tableRef)
-    ]
-    [
-        LOOKAHEAD(2)
-        tableRef = Unpivot(tableRef)
-    ]
-    [
         [ <AS> ] alias = SimpleIdentifier()
         [ columnAliasList = ParenthesizedSimpleIdentifierList() ]
         {
-            // Standard SQL (and Postgres) allow applying "AS alias" to a JOIN,
-            // e.g. "FROM (a CROSS JOIN b) AS c". The new alias obscures the
-            // internal aliases, and columns cannot be referenced if they are
-            // not unique. TODO: Support this behavior; see
-            // [CALCITE-5168] Allow AS after parenthesized JOIN
-            checkNotJoin(tableRef);
             if (columnAliasList == null) {
                 tableRef = SqlStdOperatorTable.AS.createCall(
                     Span.of(tableRef).end(this), tableRef, alias);
@@ -2283,79 +2218,71 @@ SqlNode TableRef3(ExprContext exprContext, boolean lateral) :
         }
     ]
     [
-        tableRef = Tablesample(tableRef)
-    ]
-    {
-        return tableRef;
-    }
-}
-
-SqlNode Tablesample(SqlNode tableRef) :
-{
-    final Span s;
-    final SqlNode sample;
-    final boolean isBernoulli;
-    final SqlNumericLiteral samplePercentage;
-    boolean isRepeatable = false;
-    int repeatableSeed = 0;
-}
-{
-    <TABLESAMPLE> { s = span(); checkNotJoin(tableRef); }
-    (
-        <SUBSTITUTE> <LPAREN> sample = StringLiteral() <RPAREN>
-        {
-            String sampleName =
-                SqlLiteral.unchain(sample).getValueAs(String.class);
-            SqlSampleSpec sampleSpec = SqlSampleSpec.createNamed(sampleName);
-            final SqlLiteral sampleLiteral =
-                SqlLiteral.createSample(sampleSpec, s.end(this));
-            tableRef = SqlStdOperatorTable.TABLESAMPLE.createCall(
-                s.add(tableRef).end(this), tableRef, sampleLiteral);
-        }
-    |
+        <TABLESAMPLE> { s2 = span(); }
         (
-            <BERNOULLI> { isBernoulli = true; }
+            <SUBSTITUTE> <LPAREN> sample = StringLiteral() <RPAREN>
+            {
+                String sampleName =
+                    SqlLiteral.unchain(sample).getValueAs(String.class);
+                SqlSampleSpec sampleSpec = SqlSampleSpec.createNamed(sampleName);
+                final SqlLiteral sampleLiteral =
+                    SqlLiteral.createSample(sampleSpec, s2.end(this));
+                tableRef = SqlStdOperatorTable.TABLESAMPLE.createCall(
+                    s2.add(tableRef).end(this), tableRef, sampleLiteral);
+            }
         |
-            <SYSTEM> { isBernoulli = false; }
-        )
-        <LPAREN> samplePercentage = UnsignedNumericLiteral() <RPAREN>
-        [
-            <REPEATABLE> <LPAREN> repeatableSeed = IntLiteral() <RPAREN>
+            (
+                <BERNOULLI>
+                {
+                    isBernoulli = true;
+                }
+            |
+                <SYSTEM>
+                {
+                    isBernoulli = false;
+                }
+            )
+            <LPAREN> samplePercentage = UnsignedNumericLiteral() <RPAREN>
+            [
+                <REPEATABLE> <LPAREN> repeatableSeed = IntLiteral() <RPAREN>
+                {
+                    isRepeatable = true;
+                }
+            ]
             {
-                isRepeatable = true;
-            }
-        ]
-        {
-            final BigDecimal ONE_HUNDRED = BigDecimal.valueOf(100L);
-            BigDecimal rate = samplePercentage.bigDecimalValue();
-            if (rate.compareTo(BigDecimal.ZERO) < 0
-                || rate.compareTo(ONE_HUNDRED) > 0)
-            {
-                throw SqlUtil.newContextException(getPos(), RESOURCE.invalidSampleSize());
-            }
+                final BigDecimal ONE_HUNDRED = BigDecimal.valueOf(100L);
+                BigDecimal rate = samplePercentage.bigDecimalValue();
+                if (rate.compareTo(BigDecimal.ZERO) < 0
+                    || rate.compareTo(ONE_HUNDRED) > 0)
+                {
+                    throw SqlUtil.newContextException(getPos(), RESOURCE.invalidSampleSize());
+                }
 
-            // Treat TABLESAMPLE(0) and TABLESAMPLE(100) as no table
-            // sampling at all.  Not strictly correct: TABLESAMPLE(0)
-            // should produce no output, but it simplifies implementation
-            // to know that some amount of sampling will occur.
-            // In practice values less than ~1E-43% are treated as 0.0 and
-            // values greater than ~99.999997% are treated as 1.0
-            float fRate = rate.divide(ONE_HUNDRED).floatValue();
-            if (fRate > 0.0f && fRate < 1.0f) {
-                SqlSampleSpec tableSampleSpec =
+                // Treat TABLESAMPLE(0) and TABLESAMPLE(100) as no table
+                // sampling at all.  Not strictly correct: TABLESAMPLE(0)
+                // should produce no output, but it simplifies implementation
+                // to know that some amount of sampling will occur.
+                // In practice values less than ~1E-43% are treated as 0.0 and
+                // values greater than ~99.999997% are treated as 1.0
+                float fRate = rate.divide(ONE_HUNDRED).floatValue();
+                if (fRate > 0.0f && fRate < 1.0f) {
+                    SqlSampleSpec tableSampleSpec =
                     isRepeatable
                         ? SqlSampleSpec.createTableSample(
                             isBernoulli, fRate, repeatableSeed)
                         : SqlSampleSpec.createTableSample(isBernoulli, fRate);
 
-                SqlLiteral tableSampleLiteral =
-                    SqlLiteral.createSample(tableSampleSpec, s.end(this));
-                tableRef = SqlStdOperatorTable.TABLESAMPLE.createCall(
-                    s.end(this), tableRef, tableSampleLiteral);
+                    SqlLiteral tableSampleLiteral =
+                        SqlLiteral.createSample(tableSampleSpec, s2.end(this));
+                    tableRef = SqlStdOperatorTable.TABLESAMPLE.createCall(
+                        s2.end(this), tableRef, tableSampleLiteral);
+                }
             }
-        }
-    )
-    { return tableRef; }
+        )
+    ]
+    {
+        return tableRef;
+    }
 }
 
 SqlNodeList ExtendList() :
@@ -2390,7 +2317,7 @@ void ColumnType(List<SqlNode> list) :
     ]
     {
         list.add(name);
-        list.add(type.withNullable(nullable, getPos()));
+        list.add(type.withNullable(nullable));
     }
 }
 
@@ -2406,7 +2333,11 @@ void CompoundIdentifierType(List<SqlNode> list, List<SqlNode> extendList) :
 {
     name = CompoundIdentifier()
     [
-        type = DataType()
+        type = DataType() {
+            if (!this.conformance.allowExtend()) {
+                throw SqlUtil.newContextException(getPos(), RESOURCE.extendNotAllowed());
+            }
+        }
         [
             <NOT> <NULL> {
                 nullable = false;
@@ -2414,26 +2345,20 @@ void CompoundIdentifierType(List<SqlNode> list, List<SqlNode> extendList) :
         ]
     ]
     {
-        if (type != null) {
-            if (!this.conformance.allowExtend()) {
-                throw SqlUtil.newContextException(type.getParserPosition(),
-                    RESOURCE.extendNotAllowed());
-            }
-            extendList.add(name);
-            extendList.add(type.withNullable(nullable, getPos()));
-        }
-        list.add(name);
+       if (type != null) {
+           extendList.add(name);
+           extendList.add(type.withNullable(nullable));
+       }
+       list.add(name);
     }
 }
 
-SqlNode TableFunctionCall() :
+SqlNode TableFunctionCall(SqlParserPos pos) :
 {
-    final Span s;
-    final SqlNode call;
+    SqlNode call;
     SqlFunctionCategory funcType = SqlFunctionCategory.USER_DEFINED_TABLE_FUNCTION;
 }
 {
-    <TABLE> { s = span(); } <LPAREN>
     [
         <SPECIFIC>
         {
@@ -2441,9 +2366,8 @@ SqlNode TableFunctionCall() :
         }
     ]
     call = NamedRoutineCall(funcType, ExprContext.ACCEPT_CURSOR)
-    <RPAREN>
     {
-        return SqlStdOperatorTable.COLLECTION_TABLE.createCall(s.end(this), call);
+        return SqlStdOperatorTable.COLLECTION_TABLE.createCall(pos, call);
     }
 }
 
@@ -2483,23 +2407,24 @@ SqlNode ExplicitTable(SqlParserPos pos) :
  */
 SqlNode TableConstructor() :
 {
-    final List<SqlNode> rowConstructorList = new ArrayList<SqlNode>();
+    SqlNodeList rowConstructorList;
     final Span s;
 }
 {
     <VALUES> { s = span(); }
-    RowConstructorList(rowConstructorList)
+    rowConstructorList = RowConstructorList(s)
     {
         return SqlStdOperatorTable.VALUES.createCall(
-            s.end(this), rowConstructorList);
+            s.end(this), rowConstructorList.toArray());
     }
 }
 
 /**
  * Parses one or more rows in a VALUES expression.
  */
-void RowConstructorList(List<SqlNode> list) :
+SqlNodeList RowConstructorList(Span s) :
 {
+    List<SqlNode> list = new ArrayList<SqlNode>();
     SqlNode rowConstructor;
 }
 {
@@ -2508,6 +2433,9 @@ void RowConstructorList(List<SqlNode> list) :
         LOOKAHEAD(2)
         <COMMA> rowConstructor = RowConstructor() { list.add(rowConstructor); }
     )*
+    {
+        return new SqlNodeList(list, s.end(this));
+    }
 }
 
 /**
@@ -2557,7 +2485,7 @@ SqlNode RowConstructor() :
         // sub-queries inside of ROW and row sub-queries?  The standard does,
         // but the distinction seems to be purely syntactic.
         return SqlStdOperatorTable.ROW.createCall(s.end(valueList),
-            (List<SqlNode>) valueList);
+            valueList.toArray());
     }
 }
 
@@ -2573,7 +2501,7 @@ SqlNode WhereOpt() :
     {
         return condition;
     }
-|
+    |
     {
         return null;
     }
@@ -2585,20 +2513,11 @@ SqlNode WhereOpt() :
 SqlNodeList GroupByOpt() :
 {
     List<SqlNode> list = new ArrayList<SqlNode>();
-    boolean distinct = false;
     final Span s;
 }
 {
     <GROUP> { s = span(); }
-    <BY>
-    [ <DISTINCT> { distinct = true; } | <ALL> ]
-    list = GroupingElementList() {
-        if (distinct) {
-            SqlNode groupByDistinct =
-                SqlInternalOperators.GROUP_BY_DISTINCT.createCall(
-                    s.add(getPos()).pos(), list);
-            list = ImmutableList.of(groupByDistinct);
-        }
+    <BY> list = GroupingElementList() {
         return new SqlNodeList(list, s.addAll(list).pos());
     }
 |
@@ -2663,32 +2582,26 @@ SqlNodeList ExpressionCommaList(
     final Span s,
     ExprContext exprContext) :
 {
-    final List<SqlNode> list = new ArrayList<SqlNode>();
-}
-{
-    ExpressionCommaList2(list, exprContext) {
-        return new SqlNodeList(list, s.addAll(list).pos());
-    }
-}
-
-/**
- * Parses a list of expressions separated by commas,
- * appending expressions to a given list.
- */
-void ExpressionCommaList2(List<SqlNode> list, ExprContext exprContext) :
-{
+    List<SqlNode> list;
     SqlNode e;
 }
 {
-    e = Expression(exprContext) { list.add(e); }
+    e = Expression(exprContext)
+    {
+        list = startList(e);
+    }
     (
         // NOTE jvs 6-Feb-2004:  See comments at top of file for why
         // hint is necessary here.
         LOOKAHEAD(2)
-        <COMMA> e = Expression(ExprContext.ACCEPT_SUB_QUERY) {
+        <COMMA> e = Expression(ExprContext.ACCEPT_SUB_QUERY)
+        {
             list.add(e);
         }
     )*
+    {
+        return new SqlNodeList(list, s.addAll(list).pos());
+    }
 }
 
 /**
@@ -2923,122 +2836,6 @@ SqlSnapshot Snapshot(SqlNode tableRef) :
     }
 }
 
-/** Parses a PIVOT clause following a table expression. */
-SqlNode Pivot(SqlNode tableRef) :
-{
-    final Span s;
-    final Span s2;
-    final List<SqlNode> aggList = new ArrayList<SqlNode>();
-    final List<SqlNode> valueList = new ArrayList<SqlNode>();
-    final SqlNodeList axisList;
-    final SqlNodeList inList;
-}
-{
-    <PIVOT> { s = span(); checkNotJoin(tableRef); }
-    <LPAREN>
-    PivotAgg(aggList) ( <COMMA> PivotAgg(aggList) )*
-    <FOR> axisList = SimpleIdentifierOrList()
-    <IN> <LPAREN> { s2 = span(); }
-    [ PivotValue(valueList) ( <COMMA> PivotValue(valueList) )* ]
-    <RPAREN> {
-        inList = new SqlNodeList(valueList, s2.end(this));
-    }
-    <RPAREN>
-    {
-        return new SqlPivot(s.end(this), tableRef,
-            new SqlNodeList(aggList, SqlParserPos.sum(aggList)),
-            axisList, inList);
-    }
-}
-
-void PivotAgg(List<SqlNode> list) :
-{
-    final SqlNode e;
-    final SqlIdentifier alias;
-}
-{
-    e = NamedFunctionCall()
-    (
-        [ <AS> ] alias = SimpleIdentifier() {
-            list.add(
-                SqlStdOperatorTable.AS.createCall(Span.of(e).end(this), e,
-                    alias));
-        }
-    |
-        { list.add(e); }
-    )
-}
-
-void PivotValue(List<SqlNode> list) :
-{
-    final SqlNode e;
-    final SqlNodeList tuple;
-    final SqlIdentifier alias;
-}
-{
-    e = RowConstructor() { tuple = SqlParserUtil.stripRow(e); }
-    (
-        [ <AS> ] alias = SimpleIdentifier() {
-            list.add(
-                SqlStdOperatorTable.AS.createCall(Span.of(tuple).end(this),
-                    tuple, alias));
-        }
-    |
-        { list.add(tuple); }
-    )
-}
-
-/** Parses an UNPIVOT clause following a table expression. */
-SqlNode Unpivot(SqlNode tableRef) :
-{
-    final Span s;
-    final boolean includeNulls;
-    final SqlNodeList measureList;
-    final SqlNodeList axisList;
-    final Span s2;
-    final List<SqlNode> values = new ArrayList<SqlNode>();
-    final SqlNodeList inList;
-}
-{
-    <UNPIVOT> { s = span(); checkNotJoin(tableRef); }
-    (
-        <INCLUDE> <NULLS> { includeNulls = true; }
-    |   <EXCLUDE> <NULLS> { includeNulls = false; }
-    |   { includeNulls = false; }
-    )
-    <LPAREN>
-    measureList = SimpleIdentifierOrList()
-    <FOR> axisList = SimpleIdentifierOrList()
-    <IN>
-    <LPAREN> { s2 = span(); }
-    UnpivotValue(values) ( <COMMA> UnpivotValue(values) )*
-    <RPAREN>
-    { inList = new SqlNodeList(values, s2.end(this)); }
-    <RPAREN> {
-        return new SqlUnpivot(s.end(this), tableRef, includeNulls, measureList,
-            axisList, inList);
-    }
-}
-
-void UnpivotValue(List<SqlNode> list) :
-{
-    final SqlNodeList columnList;
-    final SqlNode values;
-}
-{
-    columnList = SimpleIdentifierOrList()
-    (
-        <AS> values = RowConstructor() {
-            final SqlNodeList valueList = SqlParserUtil.stripRow(values);
-            list.add(
-                SqlStdOperatorTable.AS.createCall(Span.of(columnList).end(this),
-                    columnList, valueList));
-        }
-    |
-        { list.add(columnList); }
-    )
-}
-
 /**
  * Parses a MATCH_RECOGNIZE clause following a table expression.
  */
@@ -3060,7 +2857,7 @@ SqlMatchRecognize MatchRecognize(SqlNode tableRef) :
     SqlLiteral isStrictEnds = SqlLiteral.createBoolean(false, getPos());
 }
 {
-    <MATCH_RECOGNIZE> { s = span(); checkNotJoin(tableRef); } <LPAREN>
+    <MATCH_RECOGNIZE> { s = span(); } <LPAREN>
     [
         <PARTITION> { s2 = span(); } <BY>
         partitionList = ExpressionCommaList(s2, ExprContext.ACCEPT_NON_QUERY)
@@ -3436,23 +3233,6 @@ SqlNode SqlExpressionEof() :
 
 /**
  * Parses either a row expression or a query expression without ORDER BY.
- *
- * <p>Examples of valid queries:
- * <ul>
- * <li>{@code SELECT c FROM t}
- * <li>{@code SELECT c} (valid in some dialects)
- * <li>{@code SELECT c FROM t UNION SELECT c2 FROM t2}
- * <li>{@code WITH q AS (SELECT 1) SELECT * FROM q}
- * <li>{@code VALUES (1, 2)}
- * <li>{@code TABLE t}
- * </ul>
- *
- * <p>Non-examples:
- * <ul>
- * <li>{@code emp CROSS JOIN dept}
- * <li>{@code SELECT c FROM t ORDER BY c}
- * <li>{@code (SELECT c FROM t)}
- * </ul>
  */
 SqlNode QueryOrExpr(ExprContext exprContext) :
 {
@@ -3467,8 +3247,7 @@ SqlNode QueryOrExpr(ExprContext exprContext) :
     [
         withList = WithList()
     ]
-    e = LeafQueryOrExpr(exprContext)
-    {
+    e = LeafQueryOrExpr(exprContext) {
         list = startList(e);
     }
     (
@@ -3484,53 +3263,9 @@ SqlNode QueryOrExpr(ExprContext exprContext) :
             // ensure a query is legal in this context
             pos = getPos();
             checkQueryExpression(exprContext);
+
         }
         e = LeafQueryOrExpr(ExprContext.ACCEPT_QUERY) {
-            list.add(new SqlParserUtil.ToTreeListItem(op, pos));
-            list.add(e);
-        }
-    )*
-    {
-        e = SqlParserUtil.toTree(list);
-        if (withList != null) {
-            e = new SqlWith(withList.getParserPosition(), withList, e);
-        }
-        return e;
-    }
-}
-
-SqlNode Query(ExprContext exprContext) :
-{
-    SqlNodeList withList = null;
-    SqlNode e;
-    SqlOperator op;
-    SqlParserPos pos;
-    SqlParserPos withPos;
-    List<Object> list;
-}
-{
-    [
-        withList = WithList()
-    ]
-    e = LeafQuery(exprContext)
-    {
-        list = startList(e);
-    }
-    (
-        {
-            if (!e.isA(SqlKind.QUERY)) {
-                // whoops, expression we just parsed wasn't a query,
-                // but we're about to see something like UNION, so
-                // force an exception retroactively
-                checkNonQueryExpression(ExprContext.ACCEPT_QUERY);
-            }
-        }
-        op = BinaryQueryOperator() {
-            // ensure a query is legal in this context
-            pos = getPos();
-            checkQueryExpression(exprContext);
-        }
-        e = LeafQuery(ExprContext.ACCEPT_QUERY) {
             list.add(new SqlParserUtil.ToTreeListItem(op, pos));
             list.add(e);
         }
@@ -3608,6 +3343,8 @@ SqlNode Expression(ExprContext exprContext) :
         return e;
     }
 }
+
+// TODO jvs 15-Nov-2003:  ANY/ALL
 
 void Expression2b(ExprContext exprContext, List<Object> list) :
 {
@@ -3748,22 +3485,14 @@ List<Object> Expression2(ExprContext exprContext) :
                         (
                             <LIKE> { op = SqlStdOperatorTable.NOT_LIKE; }
                         |
-                            <ILIKE> { op = SqlLibraryOperators.NOT_ILIKE; }
-                        |
-                            <RLIKE> { op = SqlLibraryOperators.NOT_RLIKE; }
-                        |
                             <SIMILAR> <TO> { op = SqlStdOperatorTable.NOT_SIMILAR_TO; }
                         )
                     |
                         <LIKE> { op = SqlStdOperatorTable.LIKE; }
                     |
-                        <ILIKE> { op = SqlLibraryOperators.ILIKE; }
-                    |
-                        <RLIKE> { op = SqlLibraryOperators.RLIKE; }
-                    |
                         <SIMILAR> <TO> { op = SqlStdOperatorTable.SIMILAR_TO; }
                     )
-                <#if (parser.includePosixOperators!default.parser.includePosixOperators)>
+                <#if parser.includePosixOperators>
                 |
                     <NEGATE> <TILDE> { op = SqlStdOperatorTable.NEGATED_POSIX_REGEX_CASE_SENSITIVE; }
                     [ <STAR> { op = SqlStdOperatorTable.NEGATED_POSIX_REGEX_CASE_INSENSITIVE; } ]
@@ -3787,7 +3516,7 @@ List<Object> Expression2(ExprContext exprContext) :
                     }
                 ]
             |
-            <#list (parser.extraBinaryExpressions!default.parser.extraBinaryExpressions) as extra >
+            <#list parser.extraBinaryExpressions as extra >
                 ${extra}(list, exprContext, s)
             |
             </#list>
@@ -3886,7 +3615,7 @@ SqlNode Expression3(ExprContext exprContext) :
     <ROW> {
         s = span();
     }
-    list = ParenthesizedQueryOrCommaList(exprContext) {
+    list = ParenthesizedSimpleIdentifierList() {
         if (exprContext != ExprContext.ACCEPT_ALL
             && exprContext != ExprContext.ACCEPT_CURSOR
             && !this.conformance.allowExplicitRowValueConstructor())
@@ -3904,7 +3633,7 @@ SqlNode Expression3(ExprContext exprContext) :
         if (rowSpan != null) {
             // interpret as row constructor
             return SqlStdOperatorTable.ROW.createCall(rowSpan.end(list1),
-                (List<SqlNode>) list1);
+                list1.toArray());
         }
     }
     [
@@ -3958,7 +3687,7 @@ SqlNode Expression3(ExprContext exprContext) :
         } else {
             // interpret as row constructor
             return SqlStdOperatorTable.ROW.createCall(span().end(list1),
-                (List<SqlNode>) list1);
+                list1.toArray());
         }
     }
 }
@@ -4056,68 +3785,6 @@ SqlNode RowExpressionExtension() :
     )?
     {
         return e;
-    }
-}
-
-/**
- * Parses a call to the STRING_AGG aggregate function (or to an aggregate
- * function with similar syntax: ARRAY_AGG, ARRAY_CONCAT_AGG, GROUP_CONCAT).
- */
-SqlCall StringAggFunctionCall() :
-{
-    final Span s, s2;
-    final SqlOperator op;
-    final List<SqlNode> args = new ArrayList();
-    final SqlLiteral qualifier;
-    final SqlNodeList orderBy;
-    final Pair<SqlParserPos, SqlOperator> nullTreatment;
-    final SqlNode separator;
-}
-{
-    (
-        <ARRAY_AGG> { s = span(); op = SqlLibraryOperators.ARRAY_AGG; }
-    |   <ARRAY_CONCAT_AGG> { s = span(); op = SqlLibraryOperators.ARRAY_CONCAT_AGG; }
-    |   <GROUP_CONCAT> { s = span(); op = SqlLibraryOperators.GROUP_CONCAT; }
-    |   <STRING_AGG> { s = span(); op = SqlLibraryOperators.STRING_AGG; }
-    )
-    <LPAREN>
-    (
-        qualifier = AllOrDistinct()
-    |
-        { qualifier = null; }
-    )
-    Arg(args, ExprContext.ACCEPT_SUB_QUERY)
-    (
-        <COMMA> {
-            // a comma-list can't appear where only a query is expected
-            // TODO: the following line is a no-op; remove it?
-            checkNonQueryExpression(ExprContext.ACCEPT_SUB_QUERY);
-        }
-        Arg(args, ExprContext.ACCEPT_SUB_QUERY)
-    )*
-    (
-        nullTreatment = NullTreatment()
-    |
-        { nullTreatment = null; }
-    )
-    [
-        orderBy = OrderBy(true) {
-            args.add(orderBy);
-        }
-    ]
-    [
-        <SEPARATOR> { s2 = span(); } separator = StringLiteral() {
-            args.add(SqlInternalOperators.SEPARATOR.createCall(s2.end(this), separator));
-        }
-    ]
-    <RPAREN>
-    {
-        SqlCall call = op.createCall(qualifier, s.end(this), args);
-        if (nullTreatment != null) {
-            // Wrap in RESPECT_NULLS or IGNORE_NULLS.
-            call = nullTreatment.right.createCall(nullTreatment.left, call);
-        }
-        return call;
     }
 }
 
@@ -4288,7 +3955,7 @@ SqlAlter SqlAlter() :
     scope = Scope()
     (
 <#-- additional literal parser methods are included here -->
-<#list (parser.alterStatementParserMethods!default.parser.alterStatementParserMethods) as method>
+<#list parser.alterStatementParserMethods as method>
         alterNode = ${method}(s, scope)
     |
 </#list>
@@ -4307,7 +3974,7 @@ String Scope() :
     ( <SYSTEM> | <SESSION> ) { return token.image.toUpperCase(Locale.ROOT); }
 }
 
-<#if (parser.createStatementParserMethods!default.parser.createStatementParserMethods)?size != 0>
+<#if parser.createStatementParserMethods?size != 0>
 /**
  * Parses a CREATE statement.
  */
@@ -4326,7 +3993,7 @@ SqlCreate SqlCreate() :
     ]
     (
 <#-- additional literal parser methods are included here -->
-<#list (parser.createStatementParserMethods!default.parser.createStatementParserMethods) as method>
+<#list parser.createStatementParserMethods as method>
         create = ${method}(s, replace)
         <#sep>| LOOKAHEAD(2) </#sep>
 </#list>
@@ -4337,7 +4004,7 @@ SqlCreate SqlCreate() :
 }
 </#if>
 
-<#if (parser.dropStatementParserMethods!default.parser.dropStatementParserMethods)?size != 0>
+<#if parser.dropStatementParserMethods?size != 0>
 /**
  * Parses a DROP statement.
  */
@@ -4351,7 +4018,7 @@ SqlDrop SqlDrop() :
     <DROP> { s = span(); }
     (
 <#-- additional literal parser methods are included here -->
-<#list (parser.dropStatementParserMethods!default.parser.dropStatementParserMethods) as method>
+<#list parser.dropStatementParserMethods as method>
         drop = ${method}(s, replace)
         <#sep>|</#sep>
 </#list>
@@ -4400,7 +4067,7 @@ SqlNode NonIntervalLiteral() :
     |
         e = DateTimeLiteral()
 <#-- additional literal parser methods are included here -->
-<#list (parser.literalParserMethods!default.parser.literalParserMethods) as method>
+<#list parser.literalParserMethods as method>
     |
         e = ${method}
 </#list>
@@ -4498,8 +4165,6 @@ SqlNode StringLiteral() :
     int nfrags = 0;
     List<SqlLiteral> frags = null;
     char unicodeEscapeChar = 0;
-    String charSet = null;
-    SqlCharStringLiteral literal;
 }
 {
     // A continued string literal consists of a head fragment and one or more
@@ -4547,7 +4212,10 @@ SqlNode StringLiteral() :
             return SqlStdOperatorTable.LITERAL_CHAIN.createCall(pos2, frags);
         }
     }
-|
+    |
+    {
+        String charSet = null;
+    }
     (
         <PREFIXED_STRING_LITERAL>
         { charSet = SqlParserUtil.getCharacterSet(token.image); }
@@ -4561,6 +4229,7 @@ SqlNode StringLiteral() :
     )
     {
         p = SqlParserUtil.parseString(token.image);
+        SqlCharStringLiteral literal;
         try {
             literal = SqlLiteral.createCharString(p, charSet, getPos());
         } catch (java.nio.charset.UnsupportedCharsetException e) {
@@ -4617,93 +4286,49 @@ SqlNode StringLiteral() :
             return SqlStdOperatorTable.LITERAL_CHAIN.createCall(pos2, rands);
         }
     }
-|
-    <BIG_QUERY_DOUBLE_QUOTED_STRING>
-    {
-        p = SqlParserUtil.stripQuotes(getToken(0).image, DQ, DQ, "\\\"",
-            Casing.UNCHANGED);
-        try {
-            return SqlLiteral.createCharString(p, charSet, getPos());
-        } catch (java.nio.charset.UnsupportedCharsetException e) {
-            throw SqlUtil.newContextException(getPos(),
-                RESOURCE.unknownCharacterSet(charSet));
-        }
-    }
-|
-    <BIG_QUERY_QUOTED_STRING>
-    {
-        p = SqlParserUtil.stripQuotes(getToken(0).image, "'", "'", "\\'",
-            Casing.UNCHANGED);
-        try {
-            return SqlLiteral.createCharString(p, charSet, getPos());
-        } catch (java.nio.charset.UnsupportedCharsetException e) {
-            throw SqlUtil.newContextException(getPos(),
-                RESOURCE.unknownCharacterSet(charSet));
-        }
-    }
 }
 
-/** Parses a character literal.
- * Matches a single-quoted string, such as 'foo';
- * on BigQuery also matches a double-quoted string, such as "foo".
- * Returns the value of the string with quotes removed. */
-String SimpleStringLiteral() :
-{
-}
-{
-    <QUOTED_STRING> {
-        return SqlParserUtil.parseString(token.image);
-    }
-|
-    <BIG_QUERY_QUOTED_STRING> {
-        return SqlParserUtil.stripQuotes(token.image, "'", "'", "\\'", Casing.UNCHANGED);
-    }
-|
-    <BIG_QUERY_DOUBLE_QUOTED_STRING> {
-        return SqlParserUtil.stripQuotes(token.image, DQ, DQ, "\\\"", Casing.UNCHANGED);
-    }
-}
 
 /**
  * Parses a date/time literal.
  */
 SqlLiteral DateTimeLiteral() :
 {
-    final String p;
+    final String  p;
     final Span s;
 }
 {
     <LBRACE_D> <QUOTED_STRING> {
-        p = SqlParserUtil.parseString(token.image);
+        p = token.image;
     }
     <RBRACE> {
         return SqlParserUtil.parseDateLiteral(p, getPos());
     }
 |
     <LBRACE_T> <QUOTED_STRING> {
-        p = SqlParserUtil.parseString(token.image);
+        p = token.image;
     }
     <RBRACE> {
         return SqlParserUtil.parseTimeLiteral(p, getPos());
     }
 |
     <LBRACE_TS> { s = span(); } <QUOTED_STRING> {
-        p = SqlParserUtil.parseString(token.image);
+        p = token.image;
     }
     <RBRACE> {
         return SqlParserUtil.parseTimestampLiteral(p, s.end(this));
     }
 |
-    <DATE> { s = span(); } p = SimpleStringLiteral() {
-      return SqlParserUtil.parseDateLiteral(p, s.end(this));
+    <DATE> { s = span(); } <QUOTED_STRING> {
+        return SqlParserUtil.parseDateLiteral(token.image, s.end(this));
     }
 |
-    <TIME> { s = span(); } p = SimpleStringLiteral() {
-        return SqlParserUtil.parseTimeLiteral(p, s.end(this));
+    <TIME> { s = span(); } <QUOTED_STRING> {
+        return SqlParserUtil.parseTimeLiteral(token.image, s.end(this));
     }
 |
-    <TIMESTAMP> { s = span(); } p = SimpleStringLiteral() {
-        return SqlParserUtil.parseTimestampLiteral(p, s.end(this));
+    <TIMESTAMP> { s = span(); } <QUOTED_STRING> {
+        return SqlParserUtil.parseTimestampLiteral(token.image, s.end(this));
     }
 }
 
@@ -4753,7 +4378,7 @@ SqlNode ArrayConstructor() :
         LOOKAHEAD(1)
         <LPAREN>
         // by sub query "MULTISET(SELECT * FROM T)"
-        e = OrderedQueryOrExpr(ExprContext.ACCEPT_QUERY)
+        e = LeafQueryOrExpr(ExprContext.ACCEPT_QUERY)
         <RPAREN>
         {
             return SqlStdOperatorTable.ARRAY_QUERY.createCall(
@@ -4844,7 +4469,7 @@ SqlLiteral IntervalLiteral() :
     |
         <PLUS> { sign = 1; }
     ]
-    p = SimpleStringLiteral()
+    <QUOTED_STRING> { p = token.image; }
     intervalQualifier = IntervalQualifier() {
         return SqlParserUtil.parseIntervalLiteral(s.end(intervalQualifier),
             sign, p, intervalQualifier);
@@ -4871,7 +4496,7 @@ SqlNode IntervalLiteralOrExpression() :
     ]
     (
         // literal (with quoted string)
-        p = SimpleStringLiteral()
+        <QUOTED_STRING> { p = token.image; }
         intervalQualifier = IntervalQualifier() {
             return SqlParserUtil.parseIntervalLiteral(s.end(intervalQualifier),
                 sign, p, intervalQualifier);
@@ -5044,72 +4669,29 @@ SqlIntervalQualifier IntervalQualifierStart() :
 }
 
 /**
- * Parses time unit for CEIL and FLOOR functions.
+ * Parses time unit for EXTRACT, CEIL and FLOOR functions.
+ * Note that it does't include NANOSECOND and MICROSECOND.
  */
 TimeUnit TimeUnit() :
+{}
 {
-    final TimeUnit unit;
-}
-{
-    LOOKAHEAD(1)
-    (
-        <MILLISECOND> { return TimeUnit.MILLISECOND; }
-    |   <SECOND> { return TimeUnit.SECOND; }
-    |   <MINUTE> { return TimeUnit.MINUTE; }
-    |   <HOUR> { return TimeUnit.HOUR; }
-    |   <DAY> { return TimeUnit.DAY; }
-    |   <DOW> { return TimeUnit.DOW; }
-    |   <DOY> { return TimeUnit.DOY; }
-    |   <ISODOW> { return TimeUnit.ISODOW; }
-    |   <ISOYEAR> { return TimeUnit.ISOYEAR; }
-    |   <WEEK> { return TimeUnit.WEEK; }
-    |   <MONTH> { return TimeUnit.MONTH; }
-    |   <QUARTER> { return TimeUnit.QUARTER; }
-    |   <YEAR> { return TimeUnit.YEAR; }
-    |   <EPOCH> { return TimeUnit.EPOCH; }
-    |   <DECADE> { return TimeUnit.DECADE; }
-    |   <CENTURY> { return TimeUnit.CENTURY; }
-    |   <MILLENNIUM> { return TimeUnit.MILLENNIUM; }
-    )
-|
-    unit = TimeUnitIdentifier() { return unit; }
-}
-
-/**
- * Parses time unit for the EXTRACT function.
- * As for FLOOR and CEIL, but also includes NANOSECOND and MICROSECOND.
- */
-TimeUnit TimeUnitForExtract() :
-{
-    final TimeUnit unit;
-}
-{
-    LOOKAHEAD(1)
-    (
-        <NANOSECOND> { return TimeUnit.NANOSECOND; }
-    |   <MICROSECOND> { return TimeUnit.MICROSECOND; }
-    )
-|
-    unit = TimeUnit() { return unit; }
-}
-
-/**
- * Parses a simple identifier as a TimeUnit.
- */
-TimeUnit TimeUnitIdentifier() :
-{
-    final List<String> names = new ArrayList<String>();
-    final List<SqlParserPos> positions = new ArrayList<SqlParserPos>();
-}
-{
-    IdentifierSegment(names, positions) {
-        TimeUnit unit = timeUnitCodes.get(names.get(0));
-        if (unit != null) {
-          return unit;
-        }
-        throw SqlUtil.newContextException(positions.get(0),
-            RESOURCE.invalidDatetimeFormat(SqlIdentifier.getString(names)));
-    }
+    <MILLISECOND> { return TimeUnit.MILLISECOND; }
+|   <SECOND> { return TimeUnit.SECOND; }
+|   <MINUTE> { return TimeUnit.MINUTE; }
+|   <HOUR> { return TimeUnit.HOUR; }
+|   <DAY> { return TimeUnit.DAY; }
+|   <DOW> { return TimeUnit.DOW; }
+|   <DOY> { return TimeUnit.DOY; }
+|   <ISODOW> { return TimeUnit.ISODOW; }
+|   <ISOYEAR> { return TimeUnit.ISOYEAR; }
+|   <WEEK> { return TimeUnit.WEEK; }
+|   <MONTH> { return TimeUnit.MONTH; }
+|   <QUARTER> { return TimeUnit.QUARTER; }
+|   <YEAR> { return TimeUnit.YEAR; }
+|   <EPOCH> { return TimeUnit.EPOCH; }
+|   <DECADE> { return TimeUnit.DECADE; }
+|   <CENTURY> { return TimeUnit.CENTURY; }
+|   <MILLENNIUM> { return TimeUnit.MILLENNIUM; }
 }
 
 TimeUnit TimestampInterval() :
@@ -5173,31 +4755,20 @@ void IdentifierSegment(List<String> names, List<SqlParserPos> positions) :
             pos = getPos();
         }
     |
-        <HYPHENATED_IDENTIFIER> {
-            id = unquotedIdentifier();
-            pos = getPos();
-        }
-    |
         <QUOTED_IDENTIFIER> {
-            id = SqlParserUtil.stripQuotes(getToken(0).image, DQ, DQ, DQDQ,
+            id = SqlParserUtil.strip(getToken(0).image, DQ, DQ, DQDQ,
                 quotedCasing);
             pos = getPos().withQuoting(true);
         }
     |
         <BACK_QUOTED_IDENTIFIER> {
-            id = SqlParserUtil.stripQuotes(getToken(0).image, "`", "`", "``",
-                quotedCasing);
-            pos = getPos().withQuoting(true);
-        }
-    |
-        <BIG_QUERY_BACK_QUOTED_IDENTIFIER> {
-            id = SqlParserUtil.stripQuotes(getToken(0).image, "`", "`", "\\`",
+            id = SqlParserUtil.strip(getToken(0).image, "`", "`", "``",
                 quotedCasing);
             pos = getPos().withQuoting(true);
         }
     |
         <BRACKET_QUOTED_IDENTIFIER> {
-            id = SqlParserUtil.stripQuotes(getToken(0).image, "[", "]", "]]",
+            id = SqlParserUtil.strip(getToken(0).image, "[", "]", "]]",
                 quotedCasing);
             pos = getPos().withQuoting(true);
         }
@@ -5206,7 +4777,7 @@ void IdentifierSegment(List<String> names, List<SqlParserPos> positions) :
             span = span();
             String image = getToken(0).image;
             image = image.substring(image.indexOf('"'));
-            image = SqlParserUtil.stripQuotes(image, DQ, DQ, DQDQ, quotedCasing);
+            image = SqlParserUtil.strip(image, DQ, DQ, DQDQ, quotedCasing);
         }
         [
             <UESCAPE> <QUOTED_STRING> {
@@ -5233,35 +4804,6 @@ void IdentifierSegment(List<String> names, List<SqlParserPos> positions) :
         names.add(id);
         if (positions != null) {
             positions.add(pos);
-        }
-    }
-}
-
-/** As {@link #IdentifierSegment} but part of a table name (for example,
- * following {@code FROM}, {@code INSERT} or {@code UPDATE}).
- *
- * <p>In some dialects the lexical rules for table names are different from
- * for other identifiers. For example, in BigQuery, table names may contain
- * hyphens. */
-void TableIdentifierSegment(List<String> names, List<SqlParserPos> positions) :
-{
-}
-{
-    IdentifierSegment(names, positions)
-    {
-        final int n = names.size();
-        if (n > 0
-                && positions.size() == n
-                && names.get(n - 1).contains(".")
-                && positions.get(n - 1).isQuoted()
-                && this.conformance.splitQuotedTableName()) {
-            final String name = names.remove(n - 1);
-            final SqlParserPos pos = positions.remove(n - 1);
-            final String[] splitNames = name.split("\\.");
-            for (String splitName : splitNames) {
-                names.add(splitName);
-                positions.add(pos);
-            }
         }
     }
 }
@@ -5343,29 +4885,7 @@ SqlNodeList ParenthesizedSimpleIdentifierList() :
     }
 }
 
-/** List of simple identifiers in parentheses or one simple identifier.
- *
- * <ul>Examples:
- * <li>{@code DEPTNO}
- * <li>{@code (EMPNO, DEPTNO)}
- * </ul>
- */
-SqlNodeList SimpleIdentifierOrList() :
-{
-    SqlIdentifier id;
-    SqlNodeList list;
-}
-{
-    id = SimpleIdentifier() {
-        return new SqlNodeList(Collections.singletonList(id), id.getParserPosition());
-    }
-|
-    list = ParenthesizedSimpleIdentifierList() {
-        return list;
-    }
-}
-
-<#if (parser.includeCompoundIdentifier!default.parser.includeCompoundIdentifier) >
+<#if parser.includeCompoundIdentifier >
 /**
  * Parses a compound identifier.
  */
@@ -5396,27 +4916,6 @@ SqlIdentifier CompoundIdentifier() :
         if (star) {
             return SqlIdentifier.star(nameList, pos, posList);
         }
-        return new SqlIdentifier(nameList, null, pos, posList);
-    }
-}
-
-/**
- * Parses a compound identifier in the FROM clause.
- */
-SqlIdentifier CompoundTableIdentifier() :
-{
-    final List<String> nameList = new ArrayList<String>();
-    final List<SqlParserPos> posList = new ArrayList<SqlParserPos>();
-}
-{
-    TableIdentifierSegment(nameList, posList)
-    (
-        LOOKAHEAD(2)
-        <DOT>
-        TableIdentifierSegment(nameList, posList)
-    )*
-    {
-        SqlParserPos pos = SqlParserPos.sum(posList);
         return new SqlIdentifier(nameList, null, pos, posList);
     }
 }
@@ -5524,13 +5023,15 @@ SqlDataTypeSpec DataType() :
 }
 {
     typeName = TypeName() {
-        s = Span.of(typeName.getParserPos());
+        s = span();
     }
     (
         typeName = CollectionsTypeName(typeName)
     )*
     {
-        return new SqlDataTypeSpec(typeName, s.add(typeName.getParserPos()).pos());
+        return new SqlDataTypeSpec(
+            typeName,
+            s.end(this));
     }
 }
 
@@ -5546,7 +5047,7 @@ SqlTypeNameSpec TypeName() :
     (
 <#-- additional types are included here -->
 <#-- put custom data types in front of Calcite core data types -->
-<#list (parser.dataTypeParserMethods!default.parser.dataTypeParserMethods) as method>
+<#list parser.dataTypeParserMethods as method>
         LOOKAHEAD(2)
         typeNameSpec = ${method}
     |
@@ -5599,26 +5100,25 @@ SqlTypeNameSpec SqlTypeName1(Span s) :
             if (!this.conformance.allowGeometry()) {
                 throw SqlUtil.newContextException(getPos(), RESOURCE.geometryDisabled());
             }
-            s.add(this);
             sqlTypeName = SqlTypeName.GEOMETRY;
         }
     |
-        <BOOLEAN> { s.add(this); sqlTypeName = SqlTypeName.BOOLEAN; }
+        <BOOLEAN> { sqlTypeName = SqlTypeName.BOOLEAN; }
     |
-        ( <INTEGER> | <INT> ) { s.add(this); sqlTypeName = SqlTypeName.INTEGER; }
+        ( <INTEGER> | <INT> ) { sqlTypeName = SqlTypeName.INTEGER; }
     |
-        <TINYINT> { s.add(this); sqlTypeName = SqlTypeName.TINYINT; }
+        <TINYINT> { sqlTypeName = SqlTypeName.TINYINT; }
     |
-        <SMALLINT> { s.add(this); sqlTypeName = SqlTypeName.SMALLINT; }
+        <SMALLINT> { sqlTypeName = SqlTypeName.SMALLINT; }
     |
-        <BIGINT> { s.add(this); sqlTypeName = SqlTypeName.BIGINT; }
+        <BIGINT> { sqlTypeName = SqlTypeName.BIGINT; }
     |
-        <REAL> { s.add(this); sqlTypeName = SqlTypeName.REAL; }
+        <REAL> { sqlTypeName = SqlTypeName.REAL; }
     |
         <DOUBLE> { s.add(this); }
         [ <PRECISION> ] { sqlTypeName = SqlTypeName.DOUBLE; }
     |
-        <FLOAT> { s.add(this); sqlTypeName = SqlTypeName.FLOAT; }
+        <FLOAT> { sqlTypeName = SqlTypeName.FLOAT; }
     )
     {
         return new SqlBasicTypeNameSpec(sqlTypeName, s.end(this));
@@ -5640,7 +5140,7 @@ SqlTypeNameSpec SqlTypeName2(Span s) :
             { sqlTypeName = SqlTypeName.BINARY; }
         )
     |
-        <VARBINARY> { s.add(this); sqlTypeName = SqlTypeName.VARBINARY; }
+        <VARBINARY> { sqlTypeName = SqlTypeName.VARBINARY; }
     )
     precision = PrecisionOpt()
     {
@@ -5657,9 +5157,9 @@ SqlTypeNameSpec SqlTypeName3(Span s) :
 }
 {
     (
-        (<DECIMAL> | <DEC> | <NUMERIC>) { s.add(this); sqlTypeName = SqlTypeName.DECIMAL; }
+        (<DECIMAL> | <DEC> | <NUMERIC>) { sqlTypeName = SqlTypeName.DECIMAL; }
     |
-        <ANY> { s.add(this); sqlTypeName = SqlTypeName.ANY; }
+        <ANY> { sqlTypeName = SqlTypeName.ANY; }
     )
     [
         <LPAREN>
@@ -5788,7 +5288,7 @@ void FieldNameTypeCommaList(
     nullable = NullableOptDefaultFalse()
     {
         fieldNames.add(fName);
-        fieldTypes.add(fType.withNullable(nullable, getPos()));
+        fieldTypes.add(fType.withNullable(nullable));
     }
     (
         <COMMA>
@@ -5797,7 +5297,7 @@ void FieldNameTypeCommaList(
         nullable = NullableOptDefaultFalse()
         {
             fieldNames.add(fName);
-            fieldTypes.add(fType.withNullable(nullable, getPos()));
+            fieldTypes.add(fType.withNullable(nullable));
         }
     )*
 }
@@ -5838,7 +5338,7 @@ SqlTypeNameSpec CharacterTypeName(Span s) :
             { sqlTypeName = SqlTypeName.CHAR; }
         )
     |
-        <VARCHAR> { s.add(this); sqlTypeName = SqlTypeName.VARCHAR; }
+        <VARCHAR> { sqlTypeName = SqlTypeName.VARCHAR; }
     )
     precision = PrecisionOpt()
     [
@@ -5858,7 +5358,6 @@ SqlTypeNameSpec DateTimeTypeName() :
     int precision = -1;
     SqlTypeName typeName;
     boolean withLocalTimeZone = false;
-    final Span s;
 }
 {
     <DATE> {
@@ -5867,7 +5366,7 @@ SqlTypeNameSpec DateTimeTypeName() :
     }
 |
     LOOKAHEAD(2)
-    <TIME> { s = span(); }
+    <TIME>
     precision = PrecisionOpt()
     withLocalTimeZone = TimeZoneOpt()
     {
@@ -5876,10 +5375,10 @@ SqlTypeNameSpec DateTimeTypeName() :
         } else {
             typeName = SqlTypeName.TIME;
         }
-        return new SqlBasicTypeNameSpec(typeName, precision, s.end(this));
+        return new SqlBasicTypeNameSpec(typeName, precision, getPos());
     }
 |
-    <TIMESTAMP> { s = span(); }
+    <TIMESTAMP>
     precision = PrecisionOpt()
     withLocalTimeZone = TimeZoneOpt()
     {
@@ -5888,7 +5387,7 @@ SqlTypeNameSpec DateTimeTypeName() :
         } else {
             typeName = SqlTypeName.TIMESTAMP;
         }
-        return new SqlBasicTypeNameSpec(typeName, precision, s.end(this));
+        return new SqlBasicTypeNameSpec(typeName, precision, getPos());
     }
 }
 
@@ -5980,10 +5479,16 @@ SqlNode BuiltinFunctionCall() :
             return SqlStdOperatorTable.CAST.createCall(s.end(this), args);
         }
     |
-        <EXTRACT> { s = span(); }
-        <LPAREN> unit = TimeUnitForExtract() {
-            args = startList(new SqlIntervalQualifier(unit, null, getPos()));
+        <EXTRACT> {
+            s = span();
         }
+        <LPAREN>
+        (
+            <NANOSECOND> { unit = TimeUnit.NANOSECOND; }
+        |   <MICROSECOND> { unit = TimeUnit.MICROSECOND; }
+        |   unit = TimeUnit()
+        )
+        { args = startList(new SqlIntervalQualifier(unit, null, getPos())); }
         <FROM>
         e = Expression(ExprContext.ACCEPT_SUB_QUERY) { args.add(e); }
         <RPAREN> {
@@ -6152,7 +5657,7 @@ SqlNode BuiltinFunctionCall() :
     |
         node = TimestampDiffFunctionCall() { return node; }
     |
-<#list (parser.builtinFunctionCallMethods!default.parser.builtinFunctionCallMethods) as method>
+<#list parser.builtinFunctionCallMethods as method>
         node = ${method} { return node; }
     |
 </#list>
@@ -6634,7 +6139,7 @@ SqlNodeList JsonArrayAggOrderByClause() :
 SqlCall JsonArrayAggFunctionCall() :
 {
     final SqlNode valueExpr;
-    final SqlNodeList orderList;
+    SqlNodeList orderList = null;
     List<SqlNode> list;
     final Span span;
     SqlJsonConstructorNullClause nullClause =
@@ -6869,58 +6374,39 @@ SqlCall MatchRecognizeNavigationPhysical() :
     }
 }
 
-SqlCall withinDistinct(SqlNode arg) :
-{
-    final Span s;
-    final SqlNodeList distinctList;
-}
-{
-    <WITHIN> { s = span(); }
-    <DISTINCT>
-    <LPAREN>
-    distinctList = ExpressionCommaList(s, ExprContext.ACCEPT_SUB_QUERY)
-    <RPAREN> {
-        return SqlStdOperatorTable.WITHIN_DISTINCT.createCall(
-            s.end(this), arg, distinctList);
-    }
-}
-
 SqlCall withinGroup(SqlNode arg) :
 {
-    final Span s;
+    final Span withinGroupSpan;
     final SqlNodeList orderList;
 }
 {
-    <WITHIN> { s = span(); }
+
+    <WITHIN> { withinGroupSpan = span(); }
     <GROUP>
     <LPAREN>
     orderList = OrderBy(true)
     <RPAREN> {
         return SqlStdOperatorTable.WITHIN_GROUP.createCall(
-            s.end(this), arg, orderList);
-    }
-}
-
-Pair<SqlParserPos, SqlOperator> NullTreatment() :
-{
-    final Span span;
-}
-{
-    <IGNORE> { span = span(); } <NULLS> {
-        return Pair.of(span.end(this), SqlStdOperatorTable.IGNORE_NULLS);
-    }
-|
-    <RESPECT> { span = span(); } <NULLS> {
-        return Pair.of(span.end(this), SqlStdOperatorTable.RESPECT_NULLS);
+            withinGroupSpan.end(this), arg, orderList);
     }
 }
 
 SqlCall nullTreatment(SqlCall arg) :
 {
-    final Pair<SqlParserPos, SqlOperator> pair;
+    final Span span;
 }
 {
-    pair = NullTreatment() { return pair.right.createCall(pair.left, arg); }
+    (
+        <IGNORE> { span = span(); } <NULLS> {
+            return SqlStdOperatorTable.IGNORE_NULLS.createCall(
+                span.end(this), arg);
+        }
+    |
+        <RESPECT> { span = span(); } <NULLS> {
+            return SqlStdOperatorTable.RESPECT_NULLS.createCall(
+                span.end(this), arg);
+        }
+    )
 }
 
 /**
@@ -6940,63 +6426,17 @@ SqlCall nullTreatment(SqlCall arg) :
  */
 SqlNode NamedFunctionCall() :
 {
-    SqlCall call;
-    final Span filterSpan;
-    final SqlNode filter;
-    final Span overSpan;
-    final SqlNode over;
-    final Span withinGroupSpan;
-}
-{
-    (
-        LOOKAHEAD(2)
-        call = StringAggFunctionCall()
-    |
-        call = NamedCall()
-    )
-    [
-        LOOKAHEAD(2) call = nullTreatment(call)
-    ]
-    [
-        LOOKAHEAD(2) // decide between WITHIN DISTINCT and WITHIN GROUP
-        call = withinDistinct(call)
-    ]
-    [
-        call = withinGroup(call)
-    ]
-    [
-        <FILTER> { filterSpan = span(); }
-        <LPAREN>
-        <WHERE>
-        filter = Expression(ExprContext.ACCEPT_SUB_QUERY)
-        <RPAREN> {
-            call = SqlStdOperatorTable.FILTER.createCall(
-                filterSpan.end(this), call, filter);
-        }
-    ]
-    [
-        <OVER> { overSpan = span(); }
-        (
-            over = SimpleIdentifier()
-        |
-            over = WindowSpecification()
-        )
-        {
-            call = SqlStdOperatorTable.OVER.createCall(overSpan.end(over), call, over);
-        }
-    ]
-    {
-        return call;
-    }
-}
-
-SqlCall NamedCall() :
-{
     final SqlFunctionCategory funcType;
     final SqlIdentifier qualifiedName;
     final Span s;
     final List<SqlNode> args;
+    SqlCall call;
+    final Span filterSpan;
+    final SqlNode filter;
+    final SqlNode over;
     SqlLiteral quantifier = null;
+    SqlNodeList orderList = null;
+    final Span withinGroupSpan;
 }
 {
     (
@@ -7025,9 +6465,40 @@ SqlCall NamedCall() :
         }
     )
     {
-        return createCall(qualifiedName, s.end(this), funcType, quantifier, args);
+        call = createCall(qualifiedName, s.end(this), funcType, quantifier, args);
+    }
+    [
+        LOOKAHEAD(2) call = nullTreatment(call)
+    ]
+    [
+        call = withinGroup(call)
+    ]
+    [
+        <FILTER> { filterSpan = span(); }
+        <LPAREN>
+        <WHERE>
+        filter = Expression(ExprContext.ACCEPT_SUB_QUERY)
+        <RPAREN> {
+            call = SqlStdOperatorTable.FILTER.createCall(
+                filterSpan.end(this), call, filter);
+        }
+    ]
+    [
+        <OVER>
+        (
+            over = SimpleIdentifier()
+        |
+            over = WindowSpecification()
+        )
+        {
+            call = SqlStdOperatorTable.OVER.createCall(s.end(over), call, over);
+        }
+    ]
+    {
+        return call;
     }
 }
+
 
 /*
 * Parse Floor/Ceil function parameters
@@ -7156,8 +6627,6 @@ SqlIdentifier ReservedFunctionName() :
     |   <NULLIF>
     |   <OCTET_LENGTH>
     |   <PERCENT_RANK>
-    |   <PERCENTILE_CONT>
-    |   <PERCENTILE_DISC>
     |   <POWER>
     |   <RANK>
     |   <REGR_COUNT>
@@ -7412,7 +6881,6 @@ SqlPrefixOperator PrefixRowOperator() :
 |   <MINUS> { return SqlStdOperatorTable.UNARY_MINUS; }
 |   <NOT> { return SqlStdOperatorTable.NOT; }
 |   <EXISTS> { return SqlStdOperatorTable.EXISTS; }
-|   <UNIQUE> { return SqlStdOperatorTable.UNIQUE; }
 }
 
 /**
@@ -7466,7 +6934,7 @@ SqlPostfixOperator PostfixRowOperator() :
 /* KEYWORDS:  anything in this list is a reserved word unless it appears
    in the NonReservedKeyWord() production. */
 
-<DEFAULT, DQID, BTID, BQID, BQHID> TOKEN :
+<DEFAULT, DQID, BTID> TOKEN :
 {
     < A: "A" >
 |   < ABS: "ABS" >
@@ -7487,8 +6955,6 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < APPLY: "APPLY" >
 |   < ARE: "ARE" >
 |   < ARRAY: "ARRAY" >
-|   < ARRAY_AGG: "ARRAY_AGG" >
-|   < ARRAY_CONCAT_AGG: "ARRAY_CONCAT_AGG" >
 |   < ARRAY_MAX_CARDINALITY: "ARRAY_MAX_CARDINALITY" >
 |   < AS: "AS" >
 |   < ASC: "ASC" >
@@ -7617,13 +7083,13 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < DEFINED: "DEFINED" >
 |   < DEFINER: "DEFINER" >
 |   < DEGREE: "DEGREE" >
-|   < DELETE: "DELETE" > { beforeTableName(); }
+|   < DELETE: "DELETE" >
 |   < DENSE_RANK: "DENSE_RANK" >
 |   < DEPTH: "DEPTH" >
 |   < DEREF: "DEREF" >
 |   < DERIVED: "DERIVED" >
 |   < DESC: "DESC" >
-|   < DESCRIBE: "DESCRIBE" > { beforeTableName(); }
+|   < DESCRIBE: "DESCRIBE" >
 |   < DESCRIPTION: "DESCRIPTION" >
 |   < DESCRIPTOR: "DESCRIPTOR" >
 |   < DETERMINISTIC: "DETERMINISTIC" >
@@ -7633,7 +7099,6 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < DISPATCH: "DISPATCH" >
 |   < DISTINCT: "DISTINCT" >
 |   < DOMAIN: "DOMAIN" >
-|   < DOT_FORMAT: "DOT" >
 |   < DOUBLE: "DOUBLE" >
 |   < DOW: "DOW" >
 |   < DOY: "DOY" >
@@ -7684,7 +7149,7 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < FRAC_SECOND: "FRAC_SECOND" >
 |   < FRAME_ROW: "FRAME_ROW" >
 |   < FREE: "FREE" >
-|   < FROM: "FROM" > { beforeTableName(); }
+|   < FROM: "FROM" >
 |   < FULL: "FULL" >
 |   < FUNCTION: "FUNCTION" >
 |   < FUSION: "FUSION" >
@@ -7699,7 +7164,6 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < GRANT: "GRANT" >
 |   < GRANTED: "GRANTED" >
 |   < GROUP: "GROUP" >
-|   < GROUP_CONCAT: "GROUP_CONCAT" >
 |   < GROUPING: "GROUPING" >
 |   < GROUPS: "GROUPS" >
 |   < HAVING: "HAVING" >
@@ -7710,13 +7174,11 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < HOURS: "HOURS" >
 |   < IDENTITY: "IDENTITY" >
 |   < IGNORE: "IGNORE" >
-|   < ILIKE: "ILIKE" >
 |   < IMMEDIATE: "IMMEDIATE" >
 |   < IMMEDIATELY: "IMMEDIATELY" >
 |   < IMPLEMENTATION: "IMPLEMENTATION" >
 |   < IMPORT: "IMPORT" >
 |   < IN: "IN" >
-|   < INCLUDE: "INCLUDE" >
 |   < INCLUDING: "INCLUDING" >
 |   < INCREMENT: "INCREMENT" >
 |   < INDICATOR: "INDICATOR" >
@@ -7726,7 +7188,7 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < INOUT: "INOUT" >
 |   < INPUT: "INPUT" >
 |   < INSENSITIVE: "INSENSITIVE" >
-|   < INSERT: "INSERT" > { beforeTableName(); }
+|   < INSERT: "INSERT" >
 |   < INSTANCE: "INSTANCE" >
 |   < INSTANTIABLE: "INSTANTIABLE" >
 |   < INT: "INT" >
@@ -7741,7 +7203,7 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < ISOYEAR: "ISOYEAR" >
 |   < ISOLATION: "ISOLATION" >
 |   < JAVA: "JAVA" >
-|   < JOIN: "JOIN" > { beforeTableName(); }
+|   < JOIN: "JOIN" >
 |   < JSON: "JSON" >
 |   < JSON_ARRAY: "JSON_ARRAY">
 |   < JSON_ARRAYAGG: "JSON_ARRAYAGG">
@@ -7787,7 +7249,7 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < MAXVALUE: "MAXVALUE" >
 |   < MEASURES: "MEASURES" >
 |   < MEMBER: "MEMBER" >
-|   < MERGE: "MERGE" > { beforeTableName(); }
+|   < MERGE: "MERGE" >
 |   < MESSAGE_LENGTH: "MESSAGE_LENGTH" >
 |   < MESSAGE_OCTET_LENGTH: "MESSAGE_OCTET_LENGTH" >
 |   < MESSAGE_TEXT: "MESSAGE_TEXT" >
@@ -7879,7 +7341,6 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < PERCENT_RANK: "PERCENT_RANK" >
 |   < PERIOD: "PERIOD" >
 |   < PERMUTE: "PERMUTE" >
-|   < PIVOT: "PIVOT" >
 |   < PLACING: "PLACING" >
 |   < PLAN: "PLAN" >
 |   < PLI: "PLI" >
@@ -7935,7 +7396,6 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < RETURNS: "RETURNS" >
 |   < REVOKE: "REVOKE" >
 |   < RIGHT: "RIGHT" >
-|   < RLIKE: "RLIKE" >
 |   < ROLE: "ROLE" >
 |   < ROLLBACK: "ROLLBACK" >
 |   < ROLLUP: "ROLLUP" >
@@ -7964,17 +7424,16 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < SECTION: "SECTION" >
 |   < SECURITY: "SECURITY" >
 |   < SEEK: "SEEK" >
-|   < SELECT: "SELECT" > { afterTableName(); }
+|   < SELECT: "SELECT" >
 |   < SELF: "SELF" >
 |   < SENSITIVE: "SENSITIVE" >
-|   < SEPARATOR: "SEPARATOR" >
 |   < SEQUENCE: "SEQUENCE" >
 |   < SERIALIZABLE: "SERIALIZABLE" >
 |   < SERVER: "SERVER" >
 |   < SERVER_NAME: "SERVER_NAME" >
 |   < SESSION: "SESSION" >
 |   < SESSION_USER: "SESSION_USER" >
-|   < SET: "SET" > { afterTableName(); }
+|   < SET: "SET" >
 |   < SETS: "SETS" >
 |   < SET_MINUS: "MINUS">
 |   < SHOW: "SHOW" >
@@ -8050,7 +7509,6 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < STDDEV_POP: "STDDEV_POP" >
 |   < STDDEV_SAMP: "STDDEV_SAMP" >
 |   < STREAM: "STREAM" >
-|   < STRING_AGG: "STRING_AGG" >
 |   < STRUCTURE: "STRUCTURE" >
 |   < STYLE: "STYLE" >
 |   < SUBCLASS_ORIGIN: "SUBCLASS_ORIGIN" >
@@ -8065,7 +7523,7 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < SYSTEM: "SYSTEM" >
 |   < SYSTEM_TIME: "SYSTEM_TIME" >
 |   < SYSTEM_USER: "SYSTEM_USER" >
-|   < TABLE: "TABLE" > { beforeTableName(); }
+|   < TABLE: "TABLE" >
 |   < TABLE_NAME: "TABLE_NAME" >
 |   < TABLESAMPLE: "TABLESAMPLE" >
 |   < TEMPORARY: "TEMPORARY" >
@@ -8109,10 +7567,9 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < UNION: "UNION" >
 |   < UNIQUE: "UNIQUE" >
 |   < UNKNOWN: "UNKNOWN" >
-|   < UNPIVOT: "UNPIVOT" >
 |   < UNNAMED: "UNNAMED" >
 |   < UNNEST: "UNNEST" >
-|   < UPDATE: "UPDATE" > { beforeTableName(); }
+|   < UPDATE: "UPDATE" >
 |   < UPPER: "UPPER" >
 |   < UPSERT: "UPSERT" >
 |   < USAGE: "USAGE" >
@@ -8126,7 +7583,7 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < UTF16: "UTF16" >
 |   < UTF32: "UTF32" >
 |   < VALUE: "VALUE" >
-|   < VALUES: "VALUES" > { afterTableName(); }
+|   < VALUES: "VALUES" >
 |   < VALUE_OF: "VALUE_OF" >
 |   < VAR_POP: "VAR_POP" >
 |   < VAR_SAMP: "VAR_SAMP" >
@@ -8153,7 +7610,7 @@ SqlPostfixOperator PostfixRowOperator() :
 |   < YEARS: "YEARS" >
 |   < ZONE: "ZONE" >
 <#-- additional parser keywords are included here -->
-<#list (parser.keywords!default.parser.keywords) as keyword>
+<#list parser.keywords as keyword>
 |   < ${keyword}: "${keyword}" >
 </#list>
 }
@@ -8192,7 +7649,7 @@ void NonReservedKeyWord0of3() :
 }
 {
     (
-<#list (parser.nonReservedKeywords!default.parser.nonReservedKeywords) + (parser.nonReservedKeywordsToAdd!default.parser.nonReservedKeywordsToAdd) as keyword>
+<#list parser.nonReservedKeywords + parser.nonReservedKeywordsToAdd as keyword>
 <#if keyword?index == 0>
         <${keyword}>
 <#elseif keyword?index % 3 == 0>
@@ -8208,7 +7665,7 @@ void NonReservedKeyWord1of3() :
 }
 {
     (
-<#list (parser.nonReservedKeywords!default.parser.nonReservedKeywords) + (parser.nonReservedKeywordsToAdd!default.parser.nonReservedKeywordsToAdd) as keyword>
+<#list parser.nonReservedKeywords + parser.nonReservedKeywordsToAdd as keyword>
 <#if keyword?index == 1>
         <${keyword}>
 <#elseif keyword?index % 3 == 1>
@@ -8224,7 +7681,7 @@ void NonReservedKeyWord2of3() :
 }
 {
     (
-<#list (parser.nonReservedKeywords!default.parser.nonReservedKeywords) + (parser.nonReservedKeywordsToAdd!default.parser.nonReservedKeywordsToAdd) as keyword>
+<#list parser.nonReservedKeywords + parser.nonReservedKeywordsToAdd as keyword>
 <#if keyword?index == 2>
         <${keyword}>
 <#elseif keyword?index % 3 == 2>
@@ -8236,7 +7693,7 @@ void NonReservedKeyWord2of3() :
 
 /* LITERALS */
 
-<DEFAULT, DQID, BTID, BQID, BQHID> TOKEN :
+<DEFAULT, DQID, BTID> TOKEN :
 {
     < UNSIGNED_INTEGER_LITERAL: (["0"-"9"])+ >
 |
@@ -8259,12 +7716,7 @@ void NonReservedKeyWord2of3() :
     /* To improve error reporting, we allow all kinds of characters,
      * not just hexits, in a binary string literal. */
     < BINARY_STRING_LITERAL: ["x","X"] <QUOTE> ( (~["'"]) | ("''"))* <QUOTE> >
-}
-
-// All databases except BigQuery support standard single-quoted literals,
-// which use single-quote as the escape character.
-<DEFAULT, DQID, BTID> TOKEN :
-{
+|
     < QUOTED_STRING: <QUOTE> ( (~["'"]) | ("''"))* <QUOTE> >
 |
     < PREFIXED_STRING_LITERAL: ("_" <CHARSETNAME> | "N") <QUOTED_STRING> >
@@ -8276,22 +7728,7 @@ void NonReservedKeyWord2of3() :
     >
 }
 
-// BigQuery supports single- and double-quoted literals with back-slash
-// as the escape character.
-<BQID, BQHID> TOKEN :
-{
-    // BigQuery-style double-quoted string, escaped using backslash
-    < BIG_QUERY_DOUBLE_QUOTED_STRING:
-      <DOUBLE_QUOTE> ( (~["\\", "\""]) | ("\\" ~[]) )* <DOUBLE_QUOTE>
-    >
-|
-    // BigQuery-style single-quoted string, escaped using backslash
-    < BIG_QUERY_QUOTED_STRING:
-      <QUOTE> ( (~["\\", "'"]) | ("\\" ~[]) )* <QUOTE>
-    >
-}
-
-<DEFAULT, DQID, BTID, BQID, BQHID> TOKEN :
+<DEFAULT, DQID, BTID> TOKEN :
 {
     < UNICODE_QUOTED_ESCAPE_CHAR:
     <QUOTE>
@@ -8302,11 +7739,11 @@ void NonReservedKeyWord2of3() :
 
 /* SEPARATORS */
 
-<DEFAULT, DQID, BTID, BQID, BQHID> TOKEN :
+<DEFAULT, DQID, BTID> TOKEN :
 {
     < LPAREN: "(">
 |   < RPAREN: ")">
-<#if (parser.includeBraces!default.parser.includeBraces) >
+<#if parser.includeBraces >
 |   < LBRACE_D: "{" (" ")* ["d","D"] >
 |   < LBRACE_T: "{" (" ")* ["t","T"] >
 |   < LBRACE_TS: "{" (" ")* ["t","T"] ["s","S"] >
@@ -8325,7 +7762,7 @@ void NonReservedKeyWord2of3() :
 
 /* OPERATORS */
 
-<DEFAULT, DQID, BTID, BQID, BQHID> TOKEN :
+<DEFAULT, DQID, BTID> TOKEN :
 {
     < EQ: "=" >
 |   < GT: ">" >
@@ -8349,7 +7786,7 @@ void NonReservedKeyWord2of3() :
 |   < VERTICAL_BAR: "|" >
 |   < CARET: "^" >
 |   < DOLLAR: "$" >
-<#list (parser.binaryOperatorsTokens!default.parser.binaryOperatorsTokens) as operator>
+<#list parser.binaryOperatorsTokens as operator>
 |   ${operator}
 </#list>
 }
@@ -8360,7 +7797,7 @@ void NonReservedKeyWord2of3() :
  *****************************************/
 
 TOKEN_MGR_DECLS : {
-    final List<Integer> lexicalStateStack = new ArrayList<Integer>();
+    List<Integer> lexicalStateStack = new ArrayList<Integer>();
 
     void pushState() {
       lexicalStateStack.add(curLexState);
@@ -8370,20 +7807,7 @@ TOKEN_MGR_DECLS : {
       SwitchTo(lexicalStateStack.remove(lexicalStateStack.size() - 1));
     }
 
-    void beforeTableName() {
-      if (curLexState == BQID) {
-        pushState();
-        SwitchTo(BQHID);
-      }
-    }
-
-    void afterTableName() {
-      if (curLexState == BQHID) {
-        popState();
-      }
-    }
-
-<#if (parser.includeAdditionalDeclarations!default.parser.includeAdditionalDeclarations)>
+<#if parser.includeAdditionalDeclarations>
   <#include "/@includes/tokenManagerDeclarations.ftl" />
 </#if>
 }
@@ -8393,26 +7817,13 @@ Lexical states:
 
 DEFAULT: Identifiers are quoted in brackets, e.g. [My Identifier]
 DQID:    Identifiers are double-quoted, e.g. "My Identifier"
-BTID:    Identifiers are enclosed in back-ticks, escaped using back-ticks,
-         e.g. `My ``Quoted`` Identifier`
-BQID:    Identifiers are enclosed in back-ticks, escaped using backslash,
-         e.g. `My \`Quoted\` Identifier`,
-         and with the potential to shift into BQHID in contexts where table
-         names are expected, and thus allow hyphen-separated identifiers as
-         part of table names
-BQHID:   Identifiers are enclosed in back-ticks, escaped using backslash,
-         e.g. `My \`Quoted\` Identifier`
-         and unquoted identifiers may contain hyphens, e.g. foo-bar
+BTID:    Identifiers are enclosed in back-ticks, e.g. `My Identifier`
 IN_SINGLE_LINE_COMMENT:
 IN_FORMAL_COMMENT:
 IN_MULTI_LINE_COMMENT:
 
-DEFAULT, DQID, BTID, BQID are the 4 'normal states'. Behavior is identical
-except for how quoted identifiers are recognized.
-
-The BQHID state exists only at the start of a table name (e.g. immediately after
-FROM or INSERT INTO). As soon as an identifier is seen, the state shifts back
-to BTID.
+DEFAULT, DQID, BTID are the 3 'normal states'. Behavior is identical except
+for how quoted identifiers are recognized.
 
 After a comment has completed, the lexer returns to the previous state, one
 of the 'normal states'.
@@ -8420,7 +7831,7 @@ of the 'normal states'.
 
 /* WHITE SPACE */
 
-<DEFAULT, DQID, BTID, BQID, BQHID> SKIP :
+<DEFAULT, DQID, BTID> SKIP :
 {
     " "
 |   "\t"
@@ -8431,23 +7842,23 @@ of the 'normal states'.
 
 /* COMMENTS */
 
-<DEFAULT, DQID, BTID, BQID, BQHID> TOKEN :
+<DEFAULT, DQID, BTID> TOKEN :
 {
     < HINT_BEG: "/*+">
 |   < COMMENT_END: "*/" >
 }
 
-<DEFAULT, DQID, BTID, BQID, BQHID> MORE :
+<DEFAULT, DQID, BTID> MORE :
 {
     <"/**" ~["/"]> { pushState(); } : IN_FORMAL_COMMENT
 }
 
-<DEFAULT, DQID, BTID, BQID, BQHID> MORE :
+<DEFAULT, DQID, BTID> MORE :
 {
     "/*" { pushState(); } : IN_MULTI_LINE_COMMENT
 }
 
-<DEFAULT, DQID, BTID, BQID, BQHID> SKIP :
+<DEFAULT, DQID, BTID> SKIP :
 {
     <SINGLE_LINE_COMMENT: ("//"|"--")(~["\n","\r"])* ("\n"|"\r"|"\r\n")? >
 }
@@ -8499,7 +7910,7 @@ MORE :
     >
 }
 
-<BTID> TOKEN :
+<BTID>  TOKEN :
 {
     < BACK_QUOTED_IDENTIFIER:
     "`"
@@ -8512,34 +7923,7 @@ MORE :
     >
 }
 
-<BQID, BQHID> TOKEN :
-{
-    // BigQuery-style backtick-quoted identifier, escaped using backslash
-    < BIG_QUERY_BACK_QUOTED_IDENTIFIER:
-    "`"
-    (
-        (~["\\", "`"])
-    |
-        ("\\" ~[])
-    )*
-    "`"
-    >
-}
-
-<BQHID> TOKEN :
-{
-    // Per BigQuery: "Project IDs must contain 6-63 lowercase letters, digits,
-    // or dashes. IDs must start with a letter and may not end with a dash."
-    // We do not restrict length, or prevent identifiers from ending in a dash.
-    < HYPHENATED_IDENTIFIER: <LETTER> (<LETTER>|<DIGIT>|"-")* > { popState(); }
-}
-
-<DEFAULT, DQID, BTID, BQID> TOKEN :
-{
-    < IDENTIFIER: <LETTER> (<LETTER>|<DIGIT>)* >
-}
-
-<DEFAULT, DQID, BTID, BQID, BQHID> TOKEN :
+<DEFAULT, DQID, BTID> TOKEN :
 {
     < COLLATION_ID:
     (<LETTER>|<DIGIT>)+ (<LETTER>|<DIGIT>|":"|"."|"-"|"_")*
@@ -8547,6 +7931,8 @@ MORE :
     (<LETTER>|"_")+
     ("$" (<LETTER>|<DIGIT>|"_")+)?
     >
+|
+    < IDENTIFIER: <LETTER> (<LETTER>|<DIGIT>)* >
 |
     < UNICODE_QUOTED_IDENTIFIER: "U" "&" <QUOTED_IDENTIFIER> >
 |
@@ -8592,7 +7978,7 @@ MORE :
 /* Special token to throw a wrench in the works. It is never valid in SQL,
    and so when it occurs, it causes the parser to print which tokens would
    have been valid at that point. Used by SqlAdvisor. */
-<DEFAULT, DQID, BTID, BQID, BQHID> TOKEN :
+<DEFAULT, DQID, BTID> TOKEN :
 {
     < BEL:
     [

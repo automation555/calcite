@@ -16,8 +16,6 @@
  */
 package org.apache.calcite.sql.validate;
 
-import org.apache.calcite.sql.fun.SqlLibrary;
-
 /**
  * Enumeration of valid SQL compatibility modes.
  *
@@ -107,7 +105,6 @@ public interface SqlConformance {
    *
    * <p>Among the built-in conformance levels, true in
    * {@link SqlConformanceEnum#BABEL},
-   * {@link SqlConformanceEnum#BIG_QUERY},
    * {@link SqlConformanceEnum#LENIENT},
    * {@link SqlConformanceEnum#MYSQL_5},
    * {@link SqlConformanceEnum#PRESTO};
@@ -187,28 +184,6 @@ public interface SqlConformance {
    * false otherwise.
    */
   boolean isFromRequired();
-
-  /**
-   * Whether to split a quoted table name. If true, {@code `x.y.z`} is parsed as
-   * if the user had written {@code `x`.`y`.`z`}.
-   *
-   * <p>Among the built-in conformance levels, true in
-   * {@link SqlConformanceEnum#BIG_QUERY};
-   * false otherwise.
-   */
-  boolean splitQuotedTableName();
-
-  /**
-   * Whether to allow hyphens in an unquoted table name.
-   *
-   * <p>If true, {@code SELECT * FROM foo-bar.baz-buzz} is valid, and is parsed
-   * as if the user had written {@code SELECT * FROM `foo-bar`.`baz-buzz`}.
-   *
-   * <p>Among the built-in conformance levels, true in
-   * {@link SqlConformanceEnum#BIG_QUERY};
-   * false otherwise.
-   */
-  boolean allowHyphenInUnquotedTableName();
 
   /**
    * Whether the bang-equal token != is allowed as an alternative to &lt;&gt; in
@@ -402,24 +377,6 @@ public interface SqlConformance {
   boolean isLimitStartCountAllowed();
 
   /**
-   * Whether to allow the SQL syntax "{@code OFFSET start LIMIT count}"
-   * (that is, {@code OFFSET} before {@code LIMIT},
-   * in addition to {@code LIMIT} before {@code OFFSET}
-   * and {@code OFFSET} before {@code FETCH}).
-   *
-   * <p>The equivalent syntax in standard SQL is
-   * "{@code OFFSET start ROW FETCH FIRST count ROWS ONLY}".
-   *
-   * <p>Trino allows this behavior.
-   *
-   * <p>Among the built-in conformance levels, true in
-   * {@link SqlConformanceEnum#BABEL},
-   * {@link SqlConformanceEnum#LENIENT};
-   * false otherwise.
-   */
-  boolean isOffsetLimitAllowed();
-
-  /**
    * Whether to allow geo-spatial extensions, including the GEOMETRY type.
    *
    * <p>Among the built-in conformance levels, true in
@@ -498,6 +455,19 @@ public interface SqlConformance {
   boolean allowPluralTimeUnits();
 
   /**
+   * Whether SELECT can contain a table function.
+   *
+   * For example, consider the query
+   *
+   * <blockquote><pre> SELECT SPLIT(col) AS (F0, F1) FROM A </pre> </blockquote>
+   *
+   * <p>Among the built-in conformance levels, true in
+   * {@link SqlConformanceEnum#HIVE};
+   * false otherwise.
+   */
+  boolean allowSelectTableFunction();
+
+  /**
    * Whether to allow a qualified common column in a query that has a
    * NATURAL join or a join with a USING clause.
    *
@@ -522,29 +492,4 @@ public interface SqlConformance {
    */
   boolean allowQualifyingCommonColumn();
 
-  /**
-   * Controls the behavior of operators that are part of Standard SQL but
-   * nevertheless have different behavior in different databases.
-   *
-   * <p>Consider the {@code SUBSTRING} operator. In ISO standard SQL, negative
-   * start indexes are converted to 1; in Google BigQuery, negative start
-   * indexes are treated as offsets from the end of the string. For example,
-   * {@code SUBSTRING('abcde' FROM -3 FOR 2)} returns {@code 'ab'} in standard
-   * SQL and 'cd' in BigQuery.
-   *
-   * <p>If you specify {@code conformance=BIG_QUERY} in your connection
-   * parameters, {@code SUBSTRING} will give the BigQuery behavior. Similarly
-   * MySQL and Oracle.
-   *
-   * <p>Among the built-in conformance levels:
-   * <ul>
-   * <li>{@link SqlConformanceEnum#BIG_QUERY} returns
-   *     {@link SqlLibrary#BIG_QUERY};
-   * <li>{@link SqlConformanceEnum#MYSQL_5} returns {@link SqlLibrary#MYSQL};
-   * <li>{@link SqlConformanceEnum#ORACLE_10} and
-   *     {@link SqlConformanceEnum#ORACLE_12} return {@link SqlLibrary#ORACLE};
-   * <li>otherwise returns {@link SqlLibrary#STANDARD}.
-   * </ul>
-   */
-  SqlLibrary semantics();
 }
