@@ -56,6 +56,7 @@ import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexLocalRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexProgram;
+import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.sql.JoinConditionType;
 import org.apache.calcite.sql.JoinType;
 import org.apache.calcite.sql.SqlBasicCall;
@@ -105,6 +106,7 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.SortedSet;
@@ -230,9 +232,10 @@ public class RelToSqlConverter extends SqlImplementor
       sqlCondition = null;
       condType = JoinConditionType.NONE;
     } else {
-      sqlCondition =
-          convertConditionToSqlNode(e.getCondition(), leftContext,
-              rightContext);
+      sqlCondition = convertConditionToSqlNode(
+          simplifyDatetimePlus(e.getCondition(), e.getCluster().getRexBuilder()),
+          leftContext,
+          rightContext);
       condType = JoinConditionType.ON;
     }
     SqlNode join =
@@ -416,34 +419,37 @@ public class RelToSqlConverter extends SqlImplementor
           ImmutableSet.of(Clause.HAVING));
       parseCorrelTable(e, x);
       final Builder builder = x.builder(e);
+      RexNode condition = simplifyDatetimePlus(e.getCondition(), e.getCluster().getRexBuilder());
       x.asSelect().setHaving(
           SqlUtil.andExpressions(x.asSelect().getHaving(),
-              builder.context.toSql(null, e.getCondition())));
+              builder.context.toSql(null, condition)));
       return builder.result();
     } else {
       final Result x = visitInput(e, 0, Clause.WHERE);
       parseCorrelTable(e, x);
       final Builder builder = x.builder(e);
-      builder.setWhere(builder.context.toSql(null, e.getCondition()));
+      RexNode condition = simplifyDatetimePlus(e.getCondition(), e.getCluster().getRexBuilder());
+      builder.setWhere(builder.context.toSql(null, condition));
       return builder.result();
     }
   }
 
   /** Visits a Project; called by {@link #dispatch} via reflection. */
   public Result visit(Project e) {
-    // If the input is a Sort, wrap SELECT is not required.
-    final Result x;
-    if (e.getInput() instanceof Sort) {
-      x = visitInput(e, 0);
-    } else {
-      x = visitInput(e, 0, Clause.SELECT);
-    }
+    final Result x = visitInput(e, 0, Clause.SELECT);
     parseCorrelTable(e, x);
     final Builder builder = x.builder(e);
+
     if (!isStar(e.getProjects(), e.getInput().getRowType(), e.getRowType())) {
       final List<SqlNode> selectList = new ArrayList<>();
       for (RexNode ref : e.getProjects()) {
-        SqlNode sqlExpr = builder.context.toSql(null, ref);
+        SqlNode sqlExpr = builder
+            .context
+            .toSql(
+                null,
+                simplifyDatetimePlus(
+                    ref,
+                    e.getCluster().getRexBuilder()));
         if (SqlUtil.isNullLiteral(sqlExpr, false)) {
           final RelDataTypeField field =
               e.getRowType().getFieldList().get(selectList.size());
@@ -799,10 +805,8 @@ public class RelToSqlConverter extends SqlImplementor
       } else if (list.size() == 1) {
         query = list.get(0);
       } else {
-        query = list.stream()
-            .map(select -> (SqlNode) select)
-            .reduce((l, r) -> SqlStdOperatorTable.UNION_ALL.createCall(POS, l, r))
-            .get();
+        query = SqlStdOperatorTable.UNION_ALL.createCall(
+            new SqlNodeList(list, POS));
       }
     } else {
       // Generate ANSI syntax
@@ -1147,13 +1151,13 @@ public class RelToSqlConverter extends SqlImplementor
     final Context context = tableFunctionScanContext(inputSqlNodes);
     SqlNode callNode = context.toSql(null, e.getCall());
     // Convert to table function call, "TABLE($function_name(xxx))"
-    SqlNode tableCall =
-        new SqlBasicCall(SqlStdOperatorTable.COLLECTION_TABLE,
-            ImmutableList.of(callNode), SqlParserPos.ZERO);
-    SqlNode select =
-        new SqlSelect(SqlParserPos.ZERO, null, SqlNodeList.SINGLETON_STAR,
-            tableCall, null, null, null, null, null, null, null,
-            SqlNodeList.EMPTY);
+    SqlNode tableCall = new SqlBasicCall(
+        SqlStdOperatorTable.COLLECTION_TABLE,
+        new SqlNode[] {callNode},
+        SqlParserPos.ZERO);
+    SqlNode select = new SqlSelect(
+        SqlParserPos.ZERO, null, SqlNodeList.SINGLETON_STAR, tableCall,
+        null, null, null, null, null, null, null, SqlNodeList.EMPTY);
     return result(select, ImmutableList.of(Clause.SELECT), e, null);
   }
 
@@ -1170,7 +1174,7 @@ public class RelToSqlConverter extends SqlImplementor
     result.add(leftOperand);
     result.add(new SqlIdentifier(alias, POS));
     Ord.forEach(rowType.getFieldNames(), (fieldName, i) -> {
-      if (SqlUtil.isGeneratedAlias(fieldName)) {
+      if (fieldName.toLowerCase(Locale.ROOT).startsWith("expr$")) {
         fieldName = "col_" + i;
       }
       result.add(new SqlIdentifier(fieldName, POS));
@@ -1192,6 +1196,16 @@ public class RelToSqlConverter extends SqlImplementor
     for (CorrelationId id : relNode.getVariablesSet()) {
       correlTableMap.put(id, x.qualifiedContext());
     }
+  }
+
+  private RexNode simplifyDatetimePlus(RexNode node, RexBuilder builder) {
+    if (node != null && dialect.useTimestampAddInsteadOfDatetimePlus()) {
+      RexNode converted = RexUtil.convertDatetimePlusToTimestampAdd(builder, node);
+      if (converted != null) {
+        return converted;
+      }
+    }
+    return node;
   }
 
   /** Stack frame. */

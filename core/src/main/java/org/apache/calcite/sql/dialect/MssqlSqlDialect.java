@@ -58,6 +58,13 @@ public class MssqlSqlDialect extends SqlDialect {
           ReturnTypes.ARG0_NULLABLE_VARYING, null, null,
           SqlFunctionCategory.STRING);
 
+  private static final SqlFunction MSSQL_DATEADD =
+      new SqlFunction("DATEADD", SqlStdOperatorTable.TIMESTAMP_ADD.getKind(),
+          SqlStdOperatorTable.TIMESTAMP_ADD.getReturnTypeInference(),
+          SqlStdOperatorTable.TIMESTAMP_ADD.getOperandTypeInference(),
+          SqlStdOperatorTable.TIMESTAMP_ADD.getOperandTypeChecker(),
+          SqlStdOperatorTable.TIMESTAMP_ADD.getFunctionType());
+
   /** Whether to generate "SELECT TOP(fetch)" rather than
    * "SELECT ... FETCH NEXT fetch ROWS ONLY". */
   private final boolean top;
@@ -116,27 +123,31 @@ public class MssqlSqlDialect extends SqlDialect {
 
   @Override public void unparseOffsetFetch(SqlWriter writer, @Nullable SqlNode offset,
       @Nullable SqlNode fetch) {
-    if (!top && offset != null) {
+    if (!top) {
       super.unparseOffsetFetch(writer, offset, fetch);
     }
   }
 
   @Override public void unparseTopN(SqlWriter writer, @Nullable SqlNode offset,
       @Nullable SqlNode fetch) {
-    if (top || offset == null) {
+    if (top) {
       // Per Microsoft:
       //   "For backward compatibility, the parentheses are optional in SELECT
       //   statements. We recommend that you always use parentheses for TOP in
       //   SELECT statements. Doing so provides consistency with its required
       //   use in INSERT, UPDATE, MERGE, and DELETE statements."
       //
-      // Note that "offset" is ignored.
+      // Note that "fetch" is ignored.
       writer.keyword("TOP");
       writer.keyword("(");
       requireNonNull(fetch, "fetch");
       fetch.unparse(writer, -1, -1);
       writer.keyword(")");
     }
+  }
+
+  @Override public boolean useTimestampAddInsteadOfDatetimePlus() {
+    return true;
   }
 
   @Override public void unparseDateTimeLiteral(SqlWriter writer,
@@ -151,6 +162,8 @@ public class MssqlSqlDialect extends SqlDialect {
         throw new IllegalArgumentException("MSSQL SUBSTRING requires FROM and FOR arguments");
       }
       SqlUtil.unparseFunctionSyntax(MSSQL_SUBSTRING, writer, call, false);
+    } else if (call.getOperator() == SqlStdOperatorTable.TIMESTAMP_ADD) {
+      SqlUtil.unparseFunctionSyntax(MSSQL_DATEADD, writer, call, false);
     } else {
       switch (call.getKind()) {
       case FLOOR:
