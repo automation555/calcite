@@ -18,9 +18,11 @@ package org.apache.calcite.schema.impl;
 
 import org.apache.calcite.DataContext;
 import org.apache.calcite.adapter.enumerable.CallImplementor;
+import org.apache.calcite.adapter.enumerable.NullPolicy;
 import org.apache.calcite.adapter.enumerable.ReflectiveCallNotNullImplementor;
 import org.apache.calcite.adapter.enumerable.RexImpTable;
 import org.apache.calcite.adapter.enumerable.RexToLixTranslator;
+import org.apache.calcite.adapter.java.JavaTypeFactory;
 import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.linq4j.tree.Expressions;
 import org.apache.calcite.rel.type.RelDataType;
@@ -92,7 +94,7 @@ public class TableFunctionImpl extends ReflectiveFunctionBase implements
   }
 
   public RelDataType getRowType(RelDataTypeFactory typeFactory,
-      List<Object> arguments) {
+      List<RelDataType> argTypes, List<Object> arguments) {
     return apply(arguments).getRowType(typeFactory);
   }
 
@@ -108,11 +110,11 @@ public class TableFunctionImpl extends ReflectiveFunctionBase implements
         + table.getClass());
   }
 
-  public CallImplementor getImplementor() {
+  public CallImplementor getImplementor(List<RelDataType> argTypes, JavaTypeFactory typeFactory) {
     return implementor;
   }
 
-  private static CallImplementor createImplementor(final Method method) {
+  public static CallImplementor createImplementor(final Method method) {
     return RexImpTable.createImplementor(
         new ReflectiveCallNotNullImplementor(method) {
           public Expression implement(RexToLixTranslator translator,
@@ -136,7 +138,7 @@ public class TableFunctionImpl extends ReflectiveFunctionBase implements
             }
             return expr;
           }
-        }, getNullPolicy(method), false);
+        }, NullPolicy.ANY, false);
   }
 
   private Table apply(List<Object> arguments) {

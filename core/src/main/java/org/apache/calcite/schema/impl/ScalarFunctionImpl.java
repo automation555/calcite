@@ -20,6 +20,9 @@ import org.apache.calcite.adapter.enumerable.CallImplementor;
 import org.apache.calcite.adapter.enumerable.NullPolicy;
 import org.apache.calcite.adapter.enumerable.ReflectiveCallNotNullImplementor;
 import org.apache.calcite.adapter.enumerable.RexImpTable;
+import org.apache.calcite.adapter.java.JavaTypeFactory;
+import org.apache.calcite.linq4j.function.SemiStrict;
+import org.apache.calcite.linq4j.function.Strict;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.schema.ImplementableFunction;
@@ -30,6 +33,7 @@ import com.google.common.collect.ImmutableMultimap;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.List;
 
 import static org.apache.calcite.util.Static.RESOURCE;
 
@@ -104,32 +108,32 @@ public class ScalarFunctionImpl extends ReflectiveFunctionBase
     return new ScalarFunctionImpl(method, implementor);
   }
 
-
-  /**
-   * Creates unsafe version of {@link ScalarFunction} from any method. The method
-   * does not need to be static or belong to a class with default constructor. It is
-   * the responsibility of the underlying engine to initialize the UDF object that
-   * contain the method.
-   *
-   * @param method method that is used to implement the function
-   */
-  public static ScalarFunction createUnsafe(Method method) {
-    CallImplementor implementor = createImplementor(method);
-    return new ScalarFunctionImpl(method, implementor);
-  }
-
   public RelDataType getReturnType(RelDataTypeFactory typeFactory) {
     return typeFactory.createJavaType(method.getReturnType());
   }
 
-  public CallImplementor getImplementor() {
+  public CallImplementor getImplementor(List<RelDataType> argTypes, JavaTypeFactory typeFactory) {
     return implementor;
   }
 
-  private static CallImplementor createImplementor(final Method method) {
+  public static CallImplementor createImplementor(final Method method) {
     final NullPolicy nullPolicy = getNullPolicy(method);
     return RexImpTable.createImplementor(
         new ReflectiveCallNotNullImplementor(method), nullPolicy, false);
+  }
+
+  private static NullPolicy getNullPolicy(Method m) {
+    if (m.getAnnotation(Strict.class) != null) {
+      return NullPolicy.STRICT;
+    } else if (m.getAnnotation(SemiStrict.class) != null) {
+      return NullPolicy.SEMI_STRICT;
+    } else if (m.getDeclaringClass().getAnnotation(Strict.class) != null) {
+      return NullPolicy.STRICT;
+    } else if (m.getDeclaringClass().getAnnotation(SemiStrict.class) != null) {
+      return NullPolicy.SEMI_STRICT;
+    } else {
+      return NullPolicy.NONE;
+    }
   }
 
   public RelDataType getReturnType(RelDataTypeFactory typeFactory,

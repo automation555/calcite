@@ -34,6 +34,8 @@ import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.TableFunction;
 import org.apache.calcite.schema.TableMacro;
 import org.apache.calcite.schema.Wrapper;
+import org.apache.calcite.schema.impl.JavaScalarFunction;
+import org.apache.calcite.schema.impl.JavaTableFunction;
 import org.apache.calcite.schema.impl.ScalarFunctionImpl;
 import org.apache.calcite.sql.SqlFunctionCategory;
 import org.apache.calcite.sql.SqlIdentifier;
@@ -309,6 +311,16 @@ public class CalciteCatalogReader implements Prepare.CatalogReader {
    * constructor. */
   private static SqlOperator toOp(RelDataTypeFactory typeFactory,
       SqlIdentifier name, final Function function) {
+    // this is a JavaScalarFunction, create a SqlUserDefinedFunction for it.
+    if (function instanceof JavaScalarFunction) {
+      return new SqlUserDefinedFunction(name,
+          (JavaScalarFunction) function);
+      // this is JavaTableFunction, create a SqlUserDefinedTableFunction for it.
+    } else if (function instanceof JavaTableFunction) {
+      return new SqlUserDefinedTableFunction(name,
+          (JavaTableFunction) function);
+    }
+    // for other user-defined function
     List<RelDataType> argTypes = new ArrayList<>();
     List<SqlTypeFamily> typeFamilies = new ArrayList<>();
     for (FunctionParameter o : function.getParameters()) {
@@ -317,14 +329,13 @@ public class CalciteCatalogReader implements Prepare.CatalogReader {
       typeFamilies.add(
           Util.first(type.getSqlTypeName().getFamily(), SqlTypeFamily.ANY));
     }
-    final FamilyOperandTypeChecker typeChecker = OperandTypes.family(typeFamilies,
-        i -> function.getParameters().get(i).isOptional(),
-        function.isVarArgs() ? i -> function.getParameters().get(i).isVarArgs() : null);
+    final FamilyOperandTypeChecker typeChecker =
+        OperandTypes.family(typeFamilies, i ->
+            function.getParameters().get(i).isOptional());
     final List<RelDataType> paramTypes = toSql(typeFactory, argTypes);
     if (function instanceof ScalarFunction) {
       return new SqlUserDefinedFunction(name, infer((ScalarFunction) function),
-          InferTypes.explicit(argTypes), typeChecker, paramTypes,
-          function.isVarArgs(), function);
+          InferTypes.explicit(argTypes), typeChecker, paramTypes, function);
     } else if (function instanceof AggregateFunction) {
       return new SqlUserDefinedAggFunction(name,
           infer((AggregateFunction) function), InferTypes.explicit(argTypes),
@@ -413,3 +424,5 @@ public class CalciteCatalogReader implements Prepare.CatalogReader {
     return null;
   }
 }
+
+// End CalciteCatalogReader.java

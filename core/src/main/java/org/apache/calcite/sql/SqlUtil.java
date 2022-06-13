@@ -16,12 +16,11 @@
  */
 package org.apache.calcite.sql;
 
+import org.apache.calcite.adapter.java.JavaTypeFactory;
 import org.apache.calcite.avatica.util.ByteString;
+import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
 import org.apache.calcite.linq4j.Ord;
-import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.hint.HintStrategyTable;
-import org.apache.calcite.rel.hint.Hintable;
-import org.apache.calcite.rel.hint.RelHint;
+import org.apache.calcite.linq4j.function.Functions;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypePrecedenceList;
@@ -35,7 +34,6 @@ import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeUtil;
 import org.apache.calcite.sql.util.SqlBasicVisitor;
 import org.apache.calcite.sql.validate.SqlNameMatcher;
-import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.util.BarfingInvocationHandler;
 import org.apache.calcite.util.ConversionUtil;
 import org.apache.calcite.util.Glossary;
@@ -49,6 +47,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 
+import java.lang.reflect.Method;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.charset.UnsupportedCharsetException;
@@ -64,11 +63,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
-import java.util.stream.Stream;
 
 import static org.apache.calcite.util.Static.RESOURCE;
-import static org.apache.calcite.util.VarArgUtil.isVarArgParameterName;
 
 /**
  * Contains utility functions related to SQL parsing, all static.
@@ -196,7 +192,7 @@ public abstract class SqlUtil {
   public static boolean isNull(SqlNode node) {
     return isNullLiteral(node, false)
         || node.getKind() == SqlKind.CAST
-        && isNull(((SqlCall) node).operand(0));
+            && isNull(((SqlCall) node).operand(0));
   }
 
   /**
@@ -284,7 +280,7 @@ public abstract class SqlUtil {
       if (id == null) {
         writer.keyword(operator.getName());
       } else {
-        unparseSqlIdentifierSyntax(writer, id, true);
+        id.unparse(writer, 0, 0);
       }
     } else {
       writer.print(operator.getName());
@@ -315,61 +311,6 @@ public abstract class SqlUtil {
     for (SqlNode operand : call.getOperandList()) {
       writer.sep(",");
       operand.unparse(writer, 0, 0);
-    }
-    writer.endList(frame);
-  }
-
-  /**
-   * Unparse a SqlIdentifier syntax.
-   *
-   * @param writer       Writer
-   * @param identifier   SqlIdentifier
-   * @param asFunctionID Whether this identifier comes from a SqlFunction
-   */
-  public static void unparseSqlIdentifierSyntax(
-      SqlWriter writer,
-      SqlIdentifier identifier,
-      boolean asFunctionID) {
-    final boolean isUnquotedSimple = identifier.isSimple()
-        && !identifier.getParserPosition().isQuoted();
-    final SqlOperator operator = isUnquotedSimple
-        ? SqlValidatorUtil.lookupSqlFunctionByID(SqlStdOperatorTable.instance(), identifier, null)
-        : null;
-    boolean unparsedAsFunc = false;
-    final SqlWriter.Frame frame =
-        writer.startList(SqlWriter.FrameTypeEnum.IDENTIFIER);
-    if (isUnquotedSimple && operator != null) {
-      // Unparse conditions:
-      // 1. If the identifier is quoted or is component, unparse as normal.
-      // 2. If the identifier comes from a sql function, lookup in the
-      // standard sql operator table to see if the function is a builtin,
-      // unparse without quoting for builtins.
-
-      // 3. If the identifier does not come from a function(resolved as a SqlIdentifier),
-      // look up in the standard sql operator table to see if it is a function
-      // with empty argument list, e.g. LOCALTIME, we should not quote
-      // such identifier cause quoted `LOCALTIME` always represents a sql identifier.
-      if (asFunctionID
-          || operator.getSyntax() == SqlSyntax.FUNCTION_ID) {
-        writer.keyword(identifier.getSimple());
-        unparsedAsFunc = true;
-      }
-    }
-
-    if (!unparsedAsFunc) {
-      for (int i = 0; i < identifier.names.size(); i++) {
-        writer.sep(".");
-        final String name = identifier.names.get(i);
-        final SqlParserPos pos = identifier.getComponentParserPosition(i);
-        if (name.equals("")) {
-          writer.print("*");
-        } else {
-          writer.identifier(name, pos.isQuoted());
-        }
-      }
-    }
-    if (null != identifier.getCollation()) {
-      identifier.getCollation().unparse(writer);
     }
     writer.endList(frame);
   }
@@ -426,8 +367,6 @@ public abstract class SqlUtil {
    * @param category      whether a function or a procedure. (If a procedure is
    *                      being invoked, the overload rules are simpler.)
    * @param nameMatcher   Whether to look up the function case-sensitively
-   * @param coerce        Whether to allow type coercion when do filter routines
-   *                      by parameter types
    * @return matching routine, or null if none found
    *
    * @see Glossary#SQL99 SQL:1999 Part 2 Section 10.4
@@ -435,8 +374,7 @@ public abstract class SqlUtil {
   public static SqlOperator lookupRoutine(SqlOperatorTable opTab,
       SqlIdentifier funcName, List<RelDataType> argTypes,
       List<String> argNames, SqlFunctionCategory category,
-      SqlSyntax syntax, SqlKind sqlKind, SqlNameMatcher nameMatcher,
-      boolean coerce) {
+      SqlSyntax syntax, SqlKind sqlKind, SqlNameMatcher nameMatcher) {
     Iterator<SqlOperator> list =
         lookupSubjectRoutines(
             opTab,
@@ -446,8 +384,7 @@ public abstract class SqlUtil {
             syntax,
             sqlKind,
             category,
-            nameMatcher,
-            coerce);
+            nameMatcher);
     if (list.hasNext()) {
       // return first on schema path
       return list.next();
@@ -464,16 +401,14 @@ public abstract class SqlUtil {
   /**
    * Looks up all subject routines matching the given name and argument types.
    *
-   * @param opTab       operator table to search
-   * @param funcName    name of function being invoked
-   * @param argTypes    argument types
-   * @param argNames    argument names, or null if call by position
-   * @param sqlSyntax   the SqlSyntax of the SqlOperator being looked up
-   * @param sqlKind     the SqlKind of the SqlOperator being looked up
-   * @param category    Category of routine to look up
+   * @param opTab     operator table to search
+   * @param funcName  name of function being invoked
+   * @param argTypes  argument types
+   * @param argNames  argument names, or null if call by position
+   * @param sqlSyntax the SqlSyntax of the SqlOperator being looked up
+   * @param sqlKind   the SqlKind of the SqlOperator being looked up
+   * @param category  Category of routine to look up
    * @param nameMatcher Whether to look up the function case-sensitively
-   * @param coerce      Whether to allow type coercion when do filter routine
-   *                    by parameter types
    * @return list of matching routines
    * @see Glossary#SQL99 SQL:1999 Part 2 Section 10.4
    */
@@ -485,8 +420,7 @@ public abstract class SqlUtil {
       SqlSyntax sqlSyntax,
       SqlKind sqlKind,
       SqlFunctionCategory category,
-      SqlNameMatcher nameMatcher,
-      boolean coerce) {
+      SqlNameMatcher nameMatcher) {
     // start with all routines matching by name
     Iterator<SqlOperator> routines =
         lookupSubjectRoutinesByName(opTab, funcName, sqlSyntax, category,
@@ -504,14 +438,13 @@ public abstract class SqlUtil {
 
     // second pass:  eliminate routines which don't accept the given
     // argument types
-    routines = filterRoutinesByParameterType(sqlSyntax, routines, argTypes, argNames, coerce);
+    routines = filterRoutinesByParameterType(sqlSyntax, routines, argTypes, argNames);
 
     // see if we can stop now; this is necessary for the case
-    // of builtin functions where we don't have param type info,
-    // or UDF whose operands can make type coercion.
+    // of builtin functions where we don't have param type info
     final List<SqlOperator> list = Lists.newArrayList(routines);
     routines = list.iterator();
-    if (list.size() < 2 || coerce) {
+    if (list.size() < 2) {
       return routines;
     }
 
@@ -587,9 +520,7 @@ public abstract class SqlUtil {
   private static Iterator<SqlOperator> filterRoutinesByParameterType(
       SqlSyntax syntax,
       final Iterator<SqlOperator> routines,
-      final List<RelDataType> argTypes,
-      final List<String> argNames,
-      final boolean coerce) {
+      final List<RelDataType> argTypes, final List<String> argNames) {
     if (syntax != SqlSyntax.FUNCTION) {
       return routines;
     }
@@ -598,65 +529,43 @@ public abstract class SqlUtil {
     return (Iterator) Iterators.filter(
         Iterators.filter(routines, SqlFunction.class),
         function -> {
-          List<RelDataType> paramTypes = function.getParamTypes();
+          List<RelDataType> paramTypes =
+              Objects.requireNonNull(function).getParamTypes();
           if (paramTypes == null) {
-            // no parameter information for builtins; keep for now,
-            // the type coerce will not work here.
+            // no parameter information for builtins; keep for now
             return true;
           }
-          // convert to mutable list.
-          List<RelDataType> permutedParamTypes = Lists.newArrayList(paramTypes);
           final List<RelDataType> permutedArgTypes;
-          boolean varArgs = function.isVarArgs();
-          List<String> paramNames = function.getParamNames()
-              .stream()
-              .map(p -> p.toUpperCase(Locale.ROOT))
-              .collect(Collectors.toList());
-          final int varArgIndex = varArgs ? paramNames.size() - 1 : -1;
-          String varArgParamName = varArgs ? paramNames.get(varArgIndex) : "";
-
           if (argNames != null) {
             // Arguments passed by name. Make sure that the function has
             // parameters of all of these names.
-            final Map<Integer, List<Integer>> map = new HashMap<>();
+            final Map<Integer, Integer> map = new HashMap<>();
             for (Ord<String> argName : Ord.zip(argNames)) {
-              final int i = paramNames.indexOf(argName.e.toUpperCase(Locale.ROOT));
+              final int i = function.getParamNames().indexOf(argName.e);
               if (i < 0) {
-                if (varArgs && isVarArgParameterName(argName.e, varArgParamName)) {
-                  List<Integer> argIndexes = map.computeIfAbsent(varArgIndex,
-                      integer -> new ArrayList<>());
-                  argIndexes.add(argName.i);
-                } else {
-                  return false;
-                }
+                return false;
               }
-              map.put(i, Lists.newArrayList(argName.i));
+              map.put(i, argName.i);
             }
-
-            permutedArgTypes = IntStream.range(0, paramTypes.size()).boxed().flatMap(idx -> {
-              if (map.containsKey(idx)) {
-                List<Integer> argIndexes = map.get(idx);
-                return argIndexes.stream().map(i -> argTypes.get(i));
+            permutedArgTypes = Functions.generate(paramTypes.size(), a0 -> {
+              if (map.containsKey(a0)) {
+                return argTypes.get(map.get(a0));
               } else {
-                return Stream.generate(() -> (RelDataType) null).limit(1);
+                return null;
               }
-            }).collect(Collectors.toList());
+            });
           } else {
             permutedArgTypes = Lists.newArrayList(argTypes);
+            while (permutedArgTypes.size() < argTypes.size()) {
+              paramTypes.add(null);
+            }
           }
-
-          if (permutedParamTypes.size() < permutedArgTypes.size()) {
-            permutedParamTypes.addAll(Stream.generate(() -> paramTypes.get(paramTypes.size() - 1))
-                .limit(permutedArgTypes.size() - permutedParamTypes.size())
-                .collect(Collectors.toList()));
-          }
-
           for (Pair<RelDataType, RelDataType> p
-              : Pair.zip(permutedParamTypes, permutedArgTypes)) {
+              : Pair.zip(paramTypes, permutedArgTypes)) {
             final RelDataType argType = p.right;
             final RelDataType paramType = p.left;
             if (argType != null
-                && !SqlTypeUtil.canCastFrom(paramType, argType, coerce)) {
+                && !SqlTypeUtil.canCastFrom(paramType, argType, false)) {
               return false;
             }
           }
@@ -683,17 +592,16 @@ public abstract class SqlUtil {
           argType.e.getPrecedenceList();
       final RelDataType bestMatch = bestMatch(sqlFunctions, argType.i, precList);
       if (bestMatch != null) {
-        sqlFunctions = sqlFunctions.stream().filter(function -> {
-          final List<RelDataType> paramTypes = function.getParamTypes();
-          if (paramTypes == null) {
-            return false;
-          }
-          int paramIndex = function.isVarArgs() ? (argType.i > paramTypes.size() - 1
-              ? paramTypes.size() - 1
-              : argType.i) : argType.i;
-          final RelDataType paramType = paramTypes.get(paramIndex);
-          return precList.compareTypePrecedence(paramType, bestMatch) >= 0;
-        }).collect(Collectors.toList());
+        sqlFunctions = sqlFunctions.stream()
+            .filter(function -> {
+              final List<RelDataType> paramTypes = function.getParamTypes();
+              if (paramTypes == null) {
+                return false;
+              }
+              final RelDataType paramType = paramTypes.get(argType.i);
+              return precList.compareTypePrecedence(paramType, bestMatch) >= 0;
+            })
+            .collect(Collectors.toList());
       }
     }
     //noinspection unchecked
@@ -708,14 +616,14 @@ public abstract class SqlUtil {
       if (paramTypes == null) {
         continue;
       }
-      int paramIndex = function.isVarArgs() ? (i > paramTypes.size() - 1
-          ? paramTypes.size() - 1
-          : i) : i;
-      final RelDataType paramType = paramTypes.get(paramIndex);
+      final RelDataType paramType = paramTypes.get(i);
       if (bestMatch == null) {
         bestMatch = paramType;
       } else {
-        int c = precList.compareTypePrecedence(bestMatch, paramType);
+        int c =
+            precList.compareTypePrecedence(
+                bestMatch,
+                paramType);
         if (c < 0) {
           bestMatch = paramType;
         }
@@ -732,7 +640,7 @@ public abstract class SqlUtil {
     case SELECT:
       SqlSelect select = (SqlSelect) query;
       final SqlNode from = stripAs(select.getFrom());
-      if (from != null && from.getKind() == SqlKind.VALUES) {
+      if (from.getKind() == SqlKind.VALUES) {
         // They wrote "VALUES (x, y)", but the validator has
         // converted this into "SELECT * FROM VALUES (x, y)".
         return getSelectListItem(from, i);
@@ -985,20 +893,6 @@ public abstract class SqlUtil {
     return node;
   }
 
-  /** Modifies a list of nodes, removing AS from each if present.
-   *
-   * @see #stripAs */
-  public static SqlNodeList stripListAs(SqlNodeList nodeList) {
-    for (int i = 0; i < nodeList.size(); i++) {
-      SqlNode n = nodeList.get(i);
-      SqlNode n2 = stripAs(n);
-      if (n != n2) {
-        nodeList.set(i, n2);
-      }
-    }
-    return nodeList;
-  }
-
   /** Returns a list of ancestors of {@code predicate} within a given
    * {@code SqlNode} tree.
    *
@@ -1014,69 +908,6 @@ public abstract class SqlUtil {
       //noinspection unchecked
       return (ImmutableList<SqlNode>) e.getNode();
     }
-  }
-
-  /**
-   * Returns an immutable list of {@link RelHint} from sql hints, with a given
-   * inherit path from the root node.
-   *
-   * <p>The inherit path would be empty list.
-   *
-   * @param hintStrategies The hint strategies to validate the sql hints
-   * @param sqlHints       The sql hints nodes
-   * @return the {@code RelHint} list
-   */
-  public static List<RelHint> getRelHint(HintStrategyTable hintStrategies, SqlNodeList sqlHints) {
-    if (sqlHints == null || sqlHints.size() == 0) {
-      return ImmutableList.of();
-    }
-    final ImmutableList.Builder<RelHint> relHints = ImmutableList.builder();
-    for (SqlNode node : sqlHints) {
-      assert node instanceof SqlHint;
-      final SqlHint sqlHint = (SqlHint) node;
-      final String hintName = sqlHint.getName();
-
-      final RelHint.Builder builder = RelHint.builder(hintName);
-      switch (sqlHint.getOptionFormat()) {
-      case EMPTY:
-        // do nothing.
-        break;
-      case LITERAL_LIST:
-      case ID_LIST:
-        builder.hintOptions(sqlHint.getOptionList());
-        break;
-      case KV_LIST:
-        builder.hintOptions(sqlHint.getOptionKVPairs());
-        break;
-      default:
-        throw new AssertionError("Unexpected hint option format");
-      }
-      final RelHint relHint = builder.build();
-      if (hintStrategies.validateHint(relHint)) {
-        // Skips the hint if the validation fails.
-        relHints.add(relHint);
-      }
-    }
-    return relHints.build();
-  }
-
-  /**
-   * Attach the {@code hints} to {@code rel} with specified hint strategies.
-   *
-   * @param hintStrategies The strategies to filter the hints
-   * @param hints          The original hints to be attached
-   * @return A copy of {@code rel} if there are any hints can be attached given
-   * the hint strategies, or the original node if such hints don't exist
-   */
-  public static RelNode attachRelHint(
-      HintStrategyTable hintStrategies,
-      List<RelHint> hints,
-      Hintable rel) {
-    final List<RelHint> relHints = hintStrategies.apply(hints, (RelNode) rel);
-    if (relHints.size() > 0) {
-      return rel.attachHints(relHints);
-    }
-    return (RelNode) rel;
   }
 
   //~ Inner Classes ----------------------------------------------------------
@@ -1186,4 +1017,78 @@ public abstract class SqlUtil {
       return check(type);
     }
   }
+
+  /**
+   * Find the best matched method in the functionClass
+   * @param functionClass Function Class
+   * @param name          Method Name
+   * @param argTypes      The  argument types
+   * @param typeFactory   Java TypeFactory
+   * @return null if the argTypes is not match with the methods in functionClass
+   */
+  public static Method findBestMatchMethod(Class<?> functionClass, String name,
+       List<RelDataType> argTypes, JavaTypeFactory typeFactory) {
+    Method[] methods = functionClass.getMethods();
+    List<Method> matchMethods = new ArrayList<>();
+    // find the methods that can match the name and argTypes
+    for (Method method : methods) {
+      if (!method.getName().equals(name)) {
+        continue;
+      }
+      List<RelDataType> paramTypes = new ArrayList<>();
+      for (Class<?> paramClass : method.getParameterTypes()) {
+        paramTypes.add(JavaTypeFactoryImpl.toSql
+            (typeFactory, typeFactory
+                .createType(paramClass)));
+      }
+      // check the operand count
+      if (paramTypes.size() != argTypes.size()) {
+        continue;
+      }
+      int i;
+      for (i = 0; i < argTypes.size(); i++) {
+        if (!SqlTypeUtil.canCastFrom(paramTypes.get(i),
+            argTypes.get(i), false)) {
+          break;
+        }
+      }
+      if (i != argTypes.size()) { // not all arg type can cast to param type
+        continue;
+      }
+      matchMethods.add(method);
+    }
+    // find the best match method
+    for (int i = 0; i < argTypes.size(); i++) {
+      RelDataType argType = argTypes.get(i);
+      RelDataTypePrecedenceList precedenceList = argType.getPrecedenceList();
+
+      RelDataType bestMatchType = null;
+      for (Method method : matchMethods) {
+        RelDataType paramType =
+            typeFactory.createType(method.getParameterTypes()[i]);
+        if (bestMatchType == null
+            || precedenceList.compareTypePrecedence(bestMatchType,
+            paramType) < 0) {
+          bestMatchType = paramType;
+        }
+      }
+      if (bestMatchType != null) {
+        final int index = i;
+        final RelDataType bestType = bestMatchType;
+        matchMethods = matchMethods.stream().filter(method -> {
+          RelDataType paramType =
+              typeFactory.createType(method.getParameterTypes()[index]);
+          return precedenceList.compareTypePrecedence(paramType, bestType) >= 0;
+        }).collect(Collectors.toList());
+      }
+    }
+    // no match found for the argTypes
+    if (matchMethods.size() == 0) {
+      return null;
+    }
+    assert matchMethods.size() == 1;
+    return matchMethods.get(0);
+  }
 }
+
+// End SqlUtil.java

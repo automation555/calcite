@@ -23,29 +23,37 @@ import org.apache.calcite.config.Lex;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.runtime.CalciteContextException;
+import org.apache.calcite.schema.impl.JavaScalarFunction;
+import org.apache.calcite.schema.impl.JavaTableFunction;
 import org.apache.calcite.sql.SqlCollation;
+import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlSpecialOperator;
-import org.apache.calcite.sql.fun.SqlLibrary;
-import org.apache.calcite.sql.fun.SqlLibraryOperatorTableFactory;
+import org.apache.calcite.sql.fun.OracleSqlOperatorTable;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParser;
+import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.test.SqlTester;
 import org.apache.calcite.sql.type.ArraySqlType;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeUtil;
+import org.apache.calcite.sql.util.ChainedSqlOperatorTable;
+import org.apache.calcite.sql.util.ListSqlOperatorTable;
 import org.apache.calcite.sql.validate.SqlAbstractConformance;
 import org.apache.calcite.sql.validate.SqlConformance;
 import org.apache.calcite.sql.validate.SqlConformanceEnum;
 import org.apache.calcite.sql.validate.SqlDelegatingConformance;
 import org.apache.calcite.sql.validate.SqlMonotonicity;
+import org.apache.calcite.sql.validate.SqlUserDefinedFunction;
+import org.apache.calcite.sql.validate.SqlUserDefinedTableFunction;
 import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.test.catalog.CountingFactory;
 import org.apache.calcite.util.Bug;
 import org.apache.calcite.util.ImmutableBitSet;
+import org.apache.calcite.util.Smalls;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Ordering;
@@ -803,8 +811,8 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     checkWholeExpFails("translate('aabbcc', 'ab', '+-')",
         "No match found for function signature TRANSLATE3\\(<CHARACTER>, <CHARACTER>, <CHARACTER>\\)");
     tester = tester.withOperatorTable(
-        SqlLibraryOperatorTableFactory.INSTANCE
-            .getOperatorTable(SqlLibrary.STANDARD, SqlLibrary.ORACLE));
+        ChainedSqlOperatorTable.of(OracleSqlOperatorTable.instance(),
+            SqlStdOperatorTable.instance()));
     checkExpType("translate('aabbcc', 'ab', '+-')",
         "VARCHAR(6) NOT NULL");
     checkWholeExpFails("translate('abc', 'ab')",
@@ -1234,8 +1242,9 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
           "(?s).*Encountered \"FROM\" at .*");
 
       // Without the "FROM" noise word, TRIM is parsed as a regular
-      // function without quoting and built-in function with quoting.
-      checkExpType("\"TRIM\"('b', 'FROM', 'a')", "VARCHAR(1) NOT NULL");
+      // function, not as a built-in. So we can parse with and without
+      // quoting.
+      checkExpType("\"TRIM\"('b')", "VARCHAR(1) NOT NULL");
       checkExpType("TRIM('b')", "VARCHAR(1) NOT NULL");
     }
   }
@@ -5196,27 +5205,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .fails("(?s)Cannot apply '\\+' to arguments of type.*");
   }
 
-  /**
-   * Test case for <a href="https://issues.apache.org/jira/browse/CALCITE-3003">[CALCITE-3003]
-   * AssertionError when GROUP BY nested field</a>.
-   *
-   * <p>Make sure table name of GROUP BY item with nested field could be
-   * properly validated.
-   */
-  @Test
-  public void testInvalidGroupByWithInvalidTableName() {
-    final String sql =
-        "select\n"
-            + "  coord.x,\n"
-            + "  avg(coord.y)\n"
-            + "from\n"
-            + "  customer.contact_peek\n"
-            + "group by\n"
-            + "  ^unknown_table_alias.coord^.x";
-    sql(sql)
-        .fails("Table 'UNKNOWN_TABLE_ALIAS.COORD' not found");
-  }
-
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-1781">[CALCITE-1781]
    * Allow expression in CUBE and ROLLUP</a>. */
@@ -5626,11 +5614,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         "select 1 from (values (^'x'^)) union\n"
             + "(values ('a'))",
         "Type mismatch in column 1 of UNION");
-
-    checkFails(
-        "select 1, ^2^, 3 union\n "
-            + "select deptno, name, deptno from dept",
-        "Type mismatch in column 2 of UNION");
   }
 
   @Test public void testValuesTypeMismatchFails() {
@@ -5768,7 +5751,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     // make sal occur more than once on rhs, it is ignored and therefore
     // there is no error about incompatible types
     sql("select * from emp natural join\n"
-        + " (select deptno, name as sal, 'foo' as sal2 from dept)").ok();
+        + " (select deptno, name as sal, 'foo' as sal from dept)").ok();
   }
 
   @Test public void testJoinUsingIncompatibleDatatype() {
@@ -6415,7 +6398,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
 
     // empno is not an alias in the first select in the union
     checkFails(
-        "select deptno, deptno as no2 from dept "
+        "select deptno, deptno from dept "
             + "union all "
             + "select empno, sal from emp "
             + "order by deptno asc, ^empno^",
@@ -6849,38 +6832,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     // constant expressions
     check("select cast(1 as integer) + 2 from emp group by deptno");
     check("select localtime, deptno + 3 from emp group by deptno");
-  }
-
-  @Test public void testGroupExpressionRowType() {
-    sql("select deptno as d, count(*) as c, sum(sal) as s\n"
-        + "from emp\n"
-        + "group by deptno")
-        .ok()
-        .type("RecordType(INTEGER NOT NULL D, BIGINT NOT NULL C, INTEGER NOT NULL S) NOT NULL");
-
-    sql("select deptno as d, count(*) as c, sum(sal) as s\n"
-        + "from emp\n"
-        + "group by rollup(deptno)")
-        .ok()
-        .type("RecordType(INTEGER D, BIGINT NOT NULL C, INTEGER NOT NULL S) NOT NULL");
-
-    sql("select 2*deptno + 1 as d, count(*) as c, sum(sal) as s\n"
-        + "from emp\n"
-        + "group by rollup(deptno)")
-        .ok()
-        .type("RecordType(INTEGER D, BIGINT NOT NULL C, INTEGER NOT NULL S) NOT NULL");
-
-    sql("select grouping(deptno) as d, count(*) as c, sum(sal) as s\n"
-        + "from emp\n"
-        + "group by rollup(deptno)")
-        .ok()
-        .type("RecordType(BIGINT NOT NULL D, BIGINT NOT NULL C, INTEGER NOT NULL S) NOT NULL");
-
-    sql("select deptno + 1 as d, count(deptno) as c, sum(sal) as s\n"
-        + "from emp\n"
-        + "group by rollup(deptno)")
-        .ok()
-        .type("RecordType(INTEGER D, BIGINT NOT NULL C, INTEGER NOT NULL S) NOT NULL");
   }
 
   /** Test case for
@@ -7991,21 +7942,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .fails("SELECT must have a FROM clause");
   }
 
-  @Test public void testSelectAmbiguousField() {
-    tester = tester.withCaseSensitive(false)
-        .withUnquotedCasing(Casing.UNCHANGED);
-    sql("select ^t0^ from (select 1 as t0, 2 as T0 from dept)")
-        .fails("Column 't0' is ambiguous");
-    sql("select ^t0^ from (select 1 as t0, 2 as t0,3 as t1,4 as t1, 5 as t2 from dept)")
-        .fails("Column 't0' is ambiguous");
-    // t0 is not referenced,so this case is allowed
-    sql("select 1 as t0, 2 as t0 from dept").ok();
-
-    tester = tester.withCaseSensitive(true)
-        .withUnquotedCasing(Casing.UNCHANGED);
-    sql("select t0 from (select 1 as t0, 2 as T0 from DEPT)").ok();
-  }
-
   @Test public void testTableExtend() {
     checkResultType("select * from dept extend (x int not null)",
         "RecordType(INTEGER NOT NULL DEPTNO, VARCHAR(10) NOT NULL NAME, INTEGER NOT NULL X) NOT NULL");
@@ -8184,13 +8120,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .type("RecordType(VARCHAR(10) OA) NOT NULL");
   }
 
-  @Test public void testItemOperatorException() {
-    sql("select ^name[0]^ from dept")
-        .fails("Cannot apply 'ITEM' to arguments of type 'ITEM\\(<VARCHAR\\(10\\)>, "
-          +  "<INTEGER>\\)'\\. Supported form\\(s\\): <ARRAY>\\[<INTEGER>\\]\n"
-          + "<MAP>\\[<VALUE>\\].*");
-  }
-
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-497">[CALCITE-497]
    * Support optional qualifier for column name references</a>. */
@@ -8221,8 +8150,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     sql("SELECT * FROM customer.contact_peek as c")
         .type("RecordType(INTEGER NOT NULL CONTACTNO, VARCHAR(10) NOT NULL FNAME, "
             + "VARCHAR(10) NOT NULL LNAME, VARCHAR(20) NOT NULL EMAIL, INTEGER NOT NULL X, "
-            + "INTEGER NOT NULL Y, VARCHAR(20) NOT NULL unit, "
-            + "RecordType:peek_no_expand(INTEGER NOT NULL M, "
+            + "INTEGER NOT NULL Y, RecordType:peek_no_expand(INTEGER NOT NULL M, "
             + "RecordType:peek_no_expand(INTEGER NOT NULL A, INTEGER NOT NULL B) "
             + "NOT NULL SUB) NOT NULL COORD_NE) NOT NULL");
 
@@ -8656,20 +8584,19 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
   @Test public void testCaseSensitiveBuiltinFunction() {
     final SqlTester tester1 = tester
         .withCaseSensitive(true)
-        .withUnquotedCasing(Casing.UNCHANGED)
         .withQuoting(Quoting.BRACKET);
     tester1.withOperatorTable(SqlStdOperatorTable.instance());
 
-    tester1.checkQuery("select sum(EMPNO) from EMP group by ENAME, EMPNO");
-    tester1.checkQuery("select [sum](EMPNO) from EMP group by ENAME, EMPNO");
-    tester1.checkQuery("select [SUM](EMPNO) from EMP group by ENAME, EMPNO");
-    tester1.checkQuery("select SUM(EMPNO) from EMP group by ENAME, EMPNO");
-    tester1.checkQuery("select Sum(EMPNO) from EMP group by ENAME, EMPNO");
-    tester1.checkQuery("select count(EMPNO) from EMP group by ENAME, EMPNO");
-    tester1.checkQuery("select [count](EMPNO) from EMP group by ENAME, EMPNO");
-    tester1.checkQuery("select [COUNT](EMPNO) from EMP group by ENAME, EMPNO");
-    tester1.checkQuery("select COUNT(EMPNO) from EMP group by ENAME, EMPNO");
-    tester1.checkQuery("select Count(EMPNO) from EMP group by ENAME, EMPNO");
+    tester1.checkQuery("select sum(empno) from EMP group by ename, empno");
+    tester1.checkQuery("select [sum](empno) from EMP group by ename, empno");
+    tester1.checkQuery("select [SUM](empno) from EMP group by ename, empno");
+    tester1.checkQuery("select SUM(empno) from EMP group by ename, empno");
+    tester1.checkQuery("select Sum(empno) from EMP group by ename, empno");
+    tester1.checkQuery("select count(empno) from EMP group by ename, empno");
+    tester1.checkQuery("select [count](empno) from EMP group by ename, empno");
+    tester1.checkQuery("select [COUNT](empno) from EMP group by ename, empno");
+    tester1.checkQuery("select COUNT(empno) from EMP group by ename, empno");
+    tester1.checkQuery("select Count(empno) from EMP group by ename, empno");
   }
 
   /** Test case for
@@ -8945,6 +8872,10 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + "DEFAULT -\n"
         + "DOT -\n"
         + "ITEM -\n"
+        + "JSON_API_COMMON_SYNTAX -\n"
+        + "JSON_API_COMMON_SYNTAX_WITHOUT_PATH -\n"
+        + "JSON_STRUCTURED_VALUE_EXPRESSION -\n"
+        + "JSON_VALUE_EXPRESSION -\n"
         + "NEXT_VALUE -\n"
         + "PATTERN_EXCLUDE -\n"
         + "PATTERN_PERMUTE -\n"
@@ -9016,7 +8947,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + "SUBMULTISET OF left\n"
         + "SUCCEEDS left\n"
         + "\n"
-        + "FORMAT JSON post\n"
         + "IS A SET post\n"
         + "IS EMPTY post\n"
         + "IS FALSE post\n"
@@ -9100,14 +9030,13 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .withQuoting(Quoting.BRACKET);
     final SqlTester sensitive = tester
         .withCaseSensitive(true)
-        .withUnquotedCasing(Casing.UNCHANGED)
         .withQuoting(Quoting.BRACKET);
     String sql = "select [e] from (\n"
-        + "select EMPNO as [e], DEPTNO as d, 1 as [e2] from EMP)";
+        + "select empno as [e], deptno as d, 1 as [e] from EMP)";
     sensitive.checkQuery(sql);
     insensitive.checkQuery(sql);
-    String sql1 = "select e2 from (\n"
-        + "select EMPNO as [e2], DEPTNO as d, 1 as [E] from EMP)";
+    String sql1 = "select e from (\n"
+        + "select empno as [e], deptno as d, 1 as [E] from EMP)";
     insensitive.checkQuery(sql1);
     sensitive.checkQuery(sql1);
   }
@@ -10832,18 +10761,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
 
     sql("select ^slackingmin^ from nest.emp_r")
             .fails(error);
-
-    sql("with emp_r as (select 1 as slackingmin) select slackingmin from emp_r")
-            .ok();
-
-    sql("with emp_r as (select ^slackingmin^ from emp_r) select slackingmin from emp_r")
-            .fails(error);
-
-    sql("with emp_r1 as (select 1 as slackingmin) select emp_r1.slackingmin from emp_r, emp_r1")
-            .ok();
-
-    sql("with emp_r1 as (select 1 as slackingmin) select ^emp_r.slackingmin^ from emp_r, emp_r1")
-            .fails(error);
   }
 
   @Test public void testSelectAggregateOnRolledUpColumn() {
@@ -10959,17 +10876,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
             .fails(onError);
   }
 
-  @Test public void testJsonValueExpressionOperator() {
-    checkExp("'{}' format json");
-    checkExp("'{}' format json encoding utf8");
-    checkExp("'{}' format json encoding utf16");
-    checkExp("'{}' format json encoding utf32");
-    checkExpType("'{}' format json", "ANY NOT NULL");
-    checkExpType("'null' format json", "ANY NOT NULL");
-    checkExpType("cast(null as varchar) format json", "ANY");
-    checkExpFails("^null^ format json", "(?s).*Illegal use of .NULL.*");
-  }
-
   @Test public void testJsonExists() {
     checkExp("json_exists('{}', 'lax $')");
     checkExpType("json_exists('{}', 'lax $')", "BOOLEAN");
@@ -11034,34 +10940,16 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
   @Test public void testJsonPretty() {
     check("select json_pretty(ename) from emp");
     checkExp("json_pretty('{\"foo\":\"bar\"}')");
-    checkExpType("json_pretty('{\"foo\":\"bar\"}')", "VARCHAR(2000)");
+    checkExpType("json_pretty('{\"foo\":\"bar\"}')", "VARCHAR(2000) NOT NULL");
     checkFails("select json_pretty(^NULL^) from emp", "(?s).*Illegal use of .NULL.*");
-
-    if (!Bug.CALCITE_2869_FIXED) {
-      // the case should throw an error but currently validation
-      // is done during sql-to-rel process.
-      //
-      // see StandardConvertletTable.JsonOperatorValueExprConvertlet
-      return;
-    }
     checkFails("select json_pretty(^1^) from emp",
             "(.*)JSON_VALUE_EXPRESSION(.*)");
-  }
-
-  @Test public void testJsonStorageSize() {
-    check("select json_storage_size(ename) from emp");
-    checkExp("json_storage_size('{\"foo\":\"bar\"}')");
-    checkExpType("json_storage_size('{\"foo\":\"bar\"}')", "INTEGER");
   }
 
   @Test public void testJsonType() {
     check("select json_type(ename) from emp");
     checkExp("json_type('{\"foo\":\"bar\"}')");
-    checkExpType("json_type('{\"foo\":\"bar\"}')", "VARCHAR(20)");
-
-    if (!Bug.CALCITE_2869_FIXED) {
-      return;
-    }
+    checkExpType("json_type('{\"foo\":\"bar\"}')", "VARCHAR(20) NOT NULL");
     checkFails("select json_type(^1^) from emp",
         "(.*)JSON_VALUE_EXPRESSION(.*)");
   }
@@ -11070,10 +10958,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     check("select json_depth(ename) from emp");
     checkExp("json_depth('{\"foo\":\"bar\"}')");
     checkExpType("json_depth('{\"foo\":\"bar\"}')", "INTEGER");
-
-    if (!Bug.CALCITE_2869_FIXED) {
-      return;
-    }
     checkFails("select json_depth(^1^) from emp",
             "(.*)JSON_VALUE_EXPRESSION(.*)");
   }
@@ -11088,15 +10972,8 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
 
   @Test public void testJsonKeys() {
     checkExp("json_keys('{\"foo\":\"bar\"}', 'lax $')");
-    checkExpType("json_keys('{\"foo\":\"bar\"}', 'lax $')", "VARCHAR(2000)");
-    checkExpType("json_keys('{\"foo\":\"bar\"}', 'strict $')", "VARCHAR(2000)");
-  }
-
-  @Test public void testJsonRemove() {
-    checkExp("json_remove('{\"foo\":\"bar\"}', '$')");
-    checkExpType("json_remove('{\"foo\":\"bar\"}', '$')", "VARCHAR(2000)");
-    checkFails("select ^json_remove('{\"foo\":\"bar\"}')^",
-            "(?s).*Invalid number of arguments.*");
+    checkExpType("json_keys('{\"foo\":\"bar\"}', 'lax $')", "VARCHAR(2000) NOT NULL");
+    checkExpType("json_keys('{\"foo\":\"bar\"}', 'strict $')", "VARCHAR(2000) NOT NULL");
   }
 
   @Test public void testJsonObjectAgg() {
@@ -11157,6 +11034,44 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     }
   }
 
+  @Test public void testOverloadUdf() throws Exception {
+    JavaScalarFunction udfFunction =
+        new JavaScalarFunction(Smalls.MyUdfFunction.class);
+    SqlUserDefinedFunction udf =
+        new SqlUserDefinedFunction(
+            new SqlIdentifier("MY_UDF", SqlParserPos.ZERO), udfFunction);
+    JavaTableFunction tableFunction =
+        new JavaTableFunction(Smalls.MyUdtfFunction.class);
+    SqlUserDefinedTableFunction  udtf =
+        new SqlUserDefinedTableFunction(
+            new SqlIdentifier("MY_UDTF", SqlParserPos.ZERO), tableFunction);
+
+    ListSqlOperatorTable listOp = new ListSqlOperatorTable();
+    listOp.add(udf);
+    listOp.add(udtf);
+    tester = tester.withOperatorTable(ChainedSqlOperatorTable.of
+        (listOp,
+            SqlStdOperatorTable.instance()));
+
+    sql("select my_udf('a') from emp").ok();
+    sql("select my_udf(1,2) from emp").ok();
+    sql("select ^my_udf(1,2,3)^")
+        .fails("Cannot apply 'MY_UDF' to arguments of type"
+           + " 'MY_UDF\\(<INTEGER>, <INTEGER>, <INTEGER>\\)'\\."
+           + " Supported form\\(s\\): MY_UDF\\(Long,int\\) MY_UDF\\(String\\)"
+           + " MY_UDF\\(String,String\\) MY_UDF\\(String,int\\) MY_UDF\\(int,int\\).*");
+
+    sql("select * from (select 1 as f0) s,"
+        + " lateral table(my_udtf('a')) as t(n)").ok();
+    sql("select * from (select 1 as f0) s,"
+        + " lateral table(my_udtf(1)) as t(n)").ok();
+    sql("select * from (select 1 as f0) s,"
+        + " lateral table(^my_udtf(1, 2, 3)^) as t(n)")
+        .fails("Cannot apply 'MY_UDTF' to arguments of type "
+          +  "'MY_UDTF\\(<INTEGER>, <INTEGER>, <INTEGER>\\)'\\. "
+          +  "Supported form\\(s\\): MY_UDTF\\(String\\) "
+          +  "MY_UDTF\\(int\\) MY_UDTF\\(long\\).*");
+  }
 }
 
 // End SqlValidatorTest.java

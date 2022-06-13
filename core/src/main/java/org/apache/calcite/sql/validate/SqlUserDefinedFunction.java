@@ -19,6 +19,7 @@ package org.apache.calcite.sql.validate;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.schema.Function;
 import org.apache.calcite.schema.FunctionParameter;
+import org.apache.calcite.schema.impl.JavaScalarFunction;
 import org.apache.calcite.sql.SqlFunction;
 import org.apache.calcite.sql.SqlFunctionCategory;
 import org.apache.calcite.sql.SqlIdentifier;
@@ -33,11 +34,11 @@ import com.google.common.collect.Lists;
 import java.util.List;
 
 /**
- * User-defined scalar function.
+* User-defined scalar function.
  *
  * <p>Created by the validator, after resolving a function call to a function
  * defined in a Calcite schema.</p>
- */
+*/
 public class SqlUserDefinedFunction extends SqlFunction {
   public final Function function;
 
@@ -47,10 +48,9 @@ public class SqlUserDefinedFunction extends SqlFunction {
       SqlOperandTypeInference operandTypeInference,
       SqlOperandTypeChecker operandTypeChecker,
       List<RelDataType> paramTypes,
-      boolean varArgs,
       Function function) {
     this(opName, returnTypeInference, operandTypeInference, operandTypeChecker,
-        paramTypes, varArgs, function, SqlFunctionCategory.USER_DEFINED_FUNCTION);
+        paramTypes, function, SqlFunctionCategory.USER_DEFINED_FUNCTION);
   }
 
   /** Constructor used internally and by derived classes. */
@@ -59,13 +59,27 @@ public class SqlUserDefinedFunction extends SqlFunction {
       SqlOperandTypeInference operandTypeInference,
       SqlOperandTypeChecker operandTypeChecker,
       List<RelDataType> paramTypes,
-      boolean varArgs,
       Function function,
       SqlFunctionCategory category) {
     super(Util.last(opName.names), opName, SqlKind.OTHER_FUNCTION,
         returnTypeInference, operandTypeInference, operandTypeChecker,
-        paramTypes, varArgs, category);
+        paramTypes, category);
     this.function = function;
+  }
+
+  /**
+   * Constructor used to define a scalar function that contains
+   * all the overload "eval" methods in a function class.
+   * @param opName   Function name
+   * @param function JavaScalarFunction
+   */
+  public SqlUserDefinedFunction(SqlIdentifier opName,
+       JavaScalarFunction function) {
+    this(opName,
+        getReturnTypeInferenceForClass(function.getFunctionClass()),
+        getOperandTypeInferenceForClass(function.getFunctionClass()),
+        getOperandTypeCheckerForClass(function.getFunctionClass()),
+        null, function);
   }
 
   /**
@@ -80,4 +94,7 @@ public class SqlUserDefinedFunction extends SqlFunction {
     return Lists.transform(function.getParameters(),
         FunctionParameter::getName);
   }
+
 }
+
+// End SqlUserDefinedFunction.java

@@ -41,16 +41,17 @@ import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.schema.Statistic;
 import org.apache.calcite.schema.Statistics;
 import org.apache.calcite.schema.TranslatableTable;
+import org.apache.calcite.schema.UDFDescription;
 import org.apache.calcite.schema.impl.AbstractTable;
 import org.apache.calcite.schema.impl.ViewTable;
 import org.apache.calcite.sql.SqlCall;
+import org.apache.calcite.sql.SqlFunctionCategory;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.dialect.CalciteSqlDialect;
 import org.apache.calcite.sql.type.SqlTypeName;
 
 import com.google.common.collect.ImmutableList;
 
-import java.io.IOException;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.sql.Date;
@@ -60,15 +61,10 @@ import java.util.AbstractList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
-import java.util.stream.DoubleStream;
-import java.util.stream.IntStream;
-import java.util.stream.Stream;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.Assert.assertThat;
 
 /**
  * Holder for various classes and functions used in tests as user-defined
@@ -77,10 +73,6 @@ import static org.hamcrest.MatcherAssert.assertThat;
 public class Smalls {
   public static final Method GENERATE_STRINGS_METHOD =
       Types.lookupMethod(Smalls.class, "generateStrings", Integer.class);
-  public static final Method GENERATE_STRINGS_OF_INPUT_SIZE_METHOD =
-      Types.lookupMethod(Smalls.class, "generateStringsOfInputSize", List.class);
-  public static final Method GENERATE_STRINGS_OF_INPUT_MAP_SIZE_METHOD =
-      Types.lookupMethod(Smalls.class, "generateStringsOfInputMapSize", Map.class);
   public static final Method MAZE_METHOD =
       Types.lookupMethod(MazeTable.class, "generate", int.class, int.class,
           int.class);
@@ -189,13 +181,6 @@ public class Smalls {
         return (Queryable<T>) queryable;
       }
     };
-  }
-
-  public static QueryableTable generateStringsOfInputSize(final List<Integer> list) {
-    return generateStrings(list.size());
-  }
-  public static QueryableTable generateStringsOfInputMapSize(final Map<Integer, Integer> map) {
-    return generateStrings(map.size());
   }
 
   /** A function that generates multiplication table of {@code ncol} columns x
@@ -384,91 +369,14 @@ public class Smalls {
     }
   }
 
-
-  /** Example of a UDF with named parameters. */
-  public static class VarArgsFunction {
-
-    public static final AtomicInteger INSTANCE_COUNT = new AtomicInteger(0);
-
-    // Note: Not marked @Deterministic
-    public VarArgsFunction() {
-      INSTANCE_COUNT.incrementAndGet();
-    }
-
-    public int eval(@Parameter(name = "x") int x, @Parameter(name = "y") int... integers) {
-      if (integers != null && integers.length > 0) {
-        return IntStream.concat(IntStream.of(x), IntStream.of(integers)).sum();
-      }
-      return x;
-    }
-  }
-
-  public static class VarArgs1Function {
-
-    public static final AtomicInteger INSTANCE_COUNT = new AtomicInteger(0);
-
-    // Note: Not marked @Deterministic
-    public VarArgs1Function() {
-      INSTANCE_COUNT.incrementAndGet();
-    }
-
-    public double eval(@Parameter(name = "x") double x, @Parameter(name = "y") double... doubles) {
-      if (doubles != null && doubles.length > 0) {
-        return DoubleStream.concat(DoubleStream.of(x), DoubleStream.of(doubles)).sum();
-      }
-      return x;
-    }
-  }
-
-  public static class VarArgs2Function {
-
-    public static final AtomicInteger INSTANCE_COUNT = new AtomicInteger(0);
-
-    // Note: Not marked @Deterministic
-    public VarArgs2Function() {
-      INSTANCE_COUNT.incrementAndGet();
-    }
-
-    public BigDecimal eval(@Parameter(name = "x") BigDecimal x,
-        @Parameter(name = "y") BigDecimal... numerics) {
-      if (numerics != null && numerics.length > 0) {
-        return Stream.concat(Stream.of(x), Stream.of(numerics))
-            .reduce((v1, v2) -> v1.add(v2))
-            .get();
-      }
-      return x;
-    }
-  }
-
-  public static class VarArgs3Function {
-
-    public static final AtomicInteger INSTANCE_COUNT = new AtomicInteger(0);
-
-    // Note: Not marked @Deterministic
-    public VarArgs3Function() {
-      INSTANCE_COUNT.incrementAndGet();
-    }
-
-    public String eval(
-        @Parameter(name = "x") String... strs) {
-      if (strs != null && strs.length > 0) {
-        return  Stream.of(strs).collect(Collectors.joining());
-      }
-      return null;
-    }
-  }
-
-
-
   /** Example of a UDF with a non-static {@code eval} method,
    * and named parameters. */
   public static class MyPlusFunction {
-    public static final ThreadLocal<AtomicInteger> INSTANCE_COUNT =
-        new ThreadLocal<>().withInitial(() -> new AtomicInteger(0));
+    public static final AtomicInteger INSTANCE_COUNT = new AtomicInteger(0);
 
     // Note: Not marked @Deterministic
     public MyPlusFunction() {
-      INSTANCE_COUNT.get().incrementAndGet();
+      INSTANCE_COUNT.incrementAndGet();
     }
 
     public int eval(@Parameter(name = "x") int x,
@@ -479,18 +387,14 @@ public class Smalls {
 
   /** As {@link MyPlusFunction} but declared to be deterministic. */
   public static class MyDeterministicPlusFunction {
-    public static final ThreadLocal<AtomicInteger> INSTANCE_COUNT =
-        new ThreadLocal<>().withInitial(() -> new AtomicInteger(0));
+    public static final AtomicInteger INSTANCE_COUNT = new AtomicInteger(0);
 
     @Deterministic public MyDeterministicPlusFunction() {
-      INSTANCE_COUNT.get().incrementAndGet();
+      INSTANCE_COUNT.incrementAndGet();
     }
 
-    public Integer eval(@Parameter(name = "x") Integer x,
-        @Parameter(name = "y") Integer y) {
-      if (x == null || y == null) {
-        return null;
-      }
+    public int eval(@Parameter(name = "x") int x,
+        @Parameter(name = "y") int y) {
       return x + y;
     }
   }
@@ -563,20 +467,6 @@ public class Smalls {
   public static class MyIncrement {
     public float eval(int x, int y) {
       return x + x * y / 100;
-    }
-  }
-
-  /** User-defined function that declares exceptions. */
-  public static class MyExceptionFunction {
-    public MyExceptionFunction() {}
-
-    public static int eval(int x) throws IllegalArgumentException, IOException {
-      if (x < 0) {
-        throw new IllegalArgumentException("Illegal argument: " + x);
-      } else if (x > 100) {
-        throw new IOException("IOException when argument > 100");
-      }
-      return x + 10;
     }
   }
 
@@ -1001,6 +891,119 @@ public class Smalls {
     };
   }
 
+  /**
+   * Udf function with overload methods
+   */
+  @UDFDescription(name = "MY_UDF", category = SqlFunctionCategory.USER_DEFINED_FUNCTION)
+  public static class MyUdfFunction {
+    public static String eval(String a) {
+      return "eval(String:" + a + ")";
+    }
+
+    public static String eval(String a, String b) {
+      return "eval(String:" + a + ", String:" + b + ")";
+    }
+
+    public static String eval(String a, int c) {
+      return "eval(String:" + a + ", int:" + c + ")";
+    }
+
+    public static String eval(Long a, int b) {
+      return "eval(Long:" + a + ", int:" + b + ")";
+    }
+
+    public static String eval(int a, int b) {
+      return "eval(int:" + a + ",int:" + b + ")";
+    }
+  }
+
+  /**
+   * User-defined table function with overload methods
+   */
+  @UDFDescription(name = "MY_UDTF", category = SqlFunctionCategory.USER_DEFINED_TABLE_FUNCTION)
+  public static class MyUdtfFunction {
+
+    public static MyScannableTable eval(String a) {
+      return new MyScannableTable("eval(String: " + a + ")");
+    }
+
+    public static MyScannableTable eval(long a) {
+      return new MyScannableTable("eval(long:" + a + ")");
+    }
+
+    public static MyScannableTable eval(int a) {
+      return new MyScannableTable("eval(int:" + a + ")");
+    }
+  }
+
+  /**
+   * ScannableTable for {@link MyUdtfFunction}
+   */
+  public static class MyScannableTable implements ScannableTable {
+
+    private String msg;
+
+    public MyScannableTable(String msg) {
+      this.msg = msg;
+    }
+
+    public MyScannableTable() {
+      this("default");
+    }
+
+    public Enumerable<Object[]> scan(DataContext root) {
+      return new AbstractEnumerable<Object[]>() {
+        private long pos = 1;
+        public Enumerator<Object[]> enumerator() {
+
+          return new Enumerator<Object[]>() {
+            public Object[] current() {
+              return new Object[] {msg};
+            }
+
+            public boolean moveNext() {
+              if (pos > 0) {
+                pos--;
+                return true;
+              }
+              return false;
+            }
+
+            public void reset() {
+              pos = 1;
+            }
+
+            public void close() {
+
+            }
+          };
+        }
+      };
+    }
+
+    public RelDataType getRowType(RelDataTypeFactory typeFactory) {
+      return typeFactory.builder()
+          .add("N", SqlTypeName.VARCHAR).build();
+    }
+
+    public Statistic getStatistic() {
+      return Statistics.UNKNOWN;
+    }
+
+    public Schema.TableType getJdbcTableType() {
+      return Schema.TableType.TABLE;
+    }
+
+    public boolean isRolledUp(String column) {
+      return false;
+    }
+
+    public boolean rolledUpColumnValidInsideAgg(String column, SqlCall call,
+        SqlNode parent, CalciteConnectionConfig config) {
+      return false;
+    }
+  }
+
   /** Table with a lot of columns. */
   @SuppressWarnings("unused")
   public static class WideProductSale {
@@ -1212,3 +1215,5 @@ public class Smalls {
     }
   }
 }
+
+// End Smalls.java
