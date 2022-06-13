@@ -40,7 +40,6 @@ import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.Snapshot;
 import org.apache.calcite.rel.core.TableScan;
-import org.apache.calcite.rel.core.Window;
 import org.apache.calcite.rel.hint.HintPredicate;
 import org.apache.calcite.rel.hint.HintPredicates;
 import org.apache.calcite.rel.hint.HintStrategy;
@@ -49,14 +48,8 @@ import org.apache.calcite.rel.hint.Hintable;
 import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.rel.logical.LogicalAggregate;
 import org.apache.calcite.rel.logical.LogicalCorrelate;
-import org.apache.calcite.rel.logical.LogicalFilter;
-import org.apache.calcite.rel.logical.LogicalIntersect;
 import org.apache.calcite.rel.logical.LogicalJoin;
-import org.apache.calcite.rel.logical.LogicalMinus;
 import org.apache.calcite.rel.logical.LogicalProject;
-import org.apache.calcite.rel.logical.LogicalSort;
-import org.apache.calcite.rel.logical.LogicalUnion;
-import org.apache.calcite.rel.logical.LogicalValues;
 import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.sql.SqlDelete;
 import org.apache.calcite.sql.SqlInsert;
@@ -194,51 +187,9 @@ class SqlHintsConverterTest {
     sql(sql).ok();
   }
 
-  @Test void testFilterHints() {
-    final String sql = "select /*+ resource(parallelism='3') */ avg(sal) as avg_sal, deptno\n"
-            + "from emp group by deptno having avg(sal) > 5000";
-    sql(sql).ok();
-  }
-
-  @Test void testUnionHints() {
-    final String sql = "select /*+ breakable */ deptno from\n"
-            + "(select ename, deptno from emp\n"
-            + "union all\n"
-            + "select name, deptno from dept)";
-    sql(sql).ok();
-  }
-
-  @Test void testMinusHints() {
-    final String sql = "select /*+ breakable */ deptno from\n"
-        + "(select ename, deptno from emp\n"
-        + "except all\n"
-        + "select name, deptno from dept)";
-    sql(sql).ok();
-  }
-
-  @Test void testIntersectHints() {
-    final String sql = "select /*+ breakable */ deptno from\n"
-        + "(select ename, deptno from emp\n"
-        + "intersect all\n"
-        + "select name, deptno from dept)";
-    sql(sql).ok();
-  }
-
-  @Test void testSortHints() {
-    final String sql = "select /*+ async_merge */ empno from emp order by empno, empno desc";
-    sql(sql).ok();
-  }
-
-  @Test void testValuesHints() {
-    final String sql = "select /*+ resource(parallelism='3') */ a, max(b), max(b + 1)\n"
-        + "from (values (1, 2)) as t(a, b)\n"
-        + "group by a";
-    sql(sql).ok();
-  }
-
-  @Test void testWindowHints() {
-    final String sql = "select /*+ mini_batch */ last_value(deptno)\n"
-        + "over (order by empno rows 2 following) from emp";
+  @Test void testLateralTableWithHints() {
+    final String sql = "select * from emp,\n"
+        + "lateral table(RAMP(emp.deptno))/*+ properties(k1='v1', k2='v2') */";
     sql(sql).ok();
   }
 
@@ -487,48 +438,6 @@ class SqlHintsConverterTest {
         EnumerableRules.ENUMERABLE_TABLE_SCAN_RULE);
     ruleFixture()
         .sql(sql)
-        .withVolcanoPlanner(false, p -> {
-          p.addRelTraitDef(RelCollationTraitDef.INSTANCE);
-          RelOptUtil.registerDefaultRules(p, false, false);
-          ruleSet.forEach(p::addRule);
-        })
-        .check();
-  }
-
-  @Test void testHintsPropagationInVolcanoPlannerRules2() {
-    final String sql = "select /*+ no_hash_join */ ename, job\n"
-        + "from emp where not exists (select 1 from dept where emp.deptno = dept.deptno)";
-    final RelHint hint = RelHint.builder("NO_HASH_JOIN")
-        .inheritPath(0, 0)
-        .build();
-    // Validate Volcano planner.
-    RuleSet ruleSet = RuleSets.ofList(
-        MockEnumerableJoinRule.create(hint) // Rule to validate the hint.
-    );
-    ruleFixture()
-        .sql(sql)
-        .withTrim(true)
-        .withVolcanoPlanner(false, p -> {
-          p.addRelTraitDef(RelCollationTraitDef.INSTANCE);
-          RelOptUtil.registerDefaultRules(p, false, false);
-          ruleSet.forEach(p::addRule);
-        })
-        .check();
-  }
-
-  @Test void testHintsPropagationInVolcanoPlannerRules3() {
-    final String sql = "select /*+ no_hash_join */ ename, job\n"
-        + "from emp where not exists (select 1 from dept where emp.deptno = dept.deptno) order by ename";
-    final RelHint hint = RelHint.builder("NO_HASH_JOIN")
-        .inheritPath(0, 0, 0)
-        .build();
-    // Validate Volcano planner.
-    RuleSet ruleSet = RuleSets.ofList(
-        MockEnumerableJoinRule.create(hint) // Rule to validate the hint.
-    );
-    ruleFixture()
-        .sql(sql)
-        .withTrim(true)
         .withVolcanoPlanner(false, p -> {
           p.addRelTraitDef(RelCollationTraitDef.INSTANCE);
           RelOptUtil.registerDefaultRules(p, false, false);
@@ -808,89 +717,37 @@ class SqlHintsConverterTest {
 
       @Override public RelNode visit(TableScan scan) {
         if (scan.getHints().size() > 0) {
-          this.hintsCollect.add("TableScan:" + scan.getHints());
+          this.hintsCollect.add("TableScan:" + scan.getHints().toString());
         }
         return super.visit(scan);
       }
 
       @Override public RelNode visit(LogicalJoin join) {
         if (join.getHints().size() > 0) {
-          this.hintsCollect.add("LogicalJoin:" + join.getHints());
+          this.hintsCollect.add("LogicalJoin:" + join.getHints().toString());
         }
         return super.visit(join);
       }
 
       @Override public RelNode visit(LogicalProject project) {
         if (project.getHints().size() > 0) {
-          this.hintsCollect.add("Project:" + project.getHints());
+          this.hintsCollect.add("Project:" + project.getHints().toString());
         }
         return super.visit(project);
       }
 
       @Override public RelNode visit(LogicalAggregate aggregate) {
         if (aggregate.getHints().size() > 0) {
-          this.hintsCollect.add("Aggregate:" + aggregate.getHints());
+          this.hintsCollect.add("Aggregate:" + aggregate.getHints().toString());
         }
         return super.visit(aggregate);
       }
 
       @Override public RelNode visit(LogicalCorrelate correlate) {
         if (correlate.getHints().size() > 0) {
-          this.hintsCollect.add("Correlate:" + correlate.getHints());
+          this.hintsCollect.add("Correlate:" + correlate.getHints().toString());
         }
         return super.visit(correlate);
-      }
-
-      @Override public RelNode visit(LogicalFilter filter) {
-        if (filter.getHints().size() > 0) {
-          this.hintsCollect.add("Filter:" + filter.getHints());
-        }
-        return super.visit(filter);
-      }
-
-      @Override public RelNode visit(LogicalUnion union) {
-        if (union.getHints().size() > 0) {
-          this.hintsCollect.add("Union:" + union.getHints());
-        }
-        return super.visit(union);
-      }
-
-      @Override public RelNode visit(LogicalIntersect intersect) {
-        if (intersect.getHints().size() > 0) {
-          this.hintsCollect.add("Intersect:" + intersect.getHints());
-        }
-        return super.visit(intersect);
-      }
-
-      @Override public RelNode visit(LogicalMinus minus) {
-        if (minus.getHints().size() > 0) {
-          this.hintsCollect.add("Minus:" + minus.getHints());
-        }
-        return super.visit(minus);
-      }
-
-      @Override public RelNode visit(LogicalSort sort) {
-        if (sort.getHints().size() > 0) {
-          this.hintsCollect.add("Sort:" + sort.getHints());
-        }
-        return super.visit(sort);
-      }
-
-      @Override public RelNode visit(LogicalValues values) {
-        if (values.getHints().size() > 0) {
-          this.hintsCollect.add("Values:" + values.getHints());
-        }
-        return super.visit(values);
-      }
-
-      @Override public RelNode visit(RelNode other) {
-        if (other instanceof Window) {
-          Window window = (Window) other;
-          if (window.getHints().size() > 0) {
-            this.hintsCollect.add("Window:" + window.getHints());
-          }
-        }
-        return super.visit(other);
       }
     }
   }
@@ -958,8 +815,7 @@ class SqlHintsConverterTest {
         .hintStrategy("properties", HintPredicates.TABLE_SCAN)
         .hintStrategy(
             "resource", HintPredicates.or(
-            HintPredicates.PROJECT, HintPredicates.AGGREGATE,
-                HintPredicates.CALC, HintPredicates.VALUES, HintPredicates.FILTER))
+            HintPredicates.PROJECT, HintPredicates.AGGREGATE, HintPredicates.CALC))
         .hintStrategy("AGG_STRATEGY",
             HintStrategy.builder(HintPredicates.AGGREGATE)
                 .optionChecker(
@@ -974,10 +830,6 @@ class SqlHintsConverterTest {
           HintPredicates.or(
               HintPredicates.and(HintPredicates.CORRELATE, temporalJoinWithFixedTableName()),
               HintPredicates.and(HintPredicates.JOIN, joinWithFixedTableName())))
-        .hintStrategy("breakable", HintPredicates.SETOP)
-        .hintStrategy("async_merge", HintPredicates.SORT)
-        .hintStrategy("mini_batch",
-                HintPredicates.and(HintPredicates.WINDOW, HintPredicates.PROJECT))
         .hintStrategy("use_merge_join",
             HintStrategy.builder(
                 HintPredicates.and(HintPredicates.JOIN, joinWithFixedTableName()))

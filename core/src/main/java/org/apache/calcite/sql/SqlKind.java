@@ -106,6 +106,11 @@ public enum SqlKind {
   TABLE_REF,
 
   /**
+   * Lateral Table reference with hint.
+   */
+  LATERAL_TABLE_REF,
+
+  /**
    * JOIN operator or compound FROM clause.
    *
    * <p>A FROM clause with more than one table is represented as if it were a
@@ -156,9 +161,6 @@ public enum SqlKind {
 
   /** A dynamic parameter. */
   DYNAMIC_PARAM,
-
-  /** The DISTINCT keyword of the GROUP BY clause. */
-  GROUP_BY_DISTINCT,
 
   /**
    * ORDER BY clause.
@@ -676,9 +678,6 @@ public enum SqlKind {
 
   /** {@code JSON_OBJECTAGG} aggregate function. */
   JSON_OBJECTAGG,
-
-  /** {@code JSON} type function. */
-  JSON_TYPE,
 
   /** {@code UNNEST} operator. */
   UNNEST,
