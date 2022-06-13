@@ -1479,8 +1479,9 @@ PI
 
 # CBRT
 select cbrt(-8);
-SELECT "CBRT"(-8)
-!explain-validated-on calcite
+EXPR$0
+-2.0
+!ok
 
 # CEILING (or CEIL)
 select ceiling(10.5);
@@ -1843,9 +1844,9 @@ SELECT "REGEXP_REPLACE"('DonecFri@semperpretiumneque.com', '@.*\\.(org|gov|com)$
 
 # REGEXP_SUBSTR ( source_string, pattern [, position [, occurrence
 # [, parameters ] ] ] )
-select regexp_substr('Suspendisse.tristique@nonnisiAenean.edu','@[^.]*');
-SELECT "REGEXP_SUBSTR"('Suspendisse.tristique@nonnisiAenean.edu', '@[^.]*')
-!explain-validated-on calcite
+#select regexp_substr('Suspendisse.tristique@nonnisiAenean.edu','@[^.]*');
+#SELECT REGEXP_SUBSTR('Suspendisse.tristique@nonnisiAenean.edu', '@[^.]*')
+#!explain-validated-on calcite
 
 # REPEAT
 select repeat('ba', 3);
@@ -2038,10 +2039,10 @@ SELECT "TO_DATE"('02 Oct 2001', 'DD Mon YYYY')
 !explain-validated-on calcite
 
 # TO_NUMBER
-#-- returns -12454.8
-#select to_number('12,454.8-', '99G999D9S');
-#SELECT "TO_NUMBER"('12,454.8-', '99G999D9S')
-#!explain-validated-on calcite
+-- returns -12454.8
+select to_number('12,454.8-', '99G999D9S');
+SELECT "TO_NUMBER"('12,454.8-', '99G999D9S')
+!explain-validated-on calcite
 
 # 12 System Administration Functions
 

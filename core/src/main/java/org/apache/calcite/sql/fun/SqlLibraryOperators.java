@@ -27,17 +27,16 @@ import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlOperandCountRanges;
 import org.apache.calcite.sql.type.SqlReturnTypeInference;
-import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeTransforms;
 
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.apache.calcite.sql.fun.SqlLibrary.BIGQUERY;
 import static org.apache.calcite.sql.fun.SqlLibrary.MYSQL;
 import static org.apache.calcite.sql.fun.SqlLibrary.ORACLE;
 import static org.apache.calcite.sql.fun.SqlLibrary.POSTGRESQL;
-import static org.apache.calcite.sql.fun.SqlLibrary.TERADATA;
 
 /**
  * Defines functions and operators that are not part of standard SQL but
@@ -116,7 +115,7 @@ public abstract class SqlLibraryOperators {
    *
    * <p>It has similar semantics to standard SQL's
    * {@link SqlStdOperatorTable#SUBSTRING} function but different syntax. */
-  @LibraryOperator(libraries = {ORACLE})
+  @LibraryOperator(libraries = {ORACLE, BIGQUERY})
   public static final SqlFunction SUBSTR =
       new SqlFunction("SUBSTR", SqlKind.OTHER_FUNCTION,
           ReturnTypes.ARG0_NULLABLE_VARYING, null, null,
@@ -173,6 +172,53 @@ public abstract class SqlLibraryOperators {
 
   @LibraryOperator(libraries = {MYSQL, ORACLE})
   public static final SqlFunction REGEXP_REPLACE = new SqlRegexpReplaceFunction();
+
+  /**
+   * The REGEXP_EXTRACT(source_string, regex_pattern) returns the first substring in source_string
+   * that matches the regex_pattern. Returns NULL if there is no match.
+   *
+   * The REGEXP_EXTRACT_ALL(source_string, regex_pattern) returns an array of all substrings of
+   * source_string that match the regex_pattern. Returns NULL if there is no match.
+   */
+  @LibraryOperator(libraries = {BIGQUERY})
+  public static final SqlFunction REGEXP_EXTRACT = new SqlFunction("REGEXP_EXTRACT",
+      SqlKind.OTHER_FUNCTION,
+      ReturnTypes.cascade(ReturnTypes.explicit(SqlTypeName.VARCHAR),
+          SqlTypeTransforms.TO_NULLABLE),
+      null, OperandTypes.STRING_STRING,
+      SqlFunctionCategory.STRING);
+
+  @LibraryOperator(libraries = {BIGQUERY})
+  public static final SqlFunction REGEXP_EXTRACT_ALL = new SqlFunction("REGEXP_EXTRACT_ALL",
+      SqlKind.OTHER_FUNCTION,
+      ReturnTypes.cascade(ReturnTypes.explicit(SqlTypeName.VARCHAR),
+          SqlTypeTransforms.TO_NULLABLE),
+      null, OperandTypes.STRING_STRING,
+      SqlFunctionCategory.STRING);
+
+  @LibraryOperator(libraries = {MYSQL})
+  public static final SqlFunction EXTRACT_VALUE = new SqlFunction(
+      "EXTRACTVALUE", SqlKind.OTHER_FUNCTION,
+      ReturnTypes.cascade(ReturnTypes.VARCHAR_2000, SqlTypeTransforms.FORCE_NULLABLE),
+      null, OperandTypes.STRING_STRING, SqlFunctionCategory.SYSTEM);
+
+  @LibraryOperator(libraries = {ORACLE})
+  public static final SqlFunction XML_TRANSFORM = new SqlFunction(
+      "XMLTRANSFORM", SqlKind.OTHER_FUNCTION,
+      ReturnTypes.cascade(ReturnTypes.VARCHAR_2000, SqlTypeTransforms.FORCE_NULLABLE),
+      null, OperandTypes.STRING_STRING, SqlFunctionCategory.SYSTEM);
+
+  @LibraryOperator(libraries = {ORACLE})
+  public static final SqlFunction EXTRACT_XML = new SqlFunction(
+      "EXTRACT", SqlKind.OTHER_FUNCTION,
+      ReturnTypes.cascade(ReturnTypes.VARCHAR_2000, SqlTypeTransforms.FORCE_NULLABLE),
+      null, OperandTypes.STRING_STRING_OPTIONAL_STRING, SqlFunctionCategory.SYSTEM);
+
+  @LibraryOperator(libraries = {ORACLE})
+  public static final SqlFunction EXISTS_NODE = new SqlFunction(
+      "EXISTSNODE", SqlKind.OTHER_FUNCTION,
+      ReturnTypes.cascade(ReturnTypes.INTEGER_NULLABLE, SqlTypeTransforms.FORCE_NULLABLE),
+      null, OperandTypes.STRING_STRING_OPTIONAL_STRING, SqlFunctionCategory.SYSTEM);
 
   /** The "MONTHNAME(datetime)" function; returns the name of the month,
    * in the current locale, of a TIMESTAMP or DATE argument. */
@@ -344,21 +390,4 @@ public abstract class SqlLibraryOperators {
   public static final SqlOperator INFIX_CAST =
       new SqlCastOperator();
 
-  /** The "TO_NUMBER(string1, string2)" function; casts string1
-   * as hexadecimal to a NUMBER using the format specified in string2. */
-  @LibraryOperator(libraries = {TERADATA})
-  public static final SqlFunction TO_NUMBER =
-      new SqlFunction(
-      "TO_NUMBER",
-      SqlKind.TO_NUMBER,
-      ReturnTypes.BIGINT_FORCE_NULLABLE,
-      null, OperandTypes.or(OperandTypes.STRING, OperandTypes.STRING_STRING,
-      OperandTypes.family(SqlTypeFamily.STRING, SqlTypeFamily.NULL),
-      OperandTypes.family(SqlTypeFamily.NULL, SqlTypeFamily.STRING),
-      OperandTypes.STRING_STRING_STRING,
-      OperandTypes.family(SqlTypeFamily.NULL)),
-      SqlFunctionCategory.STRING);
-
 }
-
-// End SqlLibraryOperators.java

@@ -17,25 +17,32 @@
 package org.apache.calcite.sql.dialect;
 
 import org.apache.calcite.avatica.util.Casing;
+import org.apache.calcite.avatica.util.TimeUnit;
 import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexUtil;
+import org.apache.calcite.sql.SqlBasicCall;
 import org.apache.calcite.sql.SqlAlienSystemTypeNameSpec;
 import org.apache.calcite.sql.SqlCall;
+import org.apache.calcite.sql.SqlCharStringLiteral;
 import org.apache.calcite.sql.SqlDataTypeSpec;
 import org.apache.calcite.sql.SqlDialect;
+import org.apache.calcite.sql.SqlIntervalLiteral;
+import org.apache.calcite.sql.SqlIntervalQualifier;
 import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlSetOperator;
 import org.apache.calcite.sql.SqlSyntax;
 import org.apache.calcite.sql.SqlWriter;
+import org.apache.calcite.sql.fun.SqlTrimFunction;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.BasicSqlType;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeUtil;
-import org.apache.calcite.util.ToNumberUtils;
 
 import com.google.common.collect.ImmutableList;
 
@@ -43,6 +50,10 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
+
+import static org.apache.calcite.sql.fun.SqlLibraryOperators.REGEXP_EXTRACT;
+import static org.apache.calcite.sql.fun.SqlLibraryOperators.REGEXP_EXTRACT_ALL;
+import static org.apache.calcite.sql.fun.SqlLibraryOperators.SUBSTR;
 
 /**
  * A <code>SqlDialect</code> implementation for Google BigQuery's "Standard SQL"
@@ -109,6 +120,10 @@ public class BigQuerySqlDialect extends SqlDialect {
             && !SqlTypeUtil.isNumeric(call.type);
   }
 
+  @Override public boolean supportsNestedAggregations() {
+    return false;
+  }
+
   @Override public void unparseOffsetFetch(SqlWriter writer, SqlNode offset,
       SqlNode fetch) {
     unparseFetchUsingLimit(writer, offset, fetch);
@@ -150,16 +165,98 @@ public class BigQuerySqlDialect extends SqlDialect {
       SqlSyntax.BINARY.unparse(writer, INTERSECT_DISTINCT, call, leftPrec,
           rightPrec);
       break;
-    case TO_NUMBER:
-      ToNumberUtils.unparseToNumber(writer, call, leftPrec, rightPrec);
+    case TRIM:
+      unparseTrim(writer, call, leftPrec, rightPrec);
+      break;
+    case REGEXP_SUBSTR:
+      unparseRegexSubstr(writer, call, leftPrec, rightPrec);
       break;
     default:
       super.unparseCall(writer, call, leftPrec, rightPrec);
     }
   }
 
-  @Override public List<String> getSingleRowTableName() {
-    return ImmutableList.of("");
+  /** BigQuery interval syntax: INTERVAL int64 time_unit. */
+  @Override public void unparseSqlIntervalLiteral(
+          SqlWriter writer, SqlIntervalLiteral literal, int leftPrec, int rightPrec) {
+    SqlIntervalLiteral.IntervalValue interval =
+            (SqlIntervalLiteral.IntervalValue) literal.getValue();
+    writer.keyword("INTERVAL");
+    if (interval.getSign() == -1) {
+      writer.print("-");
+    }
+    Long intervalValueInLong;
+    try {
+      intervalValueInLong = Long.parseLong(literal.getValue().toString());
+    } catch (NumberFormatException e) {
+      throw new RuntimeException("Only INT64 is supported as the interval value for BigQuery.");
+    }
+    writer.literal(intervalValueInLong.toString());
+    unparseSqlIntervalQualifier(writer, interval.getIntervalQualifier(),
+            RelDataTypeSystem.DEFAULT);
+  }
+
+  @Override public void unparseSqlIntervalQualifier(
+          SqlWriter writer, SqlIntervalQualifier qualifier, RelDataTypeSystem typeSystem) {
+    final String start = validate(qualifier.timeUnitRange.startUnit).name();
+    if (qualifier.timeUnitRange.endUnit == null) {
+      writer.keyword(start);
+    } else {
+      throw new RuntimeException("Range time unit is not supported for BigQuery.");
+    }
+  }
+
+  /**
+   * For usage of TRIM, LTRIM and RTRIM in BQ see
+   * <a href="https://cloud.google.com/bigquery/docs/reference/standard-sql/functions-and-operators#trim">
+   *  BQ Trim Function</a>.
+   */
+  private void unparseTrim(SqlWriter writer, SqlCall call, int leftPrec,
+      int rightPrec) {
+    final String operatorName;
+    SqlLiteral trimFlag = call.operand(0);
+    SqlLiteral valueToTrim = call.operand(1);
+    switch (trimFlag.getValueAs(SqlTrimFunction.Flag.class)) {
+    case LEADING:
+      operatorName = "LTRIM";
+      break;
+    case TRAILING:
+      operatorName = "RTRIM";
+      break;
+    default:
+      operatorName = call.getOperator().getName();
+      break;
+    }
+    final SqlWriter.Frame trimFrame = writer.startFunCall(operatorName);
+    call.operand(2).unparse(writer, leftPrec, rightPrec);
+
+    // If the trimmed character is a non-space character, add it to the target SQL.
+    // eg: TRIM(BOTH 'A' from 'ABCD'
+    // Output Query: TRIM('ABC', 'A')
+    if (!valueToTrim.toValue().matches("\\s+")) {
+      writer.literal(",");
+      call.operand(1).unparse(writer, leftPrec, rightPrec);
+    }
+    writer.endFunCall(trimFrame);
+  }
+
+  private TimeUnit validate(TimeUnit timeUnit) {
+    switch (timeUnit) {
+    case MICROSECOND:
+    case MILLISECOND:
+    case SECOND:
+    case MINUTE:
+    case HOUR:
+    case DAY:
+    case WEEK:
+    case MONTH:
+    case QUARTER:
+    case YEAR:
+    case ISOYEAR:
+      return timeUnit;
+    default:
+      throw new RuntimeException("Time unit " + timeUnit + " is not supported for BigQuery.");
+    }
   }
 
   /** BigQuery data type reference:
@@ -219,6 +316,49 @@ public class BigQuerySqlDialect extends SqlDialect {
   private static final SqlSetOperator INTERSECT_DISTINCT =
       new SqlSetOperator("INTERSECT DISTINCT", SqlKind.INTERSECT, 18, false);
 
-}
+  private void unparseRegexSubstr(SqlWriter writer, SqlCall call, int leftPrec, int rightPrec) {
+    SqlCall extractCall;
+    switch (call.operandCount()) {
+    case 3:
+      extractCall = makeExtractSqlCall(call);
+      REGEXP_EXTRACT.unparse(writer, extractCall, leftPrec, rightPrec);
+      break;
+    case 4:
+    case 5:
+      extractCall = makeExtractSqlCall(call);
+      REGEXP_EXTRACT_ALL.unparse(writer, extractCall, leftPrec, rightPrec);
+      writeOffset(writer, call);
+      break;
+    default:
+      REGEXP_EXTRACT.unparse(writer, call, leftPrec, rightPrec);
+    }
+  }
 
-// End BigQuerySqlDialect.java
+  private void writeOffset(SqlWriter writer, SqlCall call) {
+    int occurrenceNumber = Integer.parseInt(call.operand(3).toString()) - 1;
+    writer.literal("[OFFSET(" + occurrenceNumber + ")]");
+  }
+
+  private SqlCall makeExtractSqlCall(SqlCall call) {
+    SqlCall substringCall = makeSubstringSqlCall(call);
+    call.setOperand(0, substringCall);
+    if (call.operandCount() == 5 && call.operand(4).toString().equals("'i'")) {
+      SqlCharStringLiteral regexNode = makeRegexNode(call);
+      call.setOperand(1, regexNode);
+    }
+    SqlNode[] extractNodeOperands = new SqlNode[]{call.operand(0), call.operand(1)};
+    return new SqlBasicCall(REGEXP_EXTRACT, extractNodeOperands, SqlParserPos.ZERO);
+  }
+
+  private SqlCharStringLiteral makeRegexNode(SqlCall call) {
+    String regexStr = call.operand(1).toString();
+    String regexLiteral = "(?i)".concat(regexStr.substring(1, regexStr.length() - 1));
+    return SqlLiteral.createCharString(regexLiteral,
+        call.operand(1).getParserPosition());
+  }
+
+  private SqlCall makeSubstringSqlCall(SqlCall call) {
+    SqlNode[] sqlNodes = new SqlNode[]{call.operand(0), call.operand(2)};
+    return new SqlBasicCall(SUBSTR, sqlNodes, SqlParserPos.ZERO);
+  }
+}

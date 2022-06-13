@@ -51,8 +51,9 @@ public enum SqlLibrary {
   /** A collection of operators that are in PostgreSQL but not in standard
    * SQL. */
   POSTGRESQL("p"),
-  /** A collection of operators that are in Teradata but not in standard SQL. */
-  TERADATA("t");
+  /** A collection of operators that are in BigQuery but not in standard
+   * SQL. */
+  BIGQUERY("b");
 
   /** Abbreviation for the library used in SQL reference. */
   public final String abbrev;
@@ -94,5 +95,3 @@ public enum SqlLibrary {
     MAP = builder.build();
   }
 }
-
-// End SqlLibrary.java
