@@ -50,25 +50,23 @@ class JdbcAdapterTest {
    * same time. */
   private static final ReentrantLock LOCK = new ReentrantLock();
 
-  /** VALUES is pushed down. */
+  /** VALUES is not pushed down, currently. */
   @Test void testValuesPlan() {
     final String sql = "select * from \"days\", (values 1, 2) as t(c)";
-    final String explain = "PLAN=JdbcToEnumerableConverter\n"
-        + "  JdbcJoin(condition=[true], joinType=[inner])\n"
+    final String explain = "PLAN="
+        + "EnumerableNestedLoopJoin(condition=[true], joinType=[inner])\n"
+        + "  JdbcToEnumerableConverter\n"
         + "    JdbcTableScan(table=[[foodmart, days]])\n"
-        + "    JdbcValues(tuples=[[{ 1 }, { 2 }]])";
+        + "  EnumerableValues(tuples=[[{ 1 }, { 2 }]])";
     final String jdbcSql = "SELECT *\n"
-        + "FROM \"foodmart\".\"days\",\n"
-        + "(VALUES (1),\n"
-        + "(2)) AS \"t\" (\"C\")";
+        + "FROM \"foodmart\".\"days\"";
     CalciteAssert.model(FoodmartSchema.FOODMART_MODEL)
         .query(sql)
         .explainContains(explain)
         .runs()
         .enable(CalciteAssert.DB == CalciteAssert.DatabaseInstance.HSQLDB
             || CalciteAssert.DB == DatabaseInstance.POSTGRESQL)
-        .planHasSql(jdbcSql)
-        .returnsCount(14);
+        .planHasSql(jdbcSql);
   }
 
   @Test void testUnionPlan() {
@@ -362,14 +360,17 @@ class JdbcAdapterTest {
             + "FROM \"SCOTT\".\"DEPT\") AS \"t0\" ON \"t\".\"DEPTNO\" = \"t0\".\"DEPTNO\"");
   }
 
+  // JdbcJoin not used for this
   @Test void testCartesianJoinWithoutKeyPlan() {
     CalciteAssert.model(JdbcTest.SCOTT_MODEL)
         .query("select empno, ename, d.deptno, dname\n"
             + "from scott.emp e,scott.dept d")
-        .explainContains("PLAN=JdbcToEnumerableConverter\n"
-            + "  JdbcJoin(condition=[true], joinType=[inner])\n"
+        .explainContains("PLAN=EnumerableNestedLoopJoin(condition=[true], "
+            + "joinType=[inner])\n"
+            + "  JdbcToEnumerableConverter\n"
             + "    JdbcProject(EMPNO=[$0], ENAME=[$1])\n"
             + "      JdbcTableScan(table=[[SCOTT, EMP]])\n"
+            + "  JdbcToEnumerableConverter\n"
             + "    JdbcProject(DEPTNO=[$0], DNAME=[$1])\n"
             + "      JdbcTableScan(table=[[SCOTT, DEPT]])")
         .runs()
@@ -399,26 +400,6 @@ class JdbcAdapterTest {
             + "WHERE CAST(\"DEPTNO\" AS INTEGER) = 20) AS \"t0\"\n"
             + "INNER JOIN (SELECT \"DEPTNO\", \"DNAME\"\n"
             + "FROM \"SCOTT\".\"DEPT\") AS \"t1\" ON \"t0\".\"DEPTNO\" = \"t1\".\"DEPTNO\"");
-  }
-
-  @Test void testJoinConditionAlwaysTruePushDown() {
-    CalciteAssert.model(JdbcTest.SCOTT_MODEL)
-        .query("select empno, ename, d.deptno, dname\n"
-                + "from scott.emp e,scott.dept d\n"
-                + "where true")
-        .explainContains("PLAN=JdbcToEnumerableConverter\n"
-                + "  JdbcJoin(condition=[true], joinType=[inner])\n"
-                + "    JdbcProject(EMPNO=[$0], ENAME=[$1])\n"
-                + "      JdbcTableScan(table=[[SCOTT, EMP]])\n"
-                + "    JdbcProject(DEPTNO=[$0], DNAME=[$1])\n"
-                + "      JdbcTableScan(table=[[SCOTT, DEPT]])")
-        .runs()
-        .enable(CalciteAssert.DB == CalciteAssert.DatabaseInstance.HSQLDB)
-        .planHasSql("SELECT *\n"
-                + "FROM (SELECT \"EMPNO\", \"ENAME\"\n"
-                + "FROM \"SCOTT\".\"EMP\") AS \"t\",\n"
-                + "(SELECT \"DEPTNO\", \"DNAME\"\n"
-                + "FROM \"SCOTT\".\"DEPT\") AS \"t0\"");
   }
 
   /** Test case for
@@ -465,7 +446,7 @@ class JdbcAdapterTest {
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-1382">[CALCITE-1382]
    * ClassCastException in JDBC adapter</a>. */
-  @Test void testJoinPlan3() {
+  @Test public void testJoinPlan3() {
     final String sql = "SELECT count(*) AS c FROM (\n"
         + "  SELECT count(emp.empno) `Count Emp`,\n"
         + "      dept.dname `Department Name`\n"
@@ -475,18 +456,19 @@ class JdbcAdapterTest {
         + "  WHERE dept.dname LIKE '%A%'\n"
         + "  GROUP BY emp.deptno, dept.dname)";
     final String expected = "c=1\n";
-    final String expectedSql = "SELECT COUNT(*) AS \"c\"\n"
-        + "FROM (SELECT \"t0\".\"DEPTNO\", \"t2\".\"DNAME\"\n"
-        + "FROM (SELECT \"HISAL\"\n"
-        + "FROM \"SCOTT\".\"SALGRADE\") AS \"t\"\n"
-        + "INNER JOIN ((SELECT \"COMM\", \"DEPTNO\"\n"
-        + "FROM \"SCOTT\".\"EMP\") AS \"t0\" "
+    final String expectedSql = ""
+        + "SELECT COUNT(*) AS \"c\"\n"
+        + "FROM (SELECT \"t\".\"DEPTNO\", \"t1\".\"DNAME\"\n"
+        + "FROM (SELECT \"COMM\", \"DEPTNO\"\n"
+        + "FROM \"SCOTT\".\"EMP\") AS \"t\"\n"
         + "INNER JOIN (SELECT \"DEPTNO\", \"DNAME\"\n"
         + "FROM \"SCOTT\".\"DEPT\"\n"
-        + "WHERE \"DNAME\" LIKE '%A%') AS \"t2\" "
-        + "ON \"t0\".\"DEPTNO\" = \"t2\".\"DEPTNO\") "
-        + "ON \"t\".\"HISAL\" = \"t0\".\"COMM\"\n"
-        + "GROUP BY \"t0\".\"DEPTNO\", \"t2\".\"DNAME\") AS \"t3\"";
+        + "WHERE \"DNAME\" LIKE '%A%') AS \"t1\" ON \"t\".\"DEPTNO\" = \"t1\""
+        + ".\"DEPTNO\"\n"
+        + "INNER JOIN (SELECT \"HISAL\"\n"
+        + "FROM \"SCOTT\".\"SALGRADE\") AS \"t2\" ON \"t\".\"COMM\" = "
+        + "\"t2\".\"HISAL\"\n"
+        + "GROUP BY \"t\".\"DEPTNO\", \"t1\".\"DNAME\") AS \"t3\"";
     CalciteAssert.model(JdbcTest.SCOTT_MODEL)
         .with(Lex.MYSQL)
         .query(sql)
@@ -563,13 +545,8 @@ class JdbcAdapterTest {
   }
 
   @Test void testTablesNoCatalogSchema() {
-    // Switch from "FOODMART" user, whose default schema is 'foodmart',
-    // to "sa", whose default schema is the root, and therefore cannot
-    // see the table unless directed to look in a particular schema.
     final String model =
         FoodmartSchema.FOODMART_MODEL
-            .replace("jdbcUser: 'FOODMART'", "jdbcUser: 'sa'")
-            .replace("jdbcPassword: 'FOODMART'", "jdbcPassword: ''")
             .replace("jdbcCatalog: 'foodmart'", "jdbcCatalog: null")
             .replace("jdbcSchema: 'foodmart'", "jdbcSchema: null");
     // Since Calcite uses PostgreSQL JDBC driver version >= 4.1,
