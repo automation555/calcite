@@ -38,7 +38,6 @@ import org.apache.calcite.util.Litmus;
 
 import com.google.common.collect.ImmutableList;
 
-import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -137,13 +136,13 @@ public class MutableRelTest {
         + "  where emp.deptno = dept.deptno\n"
         + "  and emp.sal > 100)";
     checkConvertMutableRel(
-        "Join", // with join type as semi
+        "SemiJoin",
         sql,
         true,
         ImmutableList.of(
-            FilterProjectTransposeRule.LOGICAL_INSTANCE,
+            FilterProjectTransposeRule.INSTANCE,
             FilterJoinRule.FILTER_ON_JOIN,
-            ProjectMergeRule.LOGICAL_INSTANCE,
+            ProjectMergeRule.INSTANCE,
             SemiJoinRule.PROJECT));
   }
 
@@ -152,7 +151,10 @@ public class MutableRelTest {
         + "  select * from emp\n"
         + "  where emp.deptno = dept.deptno\n"
         + "  and emp.sal > 100)";
-    checkConvertMutableRel("Correlate", sql);
+    checkConvertMutableRel("Correlate", sql,
+        false,
+        ImmutableList.of(
+        ProjectMergeRule.INSTANCE));
   }
 
   @Test public void testConvertUnion() {
@@ -174,46 +176,6 @@ public class MutableRelTest {
         "Intersect",
         "select * from emp where deptno = 10"
         + "intersect select * from emp where ename like 'John%'");
-  }
-
-  @Test public void testUpdateInputOfUnion() {
-    MutableRel mutableRel = createMutableRel(
-        "select sal from emp where deptno = 10"
-            + "union select sal from emp where ename like 'John%'");
-    MutableRel childMutableRel = createMutableRel(
-        "select sal from emp where deptno = 12");
-    mutableRel.setInput(0, childMutableRel);
-    String actual = RelOptUtil.toString(MutableRels.fromMutable(mutableRel));
-    String expected = ""
-        + "LogicalUnion(all=[false])\n"
-        + "  LogicalProject(SAL=[$5])\n"
-        + "    LogicalFilter(condition=[=($7, 12)])\n"
-        + "      LogicalTableScan(table=[[CATALOG, SALES, EMP]])\n"
-        + "  LogicalProject(SAL=[$5])\n"
-        + "    LogicalFilter(condition=[LIKE($1, 'John%')])\n"
-        + "      LogicalTableScan(table=[[CATALOG, SALES, EMP]])\n";
-    MatcherAssert.assertThat(actual, Matchers.isLinux(expected));
-  }
-
-  @Test public void testParentInfoOfUnion() {
-    MutableRel mutableRel = createMutableRel(
-        "select sal from emp where deptno = 10"
-            + "union select sal from emp where ename like 'John%'");
-    for (MutableRel input: mutableRel.getInputs()) {
-      Assert.assertTrue(input.getParent() == mutableRel);
-    }
-  }
-
-  @Test public void testMutableTableFunctionScanEquals() {
-    final String sql = "SELECT * FROM TABLE(RAMP(3))";
-    final MutableRel mutableRel1 = createMutableRel(sql);
-    final MutableRel mutableRel2 = createMutableRel(sql);
-    final String actual = RelOptUtil.toString(MutableRels.fromMutable(mutableRel1));
-    final String expected = ""
-        + "LogicalProject(I=[$0])\n"
-        + "  LogicalTableFunctionScan(invocation=[RAMP(3)], rowType=[RecordType(INTEGER I)])\n";
-    MatcherAssert.assertThat(actual, Matchers.isLinux(expected));
-    Assert.assertEquals(mutableRel1, mutableRel2);
   }
 
   /** Verifies that after conversion to and from a MutableRel, the new
@@ -274,13 +236,6 @@ public class MutableRelTest {
         "The converted new rel is different from the original rel.\n"
         + "Original rel: " + origRelStr + ";\nNew rel: " + newRelStr;
     Assert.assertEquals(msg3, origRelStr, newRelStr);
-  }
-
-  private static MutableRel createMutableRel(String sql) {
-    final SqlToRelTestBase test = new SqlToRelTestBase() {
-    };
-    RelNode rel = test.createTester().convertSqlToRel(sql).rel;
-    return MutableRels.toMutable(rel);
   }
 }
 

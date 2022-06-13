@@ -30,7 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 /**
- * Example Table Function for lateral join checks.
+ * Example Table Function for lateral join checks
  */
 public class CodesFunction {
 
@@ -54,6 +54,7 @@ public class CodesFunction {
           return Linq4j.<String[]>emptyEnumerable().asQueryable();
         }
         return Linq4j.asEnumerable(new String[][]{
+            new String[]{"ORIGINAL", name},
             new String[]{"HASHCODE", "" + name.hashCode()},
             new String[]{"BASE64",
                 Base64.getEncoder().encodeToString(name.getBytes(StandardCharsets.UTF_8))}
@@ -62,3 +63,5 @@ public class CodesFunction {
     };
   }
 }
+
+// End CodesFunction.java

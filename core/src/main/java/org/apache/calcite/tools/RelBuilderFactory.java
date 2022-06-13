@@ -21,7 +21,7 @@ import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptSchema;
 import org.apache.calcite.rel.core.RelFactories;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
+import java.util.function.Function;
 
 /** A partially-created RelBuilder.
  *
@@ -37,5 +37,12 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  */
 public interface RelBuilderFactory {
   /** Creates a RelBuilder. */
-  RelBuilder create(RelOptCluster cluster, @Nullable RelOptSchema schema);
+  default RelBuilder create(RelOptCluster cluster, RelOptSchema schema) {
+    return create(cluster, schema, rb -> true);
+  }
+
+  RelBuilder create(RelOptCluster cluster, RelOptSchema schema,
+                    Function<RelBuilder, Boolean> mergeProjectStartegy);
 }
+
+// End RelBuilderFactory.java

@@ -26,8 +26,8 @@ import org.apache.calcite.schema.impl.AbstractSchema;
 import org.apache.calcite.schema.impl.TableFunctionImpl;
 import org.apache.calcite.sql.validate.SqlConformanceEnum;
 import org.apache.calcite.util.Smalls;
-import org.apache.calcite.util.TestUtil;
 
+import org.hsqldb.jdbcDriver;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -39,6 +39,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.equalTo;
@@ -76,10 +77,7 @@ public class TableFunctionTest {
         + "           name: 'fibonacci2',\n"
         + "           className: '" + c + "',\n"
         + "           methodName: '" + m3 + "'\n"
-        + "         }, {\n"
-        + "            className: '"
-        + Smalls.MyUdtfFunction.class.getName()
-        + "'}\n"
+        + "         }\n"
         + "       ]\n"
         + "     }\n"
         + "   ]\n"
@@ -130,7 +128,9 @@ public class TableFunctionTest {
     assertThat(CalciteAssert.toString(resultSet), is(result));
   }
 
-  /** As {@link #testScannableTableFunction()} but with named parameters. */
+  /**
+   * As {@link #testScannableTableFunction()} but with named parameters.
+   */
   @Test public void testScannableTableFunctionWithNamedParameters()
       throws SQLException, ClassNotFoundException {
     Connection connection = DriverManager.getConnection("jdbc:calcite:");
@@ -163,7 +163,9 @@ public class TableFunctionTest {
     connection.close();
   }
 
-  /** As {@link #testScannableTableFunction()} but with named parameters. */
+  /**
+   * As {@link #testScannableTableFunction()} but with named parameters.
+   */
   @Test public void testMultipleScannableTableFunctionWithNamedParameters()
       throws SQLException, ClassNotFoundException {
     try (Connection connection = DriverManager.getConnection("jdbc:calcite:");
@@ -393,7 +395,7 @@ public class TableFunctionTest {
             assertThat(numbers.toString(),
                 is("[1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233]"));
           } catch (SQLException e) {
-            throw TestUtil.rethrow(e);
+            throw new RuntimeException(e);
           }
         });
   }
@@ -418,7 +420,7 @@ public class TableFunctionTest {
     final String q2 = "select *\n"
         + "from (values 2, 5) as t (c)\n"
         + "cross apply table(\"s\".\"fibonacci2\"(t.c))";
-    for (String q : new String[] {q1, q2}) {
+    for (String q : new String[]{q1, q2}) {
       with()
           .with(CalciteConnectionProperty.CONFORMANCE,
               SqlConformanceEnum.LENIENT)
@@ -434,23 +436,11 @@ public class TableFunctionTest {
     }
   }
 
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-2004">[CALCITE-2004]
-   * Wrong plan generated for left outer apply with table function</a>. */
-  @Test public void testLeftOuterApply() {
-    final String sql = "select *\n"
-        + "from (values 4) as t (c)\n"
-        + "left join lateral table(\"s\".\"fibonacci2\"(c)) as R(n) on c=n";
-    with()
-        .with(CalciteConnectionProperty.CONFORMANCE,
-            SqlConformanceEnum.LENIENT)
-        .query(sql)
-        .returnsUnordered("C=4; N=null");
-  }
-
-  /** Test case for
+  /**
+   * Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-2382">[CALCITE-2382]
-   * Sub-query lateral joined to table function</a>. */
+   * Sub-query lateral joined to table function</a>.
+   */
   @Test public void testInlineViewLateralTableFunction() throws SQLException {
     try (Connection connection = DriverManager.getConnection("jdbc:calcite:")) {
       CalciteConnection calciteConnection =
@@ -476,22 +466,87 @@ public class TableFunctionTest {
     }
   }
 
-  @Test public void testOverloadTableFunction() throws SQLException {
-    final String sql1 = "select * from (select 1 as f0),"
-        + " lateral table(\"s\".my_udtf('a')) as t(n)";
-    with().query(sql1)
-        .returnsUnordered("F0=1; N=eval(String: a)");
 
-    final String sql2 = "select * from (select 1 as f0),"
-        + " lateral table(\"s\".my_udtf(cast(1 as bigint))) as t(n)";
-    with().query(sql2)
-        .returnsUnordered("F0=1; N=eval(long:1)");
-
-    final String sql3 = "select * from (select 1 as f0),"
-        + " lateral table(\"s\".my_udtf(cast(1 as int))) as t(n)";
-    with().query(sql3)
-        .returnsUnordered("F0=1; N=eval(int:1)");
+  /**
+   * Tests a join of table function and some other table
+   */
+  @Test public void testTableFunctionJoinWithOtherTable()
+      throws SQLException, ClassNotFoundException {
+    Connection connection = DriverManager.getConnection("jdbc:calcite:");
+    CalciteConnection calciteConnection =
+        connection.unwrap(CalciteConnection.class);
+    SchemaPlus rootSchema = calciteConnection.getRootSchema();
+    SchemaPlus schema = rootSchema.add("s", new AbstractSchema());
+    final TableFunction table = TableFunctionImpl.create(Smalls.MAZE_METHOD);
+    schema.add("Maze", table);
+    final String sql = "select *\n"
+        + "from table(\"s\".\"Maze\"(5, 3, 1)) mz \n"
+        + "join (values ('abcde'), ('xyz')) as tmptbl(somestr) on tmptbl.somestr = mz.s ";
+    ResultSet resultSet = connection.createStatement().executeQuery(sql);
+    final String result = "S=abcde; SOMESTR=abcde\n";
+    assertThat(CalciteAssert.toString(resultSet), is(result));
   }
+
+  /**
+   * Tests a join of table function and some jdbc table
+   */
+  @Test public void testTableFunctionJoinWithJdbcTable()
+      throws SQLException {
+    String hsqldbMemUrl = "jdbc:hsqldb:mem:.";
+    try (Connection baseConnection = DriverManager.getConnection(hsqldbMemUrl);
+         Statement baseStmt = baseConnection.createStatement()) {
+      baseStmt.execute("CREATE TABLE BASEJDBC (\n"
+          + "S VARCHAR(10),\n"
+          + "VALS DOUBLE)");
+      baseStmt.execute("INSERT INTO BASEJDBC VALUES ('abcde', 1.0)");
+      baseStmt.execute("INSERT INTO BASEJDBC VALUES ('xyz', null)");
+
+      baseStmt.close();
+      baseConnection.commit();
+
+      Properties info = new Properties();
+      final String model = "inline:"
+          + "{\n"
+          + "  version: '1.0',\n"
+          + "  defaultSchema: 'BASEJDBC',\n"
+          + "  schemas: [\n"
+          + "     {\n"
+          + "       type: 'jdbc',\n"
+          + "       name: 'BASEJDBC',\n"
+          + "       jdbcDriver: '" + jdbcDriver.class.getName() + "',\n"
+          + "       jdbcUrl: '" + hsqldbMemUrl + "',\n"
+          + "       jdbcCatalog: null,\n"
+          + "       jdbcSchema: null\n"
+          + "     },\n"
+          + "    {\n"
+          + "      type: 'custom',\n"
+          + "      name: 'C', \n"
+          + "      factory: 'org.apache.calcite.schema.impl.AbstractSchema$Factory',\n"
+          + "      tables: [\n"
+          + "        {\n"
+          + "          name: 'CTMTBL',\n"
+          + "          type: 'view',\n"
+          + "          sql: 'SELECT S, VALS from BASEJDBC.BASEJDBC'\n"
+          + "        }\n"
+          + "      ]\n"
+          + "    }\n"
+          + "  ]\n"
+          + "}";
+      info.put("model", model);
+
+      CalciteConnection calciteConnection =
+          DriverManager.getConnection("jdbc:calcite:", info).unwrap(CalciteConnection.class);
+      SchemaPlus rootSchema = calciteConnection.getRootSchema();
+      SchemaPlus schema = rootSchema.add("s", new AbstractSchema());
+      final TableFunction table = TableFunctionImpl.create(Smalls.MAZE_METHOD);
+      schema.add("Maze", table);
+      final String sql = "select *\n"
+          + "from table(\"s\".\"Maze\"(5, 3, 1)) mz \n"
+          + "join \"C\".\"CTMTBL\" tmptbl on tmptbl.s = mz.s ";
+      ResultSet resultSet = calciteConnection.createStatement().executeQuery(sql);
+    }
+  }
+
 }
 
 // End TableFunctionTest.java
