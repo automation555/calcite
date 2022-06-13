@@ -1770,6 +1770,7 @@ public class JdbcTest {
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-35">[CALCITE-35]
    * Support parenthesized sub-clause in JOIN</a>. */
+  @Disabled
   @Test void testJoinJoin() {
     CalciteAssert.that()
         .with(CalciteAssert.Config.FOODMART_CLONE)
@@ -1794,22 +1795,24 @@ public class JdbcTest {
             + " or \"promotion\".\"media_type\" = 'Sunday Paper'\n"
             + " or \"promotion\".\"media_type\" = 'Street Handout')\n"
             + " and (\"product_class\".\"product_family\" = 'Drink')\n"
-            + " and (\"customer\".\"country\" = 'USA'\n"
-            + "   and \"customer\".\"state_province\" = 'WA'\n"
-            + "   and \"customer\".\"city\" = 'Bellingham')\n"
+            + " and (\"customer\".\"country\" = 'USA' and \"customer\".\"state_province\""
+            + " = 'WA' and \"customer\".\"city\" = 'Bellingham')\n"
             + "group by \"product_class\".\"product_family\",\n"
             + "   \"product_class\".\"product_department\",\n"
             + "   \"customer\".\"country\",\n"
             + "   \"customer\".\"state_province\",\n"
             + "   \"customer\".\"city\"\n"
-            + "order by \"product_class\".\"product_family\" asc nulls first,\n"
-            + "   \"product_class\".\"product_department\" asc nulls first,\n"
-            + "   \"customer\".\"country\" asc nulls first,\n"
-            + "   \"customer\".\"state_province\" asc nulls first,\n"
-            + "   \"customer\".\"city\" asc nulls first")
-        .returnsUnordered(
-            "c0=Drink; c1=Alcoholic Beverages; c2=USA; c3=WA; c4=Bellingham",
-            "c0=Drink; c1=Dairy; c2=USA; c3=WA; c4=Bellingham");
+            + "order by ISNULL(\"product_class\".\"product_family\") ASC,   \"product_class\".\"product_family\" ASC,\n"
+            + "   ISNULL(\"product_class\".\"product_department\") ASC,   \"product_class\".\"product_department\" ASC,\n"
+            + "   ISNULL(\"customer\".\"country\") ASC,   \"customer\".\"country\" ASC,\n"
+            + "   ISNULL(\"customer\".\"state_province\") ASC,   \"customer\".\"state_province\" ASC,\n"
+            + "   ISNULL(\"customer\".\"city\") ASC,   \"customer\".\"city\" ASC")
+        .returns("+-------+---------------------+-----+------+------------+\n"
+            + "| c0    | c1                  | c2  | c3   | c4         |\n"
+            + "+-------+---------------------+-----+------+------------+\n"
+            + "| Drink | Alcoholic Beverages | USA | WA   | Bellingham |\n"
+            + "| Drink | Dairy               | USA | WA   | Bellingham |\n"
+            + "+-------+---------------------+-----+------+------------+");
   }
 
   /** Four-way join. Used to take 80 seconds. */
@@ -2112,7 +2115,7 @@ public class JdbcTest {
         .query("select multiset(\n"
             + "  select \"deptno\" from \"hr\".\"emps\") as a\n"
             + "from (values (1))")
-        .returnsUnordered("A=[{10}, {20}, {10}, {10}]");
+        .returnsUnordered("A=[10, 20, 10, 10]");
   }
 
   @Test void testUnnestArray() {
@@ -7746,13 +7749,14 @@ public class JdbcTest {
         + "  pattern (up s)\n"
         + "  define up as up.\"empid\" = 100)";
     final String convert = ""
-        + "LogicalMatch(partition=[[]], order=[[0 DESC]], "
+        + "LogicalProject(C=[$0], EMPID=[$1], TWO=[$2])\n"
+        + "  LogicalMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID, TWO]], allRows=[false], "
         + "after=[FLAG(SKIP TO NEXT ROW)], pattern=[('UP', 'S')], "
         + "isStrictStarts=[false], isStrictEnds=[false], subsets=[[]], "
         + "patternDefinitions=[[=(CAST(PREV(UP.$0, 0)):INTEGER NOT NULL, 100)]], "
         + "inputFields=[[empid, deptno, name, salary, commission]])\n"
-        + "  LogicalTableScan(table=[[hr, emps]])\n";
+        + "    LogicalTableScan(table=[[hr, emps]])\n";
     final String plan = "PLAN="
         + "EnumerableMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID, TWO]], allRows=[false], "
@@ -7778,13 +7782,14 @@ public class JdbcTest {
         + "  pattern (s up)\n"
         + "  define up as up.\"commission\" < prev(up.\"commission\"))";
     final String convert = ""
-        + "LogicalMatch(partition=[[]], order=[[0 DESC]], "
+        + "LogicalProject(C=[$0], EMPID=[$1])\n"
+        + "  LogicalMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID]], allRows=[false], "
         + "after=[FLAG(SKIP TO NEXT ROW)], pattern=[('S', 'UP')], "
         + "isStrictStarts=[false], isStrictEnds=[false], subsets=[[]], "
         + "patternDefinitions=[[<(PREV(UP.$4, 0), PREV(UP.$4, 1))]], "
         + "inputFields=[[empid, deptno, name, salary, commission]])\n"
-        + "  LogicalTableScan(table=[[hr, emps]])\n";
+        + "    LogicalTableScan(table=[[hr, emps]])\n";
     final String plan = "PLAN="
         + "EnumerableMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID]], allRows=[false], "

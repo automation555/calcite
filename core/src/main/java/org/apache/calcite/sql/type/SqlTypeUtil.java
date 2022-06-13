@@ -141,6 +141,17 @@ public abstract class SqlTypeUtil {
   }
 
   /**
+   * Derives component type for ARRAY, MULTISET when input is sub-query.
+   *
+   * @param origin original component type
+   * @return component type
+   */
+  public static RelDataType deriveCollectionQueryComponentType(RelDataType origin) {
+    return origin.isStruct() && origin.getFieldCount() == 1
+      ? origin.getFieldList().get(0).getType() : origin;
+  }
+
+  /**
    * Iterates over all operands, derives their types, and collects them into
    * a list.
    */

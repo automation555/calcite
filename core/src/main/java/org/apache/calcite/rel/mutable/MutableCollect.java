@@ -17,6 +17,7 @@
 package org.apache.calcite.rel.mutable;
 
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.sql.SqlKind;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -26,10 +27,13 @@ import java.util.Objects;
 public class MutableCollect extends MutableSingleRel {
   public final String fieldName;
 
+  public final SqlKind sqlKind;
+
   private MutableCollect(RelDataType rowType,
-      MutableRel input, String fieldName) {
+      MutableRel input, String fieldName, SqlKind sqlKind) {
     super(MutableRelType.COLLECT, rowType, input);
     this.fieldName = fieldName;
+    this.sqlKind = sqlKind;
   }
 
   /**
@@ -38,10 +42,11 @@ public class MutableCollect extends MutableSingleRel {
    * @param rowType   Row type
    * @param input     Input relational expression
    * @param fieldName Name of the sole output field
+   * @param sqlKind   SqlKind
    */
   public static MutableCollect of(RelDataType rowType,
-      MutableRel input, String fieldName) {
-    return new MutableCollect(rowType, input, fieldName);
+      MutableRel input, String fieldName, SqlKind sqlKind) {
+    return new MutableCollect(rowType, input, fieldName, sqlKind);
   }
 
   @Override public boolean equals(@Nullable Object obj) {
@@ -60,6 +65,6 @@ public class MutableCollect extends MutableSingleRel {
   }
 
   @Override public MutableRel clone() {
-    return MutableCollect.of(rowType, input.clone(), fieldName);
+    return MutableCollect.of(rowType, input.clone(), fieldName, sqlKind);
   }
 }

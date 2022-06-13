@@ -174,6 +174,11 @@ public abstract class SqlTypeTransforms {
       (opBinding, typeToTransform) ->
           opBinding.getTypeFactory().createMultisetType(typeToTransform, -1);
 
+  public static final SqlTypeTransform TO_MULTISET_QUERY =
+      (opBinding, typeToTransform) ->
+          TO_MULTISET.transformType(opBinding,
+              SqlTypeUtil.deriveCollectionQueryComponentType(typeToTransform));
+
   /**
    * Parameter type-inference transform strategy that wraps a given type
    * in a array.
@@ -183,6 +188,10 @@ public abstract class SqlTypeTransforms {
   public static final SqlTypeTransform TO_ARRAY =
       (opBinding, typeToTransform) ->
           opBinding.getTypeFactory().createArrayType(typeToTransform, -1);
+  public static final SqlTypeTransform TO_ARRAY_QUERY =
+      (opBinding, typeToTransform) ->
+        TO_ARRAY.transformType(opBinding,
+            SqlTypeUtil.deriveCollectionQueryComponentType(typeToTransform));
 
   /**
    * Parameter type-inference transform strategy that converts a two-field

@@ -25,12 +25,14 @@ import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.SingleRel;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
-import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.type.SqlTypeUtil;
 
 import com.google.common.collect.Iterables;
 
 import java.util.List;
+
+import static org.apache.calcite.sql.SqlKind.MULTISET_VALUE_CONSTRUCTOR;
 
 import static java.util.Objects.requireNonNull;
 
@@ -49,6 +51,7 @@ import static java.util.Objects.requireNonNull;
  */
 public class Collect extends SingleRel {
   //~ Instance fields --------------------------------------------------------
+  public final SqlKind sqlKind;
 
   //~ Constructors -----------------------------------------------------------
 
@@ -61,23 +64,28 @@ public class Collect extends SingleRel {
    * @param traitSet  Trait set
    * @param input     Input relational expression
    * @param rowType   Row type
+   * @param sqlKind   SqlKind
    */
   protected Collect(
       RelOptCluster cluster,
       RelTraitSet traitSet,
       RelNode input,
-      RelDataType rowType) {
+      RelDataType rowType,
+      SqlKind sqlKind) {
     super(cluster, traitSet, input);
+    this.sqlKind = sqlKind;
     this.rowType = requireNonNull(rowType, "rowType");
-    final SqlTypeName collectionType = getCollectionType(rowType);
-    switch (collectionType) {
-    case ARRAY:
-    case MAP:
-    case MULTISET:
+    switch (sqlKind) {
+    case ARRAY_QUERY_CONSTRUCTOR:
+    case ARRAY_VALUE_CONSTRUCTOR:
+    case MULTISET_QUERY_CONSTRUCTOR:
+    case MULTISET_VALUE_CONSTRUCTOR:
+    case MAP_QUERY_CONSTRUCTOR:
+    case MAP_VALUE_CONSTRUCTOR:
       break;
     default:
-      throw new IllegalArgumentException("not a collection type "
-          + collectionType);
+      throw new IllegalArgumentException("not a valid sql kind"
+          + sqlKind);
     }
   }
 
@@ -88,8 +96,8 @@ public class Collect extends SingleRel {
       RelNode input,
       String fieldName) {
     this(cluster, traitSet, input,
-        deriveRowType(cluster.getTypeFactory(), SqlTypeName.MULTISET, fieldName,
-            input.getRowType()));
+        deriveRowType(cluster.getTypeFactory(), MULTISET_VALUE_CONSTRUCTOR, fieldName,
+            input.getRowType()), MULTISET_VALUE_CONSTRUCTOR);
   }
 
   /**
@@ -97,9 +105,9 @@ public class Collect extends SingleRel {
    */
   public Collect(RelInput input) {
     this(input.getCluster(), input.getTraitSet(), input.getInput(),
-        deriveRowType(input.getCluster().getTypeFactory(), SqlTypeName.MULTISET,
+        deriveRowType(input.getCluster().getTypeFactory(), MULTISET_VALUE_CONSTRUCTOR,
             requireNonNull(input.getString("field"), "field"),
-            input.getInput().getRowType()));
+            input.getInput().getRowType()), MULTISET_VALUE_CONSTRUCTOR);
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -110,26 +118,26 @@ public class Collect extends SingleRel {
    * @param input          Input relational expression
    * @param rowType        Row type
    */
-  public static Collect create(RelNode input, RelDataType rowType) {
+  public static Collect create(RelNode input, RelDataType rowType, SqlKind kind) {
     final RelOptCluster cluster = input.getCluster();
     final RelTraitSet traitSet =
         cluster.traitSet().replace(Convention.NONE);
-    return new Collect(cluster, traitSet, input, rowType);
+    return new Collect(cluster, traitSet, input, rowType, kind);
   }
 
   /**
    * Creates a Collect.
    *
    * @param input          Input relational expression
-   * @param collectionType ARRAY, MAP or MULTISET
+   * @param sqlKind        SqlKind
    * @param fieldName      Name of the sole output field
    */
   public static Collect create(RelNode input,
-      SqlTypeName collectionType,
+      SqlKind sqlKind,
       String fieldName) {
     return create(input,
-        deriveRowType(input.getCluster().getTypeFactory(), collectionType,
-            fieldName, input.getRowType()));
+        deriveRowType(input.getCluster().getTypeFactory(), sqlKind,
+            fieldName, input.getRowType()), sqlKind);
   }
 
   /** Returns the row type, guaranteed not null.
@@ -146,7 +154,7 @@ public class Collect extends SingleRel {
 
   public RelNode copy(RelTraitSet traitSet, RelNode input) {
     assert traitSet.containsIfApplicable(Convention.NONE);
-    return new Collect(getCluster(), traitSet, input, rowType());
+    return new Collect(getCluster(), traitSet, input, rowType(), sqlKind);
   }
 
   @Override public RelWriter explainTerms(RelWriter pw) {
@@ -161,16 +169,6 @@ public class Collect extends SingleRel {
    */
   public String getFieldName() {
     return Iterables.getOnlyElement(rowType().getFieldList()).getName();
-  }
-
-  /** Returns the collection type (ARRAY, MAP, or MULTISET). */
-  public SqlTypeName getCollectionType() {
-    return getCollectionType(rowType());
-  }
-
-  private static SqlTypeName getCollectionType(RelDataType rowType) {
-    return Iterables.getOnlyElement(rowType.getFieldList())
-        .getType().getSqlTypeName();
   }
 
   @Override protected RelDataType deriveRowType() {
@@ -192,33 +190,42 @@ public class Collect extends SingleRel {
     RelDataType inputType = rel.getInput().getRowType();
     assert inputType.isStruct();
     return deriveRowType(rel.getCluster().getTypeFactory(),
-        SqlTypeName.MULTISET, fieldName, inputType);
+        SqlKind.MULTISET_VALUE_CONSTRUCTOR, fieldName, inputType);
   }
 
   /**
    * Derives the output row type of a Collect relational expression.
    *
    * @param typeFactory    Type factory
-   * @param collectionType MULTISET, ARRAY or MAP
+   * @param sqlKind        SqlKind
    * @param fieldName      Name of sole output field
    * @param elementType    Element type
    * @return output row type of a Collect relational expression
    */
   public static RelDataType deriveRowType(RelDataTypeFactory typeFactory,
-      SqlTypeName collectionType, String fieldName, RelDataType elementType) {
+      SqlKind sqlKind, String fieldName, RelDataType elementType) {
     final RelDataType type1;
-    switch (collectionType) {
-    case ARRAY:
+    switch (sqlKind) {
+    case ARRAY_QUERY_CONSTRUCTOR:
+      type1 = SqlTypeUtil.createArrayType(typeFactory,
+          SqlTypeUtil.deriveCollectionQueryComponentType(elementType), false);
+      break;
+    case ARRAY_VALUE_CONSTRUCTOR:
       type1 = SqlTypeUtil.createArrayType(typeFactory, elementType, false);
       break;
-    case MULTISET:
+    case MULTISET_QUERY_CONSTRUCTOR:
+      type1 = SqlTypeUtil.createMultisetType(typeFactory,
+          SqlTypeUtil.deriveCollectionQueryComponentType(elementType), false);
+      break;
+    case MULTISET_VALUE_CONSTRUCTOR:
       type1 = SqlTypeUtil.createMultisetType(typeFactory, elementType, false);
       break;
-    case MAP:
+    case MAP_QUERY_CONSTRUCTOR:
+    case MAP_VALUE_CONSTRUCTOR:
       type1 = SqlTypeUtil.createMapTypeFromRecord(typeFactory, elementType);
       break;
     default:
-      throw new AssertionError(collectionType);
+      throw new AssertionError(sqlKind);
     }
     return typeFactory.createTypeWithNullability(
         typeFactory.builder().add(fieldName, type1).build(), false);
