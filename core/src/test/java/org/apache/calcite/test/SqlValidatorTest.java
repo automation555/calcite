@@ -21,7 +21,6 @@ import org.apache.calcite.avatica.util.Quoting;
 import org.apache.calcite.avatica.util.TimeUnit;
 import org.apache.calcite.config.Lex;
 import org.apache.calcite.rel.type.RelDataType;
-import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.runtime.CalciteContextException;
 import org.apache.calcite.sql.SqlCollation;
@@ -32,7 +31,6 @@ import org.apache.calcite.sql.SqlSpecialOperator;
 import org.apache.calcite.sql.fun.SqlLibrary;
 import org.apache.calcite.sql.fun.SqlLibraryOperatorTableFactory;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
-import org.apache.calcite.sql.parser.SqlParseException;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql.type.ArraySqlType;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
@@ -52,9 +50,10 @@ import org.apache.calcite.util.ImmutableBitSet;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Ordering;
 
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.Test;
+import org.junit.Assume;
+import org.junit.BeforeClass;
+import org.junit.Ignore;
+import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -64,10 +63,8 @@ import java.lang.reflect.Method;
 import java.nio.charset.Charset;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
 
@@ -76,12 +73,11 @@ import static org.apache.calcite.sql.parser.SqlParser.configBuilder;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * Concrete child class of {@link SqlValidatorTestCase}, containing lots of unit
@@ -153,7 +149,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
 
   //~ Methods ----------------------------------------------------------------
 
-  @BeforeAll public static void setUSLocale() {
+  @BeforeClass public static void setUSLocale() {
     // This ensures numbers in exceptions are printed as in asserts.
     // For example, 1,000 vs 1 000
     Locale.setDefault(Locale.US);
@@ -569,12 +565,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + "WHEN 2 THEN INTERVAL '12 3:4:5.6' DAY TO SECOND(9)\n"
         + "END")
         .columnType("INTERVAL DAY TO SECOND(9)");
-
-    sql("select\n"
-        + "CASE WHEN job is not null THEN mgr\n"
-        + "ELSE 5 end as mgr\n"
-        + "from EMP")
-        .columnType("INTEGER");
   }
 
   @Test public void testCaseExpressionFails() {
@@ -625,9 +615,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     expr("coalesce('a','b')").ok();
     expr("coalesce('a','b','c')")
         .columnType("CHAR(1) NOT NULL");
-
-    sql("select COALESCE(mgr, 12) as m from EMP")
-        .columnType("INTEGER NOT NULL");
   }
 
   @Test public void testCoalesceFails() {
@@ -1486,8 +1473,8 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     wholeExpr("mod(123)")
         .fails("Invalid number of arguments to function 'MOD'. "
             + "Was expecting 2 arguments");
-    assumeTrue(false,
-        "test case for [CALCITE-3326], disabled til it is fixed");
+    Assume.assumeTrue("test case for [CALCITE-3326], disabled til it is fixed",
+        false);
     sql("select foo()")
         .withTypeCoercion(false)
         .fails("No match found for function signature FOO..");
@@ -5782,7 +5769,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .fails("ambig");
   }
 
-  @Disabled("bug: should fail if sub-query does not have alias")
+  @Ignore("bug: should fail if sub-query does not have alias")
   @Test public void testJoinSubQuery() {
     // Sub-queries require alias
     sql("select * from (select 1 as uno from emp)\n"
@@ -7111,6 +7098,18 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .fails("FILTER must not contain aggregate expression");
   }
 
+  @Test public void testAggregateFilterContainsGrouping() {
+    sql("select deptno, sum(sal) filter (where ^grouping(deptno) = 0^) "
+        + "from emp group by deptno")
+       .fails("FILTER must not contain aggregate expression");
+    sql("select deptno, sum(sal) filter (where ^grouping_id(deptno) = 0^) "
+        + "from emp group by deptno")
+        .fails("FILTER must not contain aggregate expression");
+    sql("select deptno, sum(sal) filter (where ^group_id() = 0^) "
+        + "from emp group by deptno")
+        .fails("FILTER must not contain aggregate expression");
+  }
+
   @Test public void testWithinGroup() {
     sql("select deptno,\n"
         + " collect(empno) within group(order by 1)\n"
@@ -7920,24 +7919,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .fails("Object 'NONEXISTENT' not found");
   }
 
-  @Test public void testRandFunction() {
-    sql("select ^rand(1.5)^")
-        .fails("Cannot apply 'RAND' to arguments of type "
-            + "'RAND\\(<DECIMAL\\(2, 1\\)>\\)'\\. "
-            + "Supported form\\(s\\): 'RAND\\(\\)'\n"
-            + "'RAND\\(<INTEGER>\\)'");
-    sql("select ^rand_integer(1.5)^")
-        .fails("Cannot apply 'RAND_INTEGER' to arguments of type "
-            + "'RAND_INTEGER\\(<DECIMAL\\(2, 1\\)>\\)'\\. "
-            + "Supported form\\(s\\): 'RAND_INTEGER\\(<INTEGER>\\)'\n"
-            + "'RAND_INTEGER\\(<INTEGER>, <INTEGER>\\)'");
-    sql("select ^rand_integer(1, 1.5)^")
-        .fails("Cannot apply 'RAND_INTEGER' to arguments of type "
-            + "'RAND_INTEGER\\(<INTEGER>, <DECIMAL\\(2, 1\\)>\\)'\\. "
-            + "Supported form\\(s\\): 'RAND_INTEGER\\(<INTEGER>\\)'\n"
-            + "'RAND_INTEGER\\(<INTEGER>, <INTEGER>\\)'");
-  }
-
   @Test public void testCollectionTable() {
     sql("select * from table(ramp(3))")
         .type("RecordType(INTEGER NOT NULL I) NOT NULL");
@@ -8057,7 +8038,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     sql("select * from emp where (select true from dept)").ok();
   }
 
-  @Disabled("not supported")
+  @Ignore("not supported")
   @Test public void testSubQueryInOnClause() {
     // Currently not supported. Should give validator error, but gives
     // internal error.
@@ -8336,7 +8317,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
             ? expected1 : expected2);
   }
 
-  @Disabled
+  @Ignore
   @Test public void testValuesWithAggFuncs() {
     sql("values(^count(1)^)")
         .fails("Call to xxx is invalid\\. Direct calls to aggregate "
@@ -10313,7 +10294,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
             + " from source field 'EXPR\\$2' of type CHAR\\(4\\)");
   }
 
-  @Disabled("CALCITE-1727")
+  @Ignore("CALCITE-1727")
   @Test public void testUpdateFailDataType() {
     sql("update emp"
         + " set ^empNo^ = '5', deptno = 1, ename = 'Bob'"
@@ -10327,7 +10308,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
             + " from source field 'EXPR$0' of type CHAR(1)");
   }
 
-  @Disabled("CALCITE-1727")
+  @Ignore("CALCITE-1727")
   @Test public void testUpdateFailCaseSensitivity() {
     sql("update empdefaults"
         + " set empNo = '5', deptno = 1, ename = 'Bob'"
@@ -10419,7 +10400,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     sql(sql).fails(expected);
   }
 
-  @Disabled("CALCITE-1727")
+  @Ignore("CALCITE-1727")
   @Test public void testUpdateExtendedColumnFailCollision2() {
     final String sql = "update empdefaults(^\"deptno\"^ BOOLEAN)\n"
         + "set \"deptno\" = 1, empno = 1, ename = 'Bob'\n"
@@ -11235,23 +11216,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
       // the error does not contain the original query (using a Reader)
       assertThat(error.getOriginalStatement(), nullValue());
     }
-  }
-
-  @Test public void testValidateParameterizedExpression() throws SqlParseException {
-    final SqlParser.Config config = configBuilder().build();
-    final SqlValidator validator = tester.getValidator();
-    final RelDataTypeFactory typeFactory = validator.getTypeFactory();
-    final RelDataType intType = typeFactory.createSqlType(SqlTypeName.INTEGER);
-    final RelDataType intTypeNull = typeFactory.createTypeWithNullability(intType, true);
-    final Map<String, RelDataType> nameToTypeMap = new HashMap<>();
-    nameToTypeMap.put("A", intType);
-    nameToTypeMap.put("B", intTypeNull);
-    final String expr = "a + b";
-    final SqlParser parser = SqlParser.create(expr, config);
-    final SqlNode sqlNode = parser.parseExpression();
-    final SqlNode validated = validator.validateParameterizedExpression(sqlNode, nameToTypeMap);
-    final RelDataType resultType = validator.getValidatedNodeType(validated);
-    assertThat(resultType.toString(), is("INTEGER"));
   }
 
 }

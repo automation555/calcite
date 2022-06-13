@@ -18,7 +18,6 @@ package org.apache.calcite.sql.validate;
 
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlFunction;
-import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlOperatorTable;
@@ -26,11 +25,10 @@ import org.apache.calcite.sql.SqlSyntax;
 import org.apache.calcite.sql.fun.SqlAbstractGroupFunction;
 import org.apache.calcite.sql.util.SqlBasicVisitor;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import javax.annotation.Nullable;
 
 /** Visitor that can find aggregate and windowed aggregate functions.
  *
@@ -39,13 +37,16 @@ abstract class AggVisitor extends SqlBasicVisitor<Void> {
   protected final SqlOperatorTable opTab;
   /** Whether to find windowed aggregates. */
   protected final boolean over;
-  protected final @Nullable AggFinder delegate;
+  protected final AggFinder delegate;
   /** Whether to find regular (non-windowed) aggregates. */
   protected final boolean aggregate;
   /** Whether to find group functions (e.g. {@code TUMBLE})
    * or group auxiliary functions (e.g. {@code TUMBLE_START}). */
   protected final boolean group;
   protected final SqlNameMatcher nameMatcher;
+  /** Whether to find grouping functions (i.e., {@code GROUP_ID},
+   * {@code GROUPING_ID}, {@code GROUPING}).*/
+  private boolean grouping = false;
 
   /**
    * Creates an AggVisitor.
@@ -64,15 +65,19 @@ abstract class AggVisitor extends SqlBasicVisitor<Void> {
     this.over = over;
     this.aggregate = aggregate;
     this.delegate = delegate;
-    this.opTab = Objects.requireNonNull(opTab, "opTab");
-    this.nameMatcher = Objects.requireNonNull(nameMatcher, "nameMatcher");
+    this.opTab = Objects.requireNonNull(opTab);
+    this.nameMatcher = Objects.requireNonNull(nameMatcher);
   }
 
-  @Override public Void visit(SqlCall call) {
+  public void findGroupingFunctions(boolean grouping) {
+    this.grouping = grouping;
+  }
+
+  public Void visit(SqlCall call) {
     final SqlOperator operator = call.getOperator();
     // If nested aggregates disallowed or found an aggregate at invalid level
     if (operator.isAggregator()
-        && !(operator instanceof SqlAbstractGroupFunction)
+        && (grouping || !(operator instanceof SqlAbstractGroupFunction))
         && !operator.requiresOver()) {
       if (delegate != null) {
         return operator.acceptCall(delegate, call);
@@ -89,18 +94,15 @@ abstract class AggVisitor extends SqlBasicVisitor<Void> {
       final SqlFunction sqlFunction = (SqlFunction) operator;
       if (sqlFunction.getFunctionType().isUserDefinedNotSpecificFunction()) {
         final List<SqlOperator> list = new ArrayList<>();
-        final SqlIdentifier identifier = sqlFunction.getSqlIdentifier();
-        if (identifier != null) {
-          opTab.lookupOperatorOverloads(identifier,
-              sqlFunction.getFunctionType(), SqlSyntax.FUNCTION, list,
-              nameMatcher);
-          for (SqlOperator operator2 : list) {
-            if (operator2.isAggregator() && !operator2.requiresOver()) {
-              // If nested aggregates disallowed or found aggregate at invalid
-              // level
-              if (aggregate) {
-                found(call);
-              }
+        opTab.lookupOperatorOverloads(sqlFunction.getSqlIdentifier(),
+            sqlFunction.getFunctionType(), SqlSyntax.FUNCTION, list,
+            nameMatcher);
+        for (SqlOperator operator2 : list) {
+          if (operator2.isAggregator() && !operator2.requiresOver()) {
+            // If nested aggregates disallowed or found aggregate at invalid
+            // level
+            if (aggregate) {
+              found(call);
             }
           }
         }
@@ -128,3 +130,5 @@ abstract class AggVisitor extends SqlBasicVisitor<Void> {
 
   protected abstract Void found(SqlCall call);
 }
+
+// End AggVisitor.java
