@@ -40,18 +40,20 @@ public class SqlRandIntegerFunction extends SqlFunction {
         SqlKind.OTHER_FUNCTION,
         ReturnTypes.INTEGER,
         null,
-        OperandTypes.or(OperandTypes.NUMERIC, OperandTypes.NUMERIC_NUMERIC),
+        OperandTypes.or(OperandTypes.INTEGER, OperandTypes.INTEGER_INTEGER),
         SqlFunctionCategory.NUMERIC);
   }
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public SqlSyntax getSyntax() {
+  public SqlSyntax getSyntax() {
     return SqlSyntax.FUNCTION;
   }
 
   // Plans referencing context variables should never be cached
-  @Override public boolean isDynamicFunction() {
+  public boolean isDynamicFunction() {
     return true;
   }
 }
+
+// End SqlRandIntegerFunction.java

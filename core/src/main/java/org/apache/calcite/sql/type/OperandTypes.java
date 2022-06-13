@@ -81,14 +81,6 @@ public abstract class OperandTypes {
   }
 
   /**
-   * Creates a checker that passes if each operand is a member of a
-   * corresponding family.
-   */
-  public static LambdaOperandTypeChecker lambda(SqlTypeFamily... families) {
-    return new LambdaOperandTypeChecker(ImmutableList.copyOf(families));
-  }
-
-  /**
    * Creates a checker that passes if any one of the rules passes.
    */
   public static SqlOperandTypeChecker or(SqlOperandTypeChecker... rules) {
@@ -218,6 +210,9 @@ public abstract class OperandTypes {
   public static final SqlSingleOperandTypeChecker NUMERIC_INTEGER =
       family(SqlTypeFamily.NUMERIC, SqlTypeFamily.INTEGER);
 
+  public static final SqlSingleOperandTypeChecker INTEGER_INTEGER =
+      family(SqlTypeFamily.INTEGER, SqlTypeFamily.INTEGER);
+
   public static final SqlSingleOperandTypeChecker NUMERIC_NUMERIC =
       family(SqlTypeFamily.NUMERIC, SqlTypeFamily.NUMERIC);
 
@@ -238,11 +233,6 @@ public abstract class OperandTypes {
 
   public static final FamilyOperandTypeChecker STRING_STRING_STRING =
       family(SqlTypeFamily.STRING, SqlTypeFamily.STRING, SqlTypeFamily.STRING);
-
-  public static final FamilyOperandTypeChecker STRING_STRING_OPTIONAL_STRING =
-      family(ImmutableList.of(SqlTypeFamily.STRING, SqlTypeFamily.STRING, SqlTypeFamily.STRING),
-          // Third operand optional (operand index 0, 1, 2)
-          number -> number == 2);
 
   public static final SqlSingleOperandTypeChecker CHARACTER =
       family(SqlTypeFamily.CHARACTER);
@@ -742,3 +732,5 @@ public abstract class OperandTypes {
     }
   }
 }
+
+// End OperandTypes.java

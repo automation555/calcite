@@ -55,8 +55,6 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.text.DecimalFormat;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -1168,6 +1166,14 @@ public class SqlFunctions {
     return mod(BigDecimal.valueOf(b0), b1);
   }
 
+  public static BigDecimal mod(long b0, BigDecimal b1) {
+    return mod(BigDecimal.valueOf(b0), b1);
+  }
+
+  public static BigDecimal mod(BigDecimal b0, long b1) {
+    return mod(b0, BigDecimal.valueOf(b1));
+  }
+
   public static BigDecimal mod(BigDecimal b0, BigDecimal b1) {
     final BigDecimal[] bigDecimals = b0.divideAndRemainder(b1);
     return bigDecimals[1];
@@ -1808,11 +1814,7 @@ public class SqlFunctions {
    *
    * <p>Converse of {@link #internalToTimestamp(long)}. */
   public static long toLong(Timestamp v) {
-    LocalDateTime dateTime = v.toLocalDateTime();
-    long epochDay = dateTime.toLocalDate().toEpochDay();
-    long nanoOfDay = dateTime.toLocalTime().toNanoOfDay();
-
-    return epochDay * DateTimeUtils.MILLIS_PER_DAY + nanoOfDay / 1_000_000;
+    return toLong(v, LOCAL_TZ);
   }
 
   // mainly intended for java.sql.Timestamp but works for other dates also
@@ -1973,17 +1975,7 @@ public class SqlFunctions {
   /** Converts the internal representation of a SQL TIMESTAMP (long) to the Java
    * type used for UDF parameters ({@link java.sql.Timestamp}). */
   public static java.sql.Timestamp internalToTimestamp(long v) {
-    int date = (int) (v / DateTimeUtils.MILLIS_PER_DAY);
-    int time = (int) (v % DateTimeUtils.MILLIS_PER_DAY);
-    if (time < 0) {
-      --date;
-      time += DateTimeUtils.MILLIS_PER_DAY;
-    }
-    long nanoOfDay = time * 1_000_000L;
-    LocalDate localDate = LocalDate.ofEpochDay(date);
-    LocalTime localTime = LocalTime.ofNanoOfDay(nanoOfDay);
-
-    return java.sql.Timestamp.valueOf(LocalDateTime.of(localDate, localTime));
+    return new java.sql.Timestamp(v - LOCAL_TZ.getOffset(v));
   }
 
   public static java.sql.Timestamp internalToTimestamp(Long v) {
@@ -2813,3 +2805,5 @@ public class SqlFunctions {
   }
 
 }
+
+// End SqlFunctions.java
