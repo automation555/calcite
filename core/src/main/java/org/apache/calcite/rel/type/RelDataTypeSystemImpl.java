@@ -16,11 +16,8 @@
  */
 package org.apache.calcite.rel.type;
 
-import org.apache.calcite.sql.type.BasicSqlType;
 import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeName;
-
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 /** Default implementation of
  * {@link org.apache.calcite.rel.type.RelDataTypeSystem},
@@ -36,7 +33,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  * </table>
  */
 public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
-  @Override public int getMaxScale(SqlTypeName typeName) {
+  public int getMaxScale(SqlTypeName typeName) {
     switch (typeName) {
     case DECIMAL:
       return getMaxNumericScale();
@@ -101,10 +98,12 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
       return 15;
     case TIME:
     case TIME_WITH_LOCAL_TIME_ZONE:
+    case TIME_WITH_TIME_ZONE:
     case DATE:
       return 0; // SQL99 part 2 section 6.1 syntax rule 30
     case TIMESTAMP:
     case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
+    case TIMESTAMP_WITH_TIME_ZONE:
       // farrago supports only 0 (see
       // SqlTypeName.getDefaultPrecision), but it should be 6
       // (microseconds) per SQL99 part 2 section 6.1 syntax rule 30.
@@ -126,8 +125,10 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
       return 65536;
     case TIME:
     case TIME_WITH_LOCAL_TIME_ZONE:
+    case TIME_WITH_TIME_ZONE:
     case TIMESTAMP:
     case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
+    case TIMESTAMP_WITH_TIME_ZONE:
       return SqlTypeName.MAX_DATETIME_PRECISION;
     case INTERVAL_YEAR:
     case INTERVAL_YEAR_MONTH:
@@ -156,7 +157,7 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
     return 19;
   }
 
-  @Override public @Nullable String getLiteral(SqlTypeName typeName, boolean isPrefix) {
+  @Override public String getLiteral(SqlTypeName typeName, boolean isPrefix) {
     switch (typeName) {
     case VARBINARY:
     case VARCHAR:
@@ -168,6 +169,8 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
       return isPrefix ? "TIMESTAMP '" : "'";
     case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
       return isPrefix ? "TIMESTAMP WITH LOCAL TIME ZONE '" : "'";
+    case TIMESTAMP_WITH_TIME_ZONE:
+      return isPrefix ? "TIMESTAMP WITH TIME ZONE '" : "'";
     case INTERVAL_DAY:
     case INTERVAL_DAY_HOUR:
     case INTERVAL_DAY_MINUTE:
@@ -187,6 +190,8 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
       return isPrefix ? "TIME '" : "'";
     case TIME_WITH_LOCAL_TIME_ZONE:
       return isPrefix ? "TIME WITH LOCAL TIME ZONE '" : "'";
+    case TIME_WITH_TIME_ZONE:
+      return isPrefix ? "TIME WITH TIME ZONE '" : ";";
     case DATE:
       return isPrefix ? "DATE '" : "'";
     case ARRAY:
@@ -220,21 +225,6 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
 
   @Override public RelDataType deriveSumType(RelDataTypeFactory typeFactory,
       RelDataType argumentType) {
-    if (argumentType instanceof BasicSqlType) {
-      SqlTypeName typeName = argumentType.getSqlTypeName();
-      if (typeName.allowsPrec()
-          && argumentType.getPrecision() != RelDataType.PRECISION_NOT_SPECIFIED) {
-        int precision = typeFactory.getTypeSystem().getMaxPrecision(typeName);
-        if (typeName.allowsScale()) {
-          argumentType = typeFactory.createTypeWithNullability(
-              typeFactory.createSqlType(typeName, precision, argumentType.getScale()),
-              argumentType.isNullable());
-        } else {
-          argumentType = typeFactory.createTypeWithNullability(
-              typeFactory.createSqlType(typeName, precision), argumentType.isNullable());
-        }
-      }
-    }
     return argumentType;
   }
 
@@ -258,11 +248,15 @@ public abstract class RelDataTypeSystemImpl implements RelDataTypeSystem {
         typeFactory.createSqlType(SqlTypeName.BIGINT), false);
   }
 
-  @Override public boolean isSchemaCaseSensitive() {
+  public boolean isSchemaCaseSensitive() {
     return true;
   }
 
-  @Override public boolean shouldConvertRaggedUnionTypesToVarying() {
+  public boolean shouldConvertRaggedUnionTypesToVarying() {
+    return false;
+  }
+
+  public boolean allowExtendedTrim() {
     return false;
   }
 

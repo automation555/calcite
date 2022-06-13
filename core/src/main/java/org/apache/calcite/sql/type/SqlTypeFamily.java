@@ -67,7 +67,6 @@ public enum SqlTypeFamily implements RelDataTypeFamily {
   DATETIME_INTERVAL,
   MULTISET,
   ARRAY,
-  LAMBDA,
   MAP,
   NULL,
   ANY,
@@ -140,9 +139,15 @@ public enum SqlTypeFamily implements RelDataTypeFamily {
     case DATE:
       return ImmutableList.of(SqlTypeName.DATE);
     case TIME:
-      return ImmutableList.of(SqlTypeName.TIME, SqlTypeName.TIME_WITH_LOCAL_TIME_ZONE);
+      return ImmutableList.of(
+        SqlTypeName.TIME,
+        SqlTypeName.TIME_WITH_LOCAL_TIME_ZONE,
+        SqlTypeName.TIME_WITH_TIME_ZONE);
     case TIMESTAMP:
-      return ImmutableList.of(SqlTypeName.TIMESTAMP, SqlTypeName.TIMESTAMP_WITH_LOCAL_TIME_ZONE);
+      return ImmutableList.of(
+        SqlTypeName.TIMESTAMP,
+        SqlTypeName.TIMESTAMP_WITH_LOCAL_TIME_ZONE,
+        SqlTypeName.TIMESTAMP_WITH_TIME_ZONE);
     case BOOLEAN:
       return SqlTypeName.BOOLEAN_TYPES;
     case INTERVAL_YEAR_MONTH:
@@ -163,8 +168,6 @@ public enum SqlTypeFamily implements RelDataTypeFamily {
       return SqlTypeName.INTERVAL_TYPES;
     case GEO:
       return ImmutableList.of(SqlTypeName.GEOMETRY);
-    case LAMBDA:
-      return ImmutableList.of(SqlTypeName.LAMBDA);
     case MULTISET:
       return ImmutableList.of(SqlTypeName.MULTISET);
     case ARRAY:
@@ -223,8 +226,6 @@ public enum SqlTypeFamily implements RelDataTypeFamily {
           new SqlIntervalQualifier(TimeUnit.YEAR, TimeUnit.MONTH, SqlParserPos.ZERO));
     case GEO:
       return factory.createSqlType(SqlTypeName.GEOMETRY);
-    case LAMBDA:
-      return factory.createSqlType(SqlTypeName.LAMBDA);
     case MULTISET:
       return factory.createMultisetType(factory.createSqlType(SqlTypeName.ANY), -1);
     case ARRAY:

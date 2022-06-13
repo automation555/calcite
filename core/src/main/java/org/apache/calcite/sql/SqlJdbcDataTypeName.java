@@ -20,8 +20,6 @@ import org.apache.calcite.avatica.util.TimeUnitRange;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.SqlTypeName;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 /**
  * Defines the name of the types which can occur as a type argument
  * in a JDBC <code>{fn CONVERT(value, type)}</code> function.
@@ -31,14 +29,16 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  *
  * @see SqlJdbcFunctionCall
  */
-public enum SqlJdbcDataTypeName implements Symbolizable {
+public enum SqlJdbcDataTypeName {
   SQL_CHAR(SqlTypeName.CHAR),
   SQL_VARCHAR(SqlTypeName.VARCHAR),
   SQL_DATE(SqlTypeName.DATE),
   SQL_TIME(SqlTypeName.TIME),
   SQL_TIME_WITH_LOCAL_TIME_ZONE(SqlTypeName.TIME_WITH_LOCAL_TIME_ZONE),
+  SQL_TIME_WITH_TIME_ZONE(SqlTypeName.TIME_WITH_TIME_ZONE),
   SQL_TIMESTAMP(SqlTypeName.TIMESTAMP),
   SQL_TIMESTAMP_WITH_LOCAL_TIME_ZONE(SqlTypeName.TIMESTAMP_WITH_LOCAL_TIME_ZONE),
+  SQL_TIMESTAMP_WITH_TIME_ZONE(SqlTypeName.TIMESTAMP_WITH_TIME_ZONE),
   SQL_DECIMAL(SqlTypeName.DECIMAL),
   SQL_NUMERIC(SqlTypeName.DECIMAL),
   SQL_BOOLEAN(SqlTypeName.BOOLEAN),
@@ -65,8 +65,8 @@ public enum SqlJdbcDataTypeName implements Symbolizable {
   SQL_INTERVAL_MINUTE_TO_SECOND(TimeUnitRange.MINUTE_TO_SECOND),
   SQL_INTERVAL_SECOND(TimeUnitRange.SECOND);
 
-  private final @Nullable TimeUnitRange range;
-  private final @Nullable SqlTypeName typeName;
+  private final TimeUnitRange range;
+  private final SqlTypeName typeName;
 
   SqlJdbcDataTypeName(SqlTypeName typeName) {
     this(typeName, null);
@@ -76,10 +76,18 @@ public enum SqlJdbcDataTypeName implements Symbolizable {
     this(null, range);
   }
 
-  SqlJdbcDataTypeName(@Nullable SqlTypeName typeName, @Nullable TimeUnitRange range) {
+  SqlJdbcDataTypeName(SqlTypeName typeName, TimeUnitRange range) {
     assert (typeName == null) != (range == null);
     this.typeName = typeName;
     this.range = range;
+  }
+
+  /**
+   * Creates a parse-tree node representing an occurrence of this keyword
+   * at a particular position in the parsed text.
+   */
+  public SqlLiteral symbol(SqlParserPos pos) {
+    return SqlLiteral.createSymbol(this, pos);
   }
 
   /** Creates a parse tree node for a type identifier of this name. */

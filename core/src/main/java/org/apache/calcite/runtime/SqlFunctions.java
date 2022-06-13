@@ -31,12 +31,13 @@ import org.apache.calcite.linq4j.function.Deterministic;
 import org.apache.calcite.linq4j.function.Experimental;
 import org.apache.calcite.linq4j.function.Function1;
 import org.apache.calcite.linq4j.function.NonDeterministic;
-import org.apache.calcite.linq4j.function.Predicate2;
 import org.apache.calcite.linq4j.tree.Primitive;
 import org.apache.calcite.runtime.FlatLists.ComparableList;
 import org.apache.calcite.util.Bug;
 import org.apache.calcite.util.NumberUtil;
+import org.apache.calcite.util.TimeWithTimeZone;
 import org.apache.calcite.util.TimeWithTimeZoneString;
+import org.apache.calcite.util.TimestampWithTimeZone;
 import org.apache.calcite.util.TimestampWithTimeZoneString;
 import org.apache.calcite.util.Unsafe;
 import org.apache.calcite.util.Util;
@@ -74,7 +75,6 @@ import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 
 import static org.apache.calcite.util.Static.RESOURCE;
@@ -142,8 +142,6 @@ public class SqlFunctions {
    * will want persistent values for sequences, shared among threads. */
   private static final ThreadLocal<Map<String, AtomicLong>> THREAD_SEQUENCES =
       ThreadLocal.withInitial(HashMap::new);
-
-  private static final Pattern PATTERN_0_STAR_E = Pattern.compile("0*E");
 
   private SqlFunctions() {
   }
@@ -370,11 +368,6 @@ public class SqlFunctions {
   /** SQL SPACE(int) function. */
   public static String space(int n) {
     return repeat(" ", n);
-  }
-
-  /** SQL STRCMP(String,String) function. */
-  public static int strcmp(String s0, String s1) {
-    return (int) Math.signum(s1.compareTo(s0));
   }
 
   /** SQL SOUNDEX(string) function. */
@@ -608,7 +601,7 @@ public class SqlFunctions {
     String[] existingExpressions = Arrays.stream(POSIX_CHARACTER_CLASSES)
         .filter(v -> originalRegex.contains(v.toLowerCase(Locale.ROOT))).toArray(String[]::new);
     for (String v : existingExpressions) {
-      regex = regex.replace(v.toLowerCase(Locale.ROOT), "\\p{" + v + "}");
+      regex = regex.replaceAll(v.toLowerCase(Locale.ROOT), "\\\\p{" + v + "}");
     }
 
     int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE;
@@ -1415,17 +1408,6 @@ public class SqlFunctions {
     return Math.cos(b0);
   }
 
-  // COSH
-  /** SQL <code>COSH</code> operator applied to BigDecimal values. */
-  public static double cosh(BigDecimal b) {
-    return cosh(b.doubleValue());
-  }
-
-  /** SQL <code>COSH</code> operator applied to double values. */
-  public static double cosh(double b) {
-    return Math.cosh(b);
-  }
-
   // COT
   /** SQL <code>COT</code> operator applied to BigDecimal values. */
   public static double cot(BigDecimal b0) {
@@ -1571,17 +1553,6 @@ public class SqlFunctions {
     return Math.sin(b0);
   }
 
-  // SINH
-  /** SQL <code>SINH</code> operator applied to BigDecimal values. */
-  public static double sinh(BigDecimal b) {
-    return sinh(b.doubleValue());
-  }
-
-  /** SQL <code>SINH</code> operator applied to double values. */
-  public static double sinh(double b) {
-    return Math.sinh(b);
-  }
-
   // TAN
   /** SQL <code>TAN</code> operator applied to BigDecimal values. */
   public static double tan(BigDecimal b0) {
@@ -1591,17 +1562,6 @@ public class SqlFunctions {
   /** SQL <code>TAN</code> operator applied to double values. */
   public static double tan(double b0) {
     return Math.tan(b0);
-  }
-
-  // TANH
-  /** SQL <code>TANH</code> operator applied to BigDecimal values. */
-  public static double tanh(BigDecimal b) {
-    return tanh(b.doubleValue());
-  }
-
-  /** SQL <code>TANH</code> operator applied to double values. */
-  public static double tanh(double b) {
-    return Math.tanh(b);
   }
 
   // Helpers
@@ -1703,7 +1663,7 @@ public class SqlFunctions {
     BigDecimal bigDecimal =
         new BigDecimal(x, MathContext.DECIMAL32).stripTrailingZeros();
     final String s = bigDecimal.toString();
-    return PATTERN_0_STAR_E.matcher(s).replaceAll("E").replace("E+", "E");
+    return s.replaceAll("0*E", "E").replace("E+", "E");
   }
 
   /** CAST(DOUBLE AS VARCHAR). */
@@ -1714,18 +1674,16 @@ public class SqlFunctions {
     BigDecimal bigDecimal =
         new BigDecimal(x, MathContext.DECIMAL64).stripTrailingZeros();
     final String s = bigDecimal.toString();
-    return PATTERN_0_STAR_E.matcher(s).replaceAll("E").replace("E+", "E");
+    return s.replaceAll("0*E", "E").replace("E+", "E");
   }
 
   /** CAST(DECIMAL AS VARCHAR). */
   public static String toString(BigDecimal x) {
     final String s = x.toString();
-    if (s.equals("0")) {
-      return s;
-    } else if (s.startsWith("0.")) {
+    if (s.startsWith("0")) {
       // we want ".1" not "0.1"
       return s.substring(1);
-    } else if (s.startsWith("-0.")) {
+    } else if (s.startsWith("-0")) {
       // we want "-.1" not "-0.1"
       return "-" + s.substring(2);
     } else {
@@ -2078,6 +2036,142 @@ public class SqlFunctions {
         .withTimeZone(DateTimeUtils.UTC_ZONE)
         .getLocalTimestampString()
         .getMillisSinceEpoch();
+  }
+
+  public static int timeWithTimeZoneToTime(TimeWithTimeZone ttz) {
+    return ttz.getMilliOfDay();
+  }
+
+  public static TimestampWithTimeZone timeWithTimeZoneToTimestampWithTimeZone(int date,
+      TimeWithTimeZone ttz) {
+    long millisecond = date * DateTimeUtils.MILLIS_PER_DAY + ttz.getMilliOfDay();
+    return new TimestampWithTimeZone(millisecond, ttz.getTimeZone());
+  }
+
+  public static String timeWithTimeZoneToString(TimeWithTimeZone ttz) {
+    String localTime = DateTimeUtils.unixTimeToString(ttz.getMilliOfDay());
+    return localTime + " " + ttz.getTimeZone().getID();
+  }
+
+  /**Convert a time {@link String} to an instance of {@link TimeWithTimeZone}. If the time string
+   * contains time zone component, use it. Otherwise, use the session time zone. */
+  public static TimeWithTimeZone stringToTimeWithTimeZone(String v, TimeZone sesstionTimeZone) {
+    if (v == null) {
+      return null;
+    }
+
+    final int colon1 = v.indexOf(':', 0);
+    int hour;
+    int minute;
+    int second;
+    int milli;
+    TimeZone tz = sesstionTimeZone;
+    if (colon1 < 0) {
+      hour = Integer.parseInt(v.trim());
+      minute = 1;
+      second = 1;
+      milli = 0;
+    } else {
+      hour = Integer.parseInt(v.substring(0, colon1).trim());
+      final int colon2 = v.indexOf(':', colon1 + 1);
+      if (colon2 < 0) {
+        minute = Integer.parseInt(v.substring(colon1 + 1).trim());
+        second = 1;
+        milli = 0;
+      } else {
+        minute = Integer.parseInt(v.substring(colon1 + 1, colon2).trim());
+        int dot = v.indexOf('.', colon2);
+        int space = v.indexOf(' ', colon2);
+        if (dot < 0) {
+          if (space < 0) {
+            second = Integer.parseInt(v.substring(colon2 + 1).trim());
+            milli = 0;
+          } else {
+            second = Integer.parseInt(v.substring(colon2 + 1, space).trim());
+            milli = 0;
+            tz = TimeZone.getTimeZone(v.substring(space + 1).trim());
+          }
+        } else {
+          if (space < 0) {
+            second = Integer.parseInt(v.substring(colon2 + 1, dot).trim());
+            milli = parseFraction(v.substring(dot + 1).trim(), 100);
+          } else {
+            second = Integer.parseInt(v.substring(colon2 + 1, dot).trim());
+            milli = parseFraction(v.substring(dot + 1, space).trim(), 100);
+            tz = TimeZone.getTimeZone(v.substring(space + 1).trim());
+          }
+        }
+      }
+    }
+    int milliOfDay = hour * (int) DateTimeUtils.MILLIS_PER_HOUR
+            + minute * (int) DateTimeUtils.MILLIS_PER_MINUTE
+            + second * (int) DateTimeUtils.MILLIS_PER_SECOND
+            + milli;
+    return new TimeWithTimeZone(milliOfDay, tz);
+  }
+
+  /** Parses a fraction, multiplying the first character by {@code multiplier},
+   * the second character by {@code multiplier / 10},
+   * the third character by {@code multiplier / 100}, and so forth.
+   *
+   * <p>For example, {@code parseFraction("1234", 100)} yields {@code 123}. */
+  private static int parseFraction(String v, int multiplier) {
+    int r = 0;
+    for (int i = 0; i < v.length(); i++) {
+      char c = v.charAt(i);
+      int x = c < '0' || c > '9' ? 0 : (c - '0');
+      r += multiplier * x;
+      if (multiplier < 10) {
+        // We're at the last digit. Check for rounding.
+        if (i + 1 < v.length()
+                && v.charAt(i + 1) >= '5') {
+          ++r;
+        }
+        break;
+      }
+      multiplier /= 10;
+    }
+    return r;
+  }
+
+
+  public static long timestampWithTimeZoneToTimestamp(TimestampWithTimeZone tstz) {
+    return tstz.getMillisecond();
+  }
+
+  public static String timestampWithTimeZoneToString(TimestampWithTimeZone tstz) {
+    String localTimestamp = DateTimeUtils.unixTimestampToString(tstz.getMillisecond());
+    return localTimestamp + " " + tstz.getTimeZone().getID();
+  }
+
+  public static TimeWithTimeZone timestampWithTimeZoneToTimeWithTimeZone(
+      TimestampWithTimeZone tstz) {
+    int milliOfDay = (int) (tstz.getMillisecond() % DateTimeUtils.MILLIS_PER_DAY);
+    return new TimeWithTimeZone(milliOfDay, tstz.getTimeZone());
+  }
+
+  /**Convert a time {@link String} to an instance of {@link TimestampWithTimeZone}. If the time string
+   * contains time zone component, use it. Otherwise, use the session time zone. */
+  public static TimestampWithTimeZone stringToTimestampWithTimeZone(
+      String v, TimeZone sessionTimeZone) {
+    if (v == null) {
+      return null;
+    }
+
+    final long d;
+    final TimeWithTimeZone t;
+    v = v.trim();
+    int space = v.indexOf(' ');
+    if (space >= 0) {
+      d = DateTimeUtils.dateStringToUnixDate(v.substring(0, space));
+      t = stringToTimeWithTimeZone(v.substring(space + 1), sessionTimeZone);
+    } else {
+      d = DateTimeUtils.dateStringToUnixDate(v);
+      t = new TimeWithTimeZone(0, sessionTimeZone);
+    }
+
+    final long millisecond = d * DateTimeUtils.MILLIS_PER_DAY + t.getMilliOfDay();
+    return new TimestampWithTimeZone(millisecond, t.getTimeZone());
   }
 
   // Don't need shortValueOf etc. - Short.valueOf is sufficient.
@@ -2850,18 +2944,7 @@ public class SqlFunctions {
     }
   }
 
-  public static Map<?, ?> mapFilter(Map<?, ?> map, Predicate2 predicate) {
-    if (map == null) {
-      return null;
-    }
-    return map.entrySet().stream()
-        .filter(e -> predicate.apply(e.getKey(), e.getValue()))
-        .collect(Collectors.toMap(Entry::getKey, Entry::getValue));
-  }
-
-  /**
-   * Type of argument passed into {@link #flatProduct}.
-   */
+  /** Type of argument passed into {@link #flatProduct}. */
   public enum FlatProductInputType {
     SCALAR, LIST, MAP
   }
