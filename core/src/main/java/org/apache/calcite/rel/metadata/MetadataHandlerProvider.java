@@ -20,33 +20,24 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.util.ControlFlowException;
 
 /**
- * Provides {@link MetadataHandler} call sites for
+ * Provides {@link MetadataHandler} call sites and {@link MetadataCache} for
  * {@link RelMetadataQuery}. The handlers provided are responsible for
  * updating the cache stored in {@link RelMetadataQuery}.
  */
 public interface MetadataHandlerProvider {
 
-  /**
-   * Provide a handler for the requested metadata class.
-   * @param handlerClass The handler interface expected
-   * @param <MH> The metadata type the handler relates to.
-   * @return The handler implementation.
-   */
-  <MH extends MetadataHandler<?>> MH handler(Class<MH> handlerClass);
+  <MH extends MetadataHandler<?>> MH initialHandler(Class<MH> handlerClass);
 
-  /** Re-generates the handler for a given kind of metadata.  */
+  /** Re-generates the handler for a given kind of metadata.. */
+  <MH extends MetadataHandler<?>> MH revise(Class<MH> handlerClass);
+
   /**
-   * Revise the handler for a given kind of metadata.
+   * Creates a new cache.
    *
-   * <p>Should be invoked if the existing handler throws a {@link NoHandler} exception.
-   *
-   * @param handlerClass The type of class to revise.
-   * @param <MH> The type metadata the handler provides.
-   * @return A new handler that should be used instead of any previous handler provided.
+   * @return A new cache for {@link RelMetadataQuery}
    */
-  default <MH extends MetadataHandler<?>> MH revise(Class<MH> handlerClass) {
-    throw new UnsupportedOperationException("This provider doesn't support handler revision.");
-  }
+  MetadataCache buildCache();
+
 
   /** Exception that indicates there there should be a handler for
    * this class but there is not. The action is probably to
@@ -58,5 +49,4 @@ public interface MetadataHandlerProvider {
       this.relClass = relClass;
     }
   }
-
 }
