@@ -186,7 +186,7 @@ query:
       |   query INTERSECT [ ALL | DISTINCT ] query
       }
       [ ORDER BY orderItem [, orderItem ]* ]
-      [ LIMIT { [ start, ] count | ALL } ]
+      [ LIMIT [ start, ] { count | ALL } ]
       [ OFFSET start { ROW | ROWS } ]
       [ FETCH { FIRST | NEXT } [ count ] { ROW | ROWS } ONLY ]
 
@@ -203,7 +203,7 @@ select:
           { * | projectItem [, projectItem ]* }
       FROM tableExpression
       [ WHERE booleanExpression ]
-      [ GROUP BY [ ALL | DISTINCT ] { groupItem [, groupItem ]* } ]
+      [ GROUP BY { groupItem [, groupItem ]* } ]
       [ HAVING booleanExpression ]
       [ WINDOW windowName AS windowSpec [, windowName AS windowSpec ]* ]
 
@@ -370,11 +370,6 @@ function).
 An IN, EXISTS, UNIQUE or scalar sub-query may be correlated; that is, it
 may refer to tables in the FROM clause of an enclosing query.
 
-GROUP BY DISTINCT removes duplicate grouping sets (for example,
-"GROUP BY DISTINCT GROUPING SETS ((a), (a, b), (a))" is equivalent to
-"GROUP BY GROUPING SETS ((a), (a, b))");
-GROUP BY ALL is equivalent to GROUP BY.
-
 *selectWithoutFrom* is equivalent to VALUES,
 but is not standard SQL and is only allowed in certain
 [conformance levels]({{ site.apiRoot }}/org/apache/calcite/sql/validate/SqlConformance.html#isFromRequired--).
@@ -389,9 +384,6 @@ CROSS APPLY and OUTER APPLY are only allowed in certain
 "LIMIT start, count" is equivalent to "LIMIT count OFFSET start"
 but is only allowed in certain
 [conformance levels]({{ site.apiRoot }}/org/apache/calcite/sql/validate/SqlConformance.html#isLimitStartCountAllowed--).
-
-"OFFSET start" may occur before "LIMIT count" in certain
-[conformance levels]({{ site.apiRoot }}/org/apache/calcite/sql/validate/SqlConformance.html#isOffsetLimitAllowed--).
 
 ## Keywords
 
@@ -1158,8 +1150,7 @@ Note:
 
 | Type     | Description                | Example literals
 |:-------- |:---------------------------|:---------------
-| ANY      | The union of all types |
-| UNKNOWN  | A value of an unknown type; used as a placeholder |
+| ANY      | A value of an unknown type |
 | ROW      | Row with 1 or more columns | Example: Row(f0 int null, f1 varchar)
 | MAP      | Collection of keys mapped to values |
 | MULTISET | Unordered collection that may contain duplicates | Example: int multiset
@@ -1212,13 +1203,13 @@ The operator precedence and associativity, highest to lowest.
 | * / % &#124;&#124;                                | left
 | + -                                               | left
 | BETWEEN, IN, LIKE, SIMILAR, OVERLAPS, CONTAINS etc. | -
-| < > = <= >= <> != <=>                             | left
+| < > = <= >= <> !=                                 | left
 | IS NULL, IS FALSE, IS NOT TRUE etc.               | -
 | NOT                                               | right
 | AND                                               | left
 | OR                                                | left
 
-Note that `::`,`<=>` is dialect-specific, but is shown in this table for
+Note that `::` is dialect-specific, but is shown in this table for
 completeness.
 
 ### Comparison operators
@@ -1232,7 +1223,6 @@ completeness.
 | value1 >= value2                                  | Greater than or equal
 | value1 < value2                                   | Less than
 | value1 <= value2                                  | Less than or equal
-| value1 <=> value2                                 | Whether two values are equal, treating null values as the same
 | value IS NULL                                     | Whether *value* is null
 | value IS NOT NULL                                 | Whether *value* is not null
 | value1 IS DISTINCT FROM value2                    | Whether two values are not equal, treating null values as the same
@@ -1261,7 +1251,6 @@ comp:
   |   >=
   |   <
   |   <=
-  |   <=>
 {% endhighlight %}
 
 ### Logical operators
@@ -1521,9 +1510,9 @@ these details follow the table.
 | SMALLINT            | x    | e       | i       | i        | i   | i      | i       | i             | i      | e        | x    | x    | e         | i               | x
 | INT                 | x    | e       | i       | i        | i   | i      | i       | i             | i      | e        | x    | x    | e         | i               | x
 | BIGINT              | x    | e       | i       | i        | i   | i      | i       | i             | i      | e        | x    | x    | e         | i               | x
-| DECIMAL             | x    | e       | i       | i        | i   | i      | i       | i             | i      | e        | x    | x    | e         | i               | x
-| FLOAT/REAL          | x    | e       | i       | i        | i   | i      | i       | i             | i      | x        | x    | x    | e         | i               | x
-| DOUBLE              | x    | e       | i       | i        | i   | i      | i       | i             | i      | x        | x    | x    | e         | i               | x
+| DECIMAL             | x    | x       | i       | i        | i   | i      | i       | i             | i      | e        | x    | x    | e         | i               | x
+| FLOAT/REAL          | x    | x       | i       | i        | i   | i      | i       | i             | i      | x        | x    | x    | e         | i               | x
+| DOUBLE              | x    | x       | i       | i        | i   | i      | i       | i             | i      | x        | x    | x    | e         | i               | x
 | INTERVAL            | x    | x       | e       | e        | e   | e      | e       | x             | x      | i        | x    | x    | x         | e               | x
 | DATE                | x    | x       | x       | x        | x   | x      | x       | x             | x      | x        | i    | x    | i         | i               | x
 | TIME                | x    | x       | x       | x        | x   | x      | x       | x             | x      | x        | x    | i    | e         | i               | x
@@ -2065,7 +2054,7 @@ completeness. Session is applied per product.
 **Note**: The `Tumble`, `Hop` and `Session` window table functions assign
 each row in the original table to a window. The output table has all
 the same columns as the original table plus two additional columns `window_start`
-and `window_end`, which represent the start and end of the window interval, respectively.
+and `window_end`, which repesent the start and end of the window interval, respectively.
 
 ### Grouped window functions
 **warning**: grouped window functions are deprecated.
@@ -2524,10 +2513,6 @@ semantics.
 | C | Operator syntax                                | Description
 |:- |:-----------------------------------------------|:-----------
 | p | expr :: type                                   | Casts *expr* to *type*
-| m | expr1 <=> expr2                                | Whether two values are equal, treating null values as the same, and it's similar to `IS NOT DISTINCT FROM`
-| b | ARRAY_CONCAT(array [, array ]*)                | Concatenates one or more arrays. If any input argument is `NULL` the function returns `NULL`
-| b | ARRAY_LENGTH(array)                            | Synonym for `CARDINALITY`
-| b | ARRAY_REVERSE(array)                           | Reverses elements of *array*
 | o | CHR(integer) | Returns the character having the binary equivalent to *integer* as a CHAR value
 | o | COSH(numeric)                                  | Returns the hyperbolic cosine of *numeric*
 | o | CONCAT(string, string)                         | Concatenates two strings
@@ -2643,7 +2628,7 @@ LIMIT 10;
 Result
 
 | c1     | c2    | c3      | c4      |
-|:------:|:-----:|:-------:|:-------:|
+| ------ | ----- | ------- | ------- |
 | OBJECT | ARRAY | INTEGER | BOOLEAN |
 
 ##### JSON_DEPTH example
@@ -2662,7 +2647,7 @@ LIMIT 10;
 Result
 
 | c1     | c2    | c3      | c4      |
-|:------:|:-----:|:-------:|:-------:|
+| ------ | ----- | ------- | ------- |
 | 3      | 2     | 1       | 1       |
 
 ##### JSON_LENGTH example
@@ -2681,7 +2666,7 @@ LIMIT 10;
 Result
 
 | c1     | c2    | c3      | c4      |
-|:------:|:-----:|:-------:|:-------:|
+| ------ | ----- | ------- | ------- |
 | 1      | 2     | 1       | 1       |
 
 ##### JSON_KEYS example
@@ -2689,7 +2674,7 @@ Result
 SQL
 
 {% highlight sql %}
-SELECT JSON_KEYS(v) AS c1,
+ELECT JSON_KEYS(v) AS c1,
   JSON_KEYS(v, 'lax $.a') AS c2,
   JSON_KEYS(v, 'lax $.b') AS c2,
   JSON_KEYS(v, 'strict $.a[0]') AS c3,
@@ -2701,7 +2686,7 @@ LIMIT 10;
  Result
 
 | c1         | c2   | c3    | c4   | c5   |
-|:----------:|:----:|:-----:|:----:|:----:|
+| ---------- | ---- | ----- | ---- | ---- |
 | ["a", "b"] | NULL | ["c"] | NULL | NULL |
 
 ##### JSON_REMOVE example
@@ -2717,7 +2702,7 @@ LIMIT 10;
  Result
 
 | c1         |
-|:----------:|
+| ---------- |
 | ["a", "d"] |
 
 
@@ -2737,7 +2722,7 @@ limit 10;
  Result
 
 | c1 | c2 | c3 | c4 |
-|:--:|:---:|:---:|:--:|
+| -- | ---| ---| -- |
 | 29 | 35 | 37 | 36 |
 
 
@@ -2757,7 +2742,7 @@ FROM (VALUES (1, 2, 3, 4, 5)) AS t(f1, f2, f3, f4, f5);
  Result
 
 | c1          | c2          | c3          | c4          | c5          |
-|:-----------:|:-----------:|:-----------:|:-----------:|:-----------:|
+| ----------- | ----------- | ----------- | ----------- | ----------- |
 | aa          | bb          | cc          | dd          | ee          |
 
 #### TRANSLATE example
@@ -2775,7 +2760,7 @@ FROM (VALUES (true)) AS t(f0);
 Result
 
 | c1          | c2          | c3          | c4          |
-|:-----------:|:-----------:|:-----------:|:-----------:|
+| ----------- | ----------- | ----------- | ----------- |
 | Aa_Bb_CcD_d | Aa_Bb_CcD_d | Aa_Bb_CcD_d | Aa_Bb_CcD_d |
 
 Not implemented:
