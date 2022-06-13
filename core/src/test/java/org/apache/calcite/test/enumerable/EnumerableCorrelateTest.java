@@ -26,7 +26,7 @@ import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.test.CalciteAssert;
-import org.apache.calcite.test.schemata.hr.HrSchema;
+import org.apache.calcite.test.JdbcTest;
 
 import org.junit.jupiter.api.Test;
 
@@ -42,7 +42,7 @@ class EnumerableCorrelateTest {
    * NullPointerException when left outer join implemented with
    * EnumerableCorrelate</a>. */
   @Test void leftOuterJoinCorrelate() {
-    tester(false, new HrSchema())
+    tester(false, new JdbcTest.HrSchema())
         .query(
             "select e.empid, e.name, d.name as dept from emps e left outer join depts d on e.deptno=d.deptno")
         .withHook(Hook.PLANNER, (Consumer<RelOptPlanner>) planner -> {
@@ -67,7 +67,7 @@ class EnumerableCorrelateTest {
   }
 
   @Test void simpleCorrelateDecorrelated() {
-    tester(true, new HrSchema())
+    tester(true, new JdbcTest.HrSchema())
         .query(
             "select empid, name from emps e where exists (select 1 from depts d where d.deptno=e.deptno)")
         .explainContains(""
@@ -86,7 +86,7 @@ class EnumerableCorrelateTest {
    * <a href="https://issues.apache.org/jira/browse/CALCITE-2621">[CALCITE-2621]
    * Add rule to execute semi joins with correlation</a>. */
   @Test void semiJoinCorrelate() {
-    tester(false, new HrSchema())
+    tester(false, new JdbcTest.HrSchema())
         .query(
             "select empid, name from emps e where e.deptno in (select d.deptno from depts d)")
         .withHook(Hook.PLANNER, (Consumer<RelOptPlanner>) planner -> {
@@ -114,7 +114,7 @@ class EnumerableCorrelateTest {
    * FilterCorrelateRule on a Correlate with SemiJoinType SEMI (or ANTI) throws
    * IllegalStateException</a>. */
   @Test void semiJoinCorrelateWithFilterCorrelateRule() {
-    tester(false, new HrSchema())
+    tester(false, new JdbcTest.HrSchema())
         .query(
             "select empid, name from emps e where e.deptno in (select d.deptno from depts d) and e.empid > 100")
         .withHook(Hook.PLANNER, (Consumer<RelOptPlanner>) planner -> {
@@ -128,10 +128,10 @@ class EnumerableCorrelateTest {
         })
         .explainContains(""
             + "EnumerableCalc(expr#0..3=[{inputs}], empid=[$t1], name=[$t3])\n"
-            + "  EnumerableCorrelate(correlation=[$cor1], joinType=[inner], requiredColumns=[{0}])\n"
+            + "  EnumerableCorrelate(correlation=[$cor3], joinType=[inner], requiredColumns=[{0}])\n"
             + "    EnumerableAggregate(group=[{0}])\n"
             + "      EnumerableTableScan(table=[[s, depts]])\n"
-            + "    EnumerableCalc(expr#0..4=[{inputs}], expr#5=[$cor1], expr#6=[$t5.deptno], expr#7=[=($t1, $t6)], expr#8=[100], expr#9=[>($t0, $t8)], expr#10=[AND($t7, $t9)], proj#0..2=[{exprs}], $condition=[$t10])\n"
+            + "    EnumerableCalc(expr#0..4=[{inputs}], expr#5=[100], expr#6=[>($t0, $t5)], expr#7=[$cor3], expr#8=[$t7.deptno], expr#9=[=($t1, $t8)], expr#10=[AND($t6, $t9)], proj#0..2=[{exprs}], $condition=[$t10])\n"
             + "      EnumerableTableScan(table=[[s, emps]])")
         .returnsUnordered(
             "empid=110; name=Theodore",
@@ -139,7 +139,7 @@ class EnumerableCorrelateTest {
   }
 
   @Test void simpleCorrelate() {
-    tester(false, new HrSchema())
+    tester(false, new JdbcTest.HrSchema())
         .query(
             "select empid, name from emps e where exists (select 1 from depts d where d.deptno=e.deptno)")
         .explainContains(""
@@ -159,7 +159,7 @@ class EnumerableCorrelateTest {
   @Test void simpleCorrelateWithConditionIncludingBoxedPrimitive() {
     final String sql = "select empid from emps e where not exists (\n"
         + "  select 1 from depts d where d.deptno=e.commission)";
-    tester(false, new HrSchema())
+    tester(false, new JdbcTest.HrSchema())
         .query(sql)
         .returnsUnordered(
             "empid=100",
@@ -172,7 +172,8 @@ class EnumerableCorrelateTest {
    * <a href="https://issues.apache.org/jira/browse/CALCITE-2920">[CALCITE-2920]
    * RelBuilder: new method to create an anti-join</a>. */
   @Test void antiJoinCorrelate() {
-    tester(false, new HrSchema())
+    tester(false, new JdbcTest.HrSchema())
+        .query("?")
         .withHook(Hook.PLANNER, (Consumer<RelOptPlanner>) planner -> {
           // force the antijoin to run via EnumerableCorrelate
           // instead of EnumerableHashJoin(ANTI)
@@ -200,7 +201,8 @@ class EnumerableCorrelateTest {
   }
 
   @Test void nonEquiAntiJoinCorrelate() {
-    tester(false, new HrSchema())
+    tester(false, new JdbcTest.HrSchema())
+        .query("?")
         .withHook(Hook.PLANNER, (Consumer<RelOptPlanner>) planner -> {
           // force the antijoin to run via EnumerableCorrelate
           // instead of EnumerableNestedLoopJoin
@@ -239,7 +241,8 @@ class EnumerableCorrelateTest {
    * RelBuilder: new method to create an antijoin</a>. */
   @Test void antiJoinCorrelateWithNullValues() {
     final Integer salesDeptNo = 10;
-    tester(false, new HrSchema())
+    tester(false, new JdbcTest.HrSchema())
+        .query("?")
         .withHook(Hook.PLANNER, (Consumer<RelOptPlanner>) planner -> {
           // force the antijoin to run via EnumerableCorrelate
           // instead of EnumerableHashJoin(ANTI)
