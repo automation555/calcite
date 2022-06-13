@@ -20,6 +20,7 @@ import org.apache.calcite.linq4j.Ord;
 import org.apache.calcite.linq4j.tree.BlockBuilder;
 import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.linq4j.tree.Expressions;
+import org.apache.calcite.linq4j.tree.Types;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
@@ -27,8 +28,6 @@ import org.apache.calcite.rel.core.Union;
 import org.apache.calcite.util.BuiltInMethod;
 
 import java.util.List;
-
-import static java.util.Objects.requireNonNull;
 
 /** Implementation of {@link org.apache.calcite.rel.core.Union} in
  * {@link org.apache.calcite.adapter.enumerable.EnumerableConvention enumerable calling convention}. */
@@ -38,14 +37,19 @@ public class EnumerableUnion extends Union implements EnumerableRel {
     super(cluster, traitSet, inputs, all);
   }
 
-  @Override public EnumerableUnion copy(RelTraitSet traitSet, List<RelNode> inputs,
+  public EnumerableUnion copy(RelTraitSet traitSet, List<RelNode> inputs,
       boolean all) {
     return new EnumerableUnion(getCluster(), traitSet, inputs, all);
   }
 
-  @Override public Result implement(EnumerableRelImplementor implementor, Prefer pref) {
+  public Result implement(EnumerableRelImplementor implementor, Prefer pref) {
     final BlockBuilder builder = new BlockBuilder();
     Expression unionExp = null;
+    final PhysType physType =
+        PhysTypeImpl.of(
+            implementor.getTypeFactory(),
+            getRowType(),
+            pref.prefer(JavaRowFormat.CUSTOM));
     for (Ord<RelNode> ord : Ord.zip(inputs)) {
       EnumerableRel input = (EnumerableRel) ord.e;
       final Result result = implementor.visitChild(this, ord.i, input, pref);
@@ -53,6 +57,15 @@ public class EnumerableUnion extends Union implements EnumerableRel {
           builder.append(
               "child" + ord.i,
               result.block);
+
+      // According the SqlTypeAssignmentRule the child's sql type can be compatible with the Union's
+      // sql type and the Union's sql type is assignable from the child's sql type, but after
+      // translated the sql type to Java type, it is possible that the Union's Java type is not
+      // assignable from the child's Java type, so use EXTENDED_CAST method to make cast.
+      if (!Types.isAssignableFrom(physType.getJavaRowType(), result.physType.getJavaRowType())) {
+        childExp = Expressions.call(childExp, BuiltInMethod.EXTENDED_CAST.method,
+            Expressions.constant(physType.getJavaRowType()));
+      }
 
       if (unionExp == null) {
         unionExp = childExp;
@@ -66,12 +79,8 @@ public class EnumerableUnion extends Union implements EnumerableRel {
       }
     }
 
-    builder.add(requireNonNull(unionExp, "unionExp"));
-    final PhysType physType =
-        PhysTypeImpl.of(
-            implementor.getTypeFactory(),
-            getRowType(),
-            pref.prefer(JavaRowFormat.CUSTOM));
+    builder.add(unionExp);
+
     return implementor.result(physType, builder.toBlock());
   }
 }
