@@ -295,34 +295,6 @@ public abstract class SqlTypeUtil {
   }
 
   /**
-   * Creates a RelDataType having the same type of the sourceRelDataType,
-   * and the same nullability as the targetRelDataType.
-   */
-  public static RelDataType keepSourceTypeAndTargetNullability(RelDataType sourceRelDataType,
-                                             RelDataType targetRelDataType,
-                                             RelDataTypeFactory typeFactory) {
-    if (!targetRelDataType.isStruct()) {
-      return typeFactory.createTypeWithNullability(
-              sourceRelDataType, targetRelDataType.isNullable());
-    }
-    List<RelDataTypeField> targetFields = targetRelDataType.getFieldList();
-    List<RelDataTypeField> sourceFields = sourceRelDataType.getFieldList();
-    ImmutableList.Builder<RelDataTypeField> newTargetField = ImmutableList.builder();
-    for (int i = 0; i < targetRelDataType.getFieldCount(); i++) {
-      RelDataTypeField targetField = targetFields.get(i);
-      RelDataTypeField sourceField = sourceFields.get(i);
-      newTargetField.add(
-          new RelDataTypeFieldImpl(
-              sourceField.getName(),
-              sourceField.getIndex(),
-                  keepSourceTypeAndTargetNullability(
-                          sourceField.getType(), targetField.getType(), typeFactory)));
-    }
-    RelDataType relDataType = typeFactory.createStructType(newTargetField.build());
-    return typeFactory.createTypeWithNullability(relDataType, targetRelDataType.isNullable());
-  }
-
-  /**
    * Returns typeName.equals(type.getSqlTypeName()). If
    * typeName.equals(SqlTypeName.Any) true is always returned.
    */
@@ -772,7 +744,7 @@ public abstract class SqlTypeUtil {
     }
 
     // TODO jvs 2-Jan-2005:  handle all the other cases like
-    // rows, collections, UDT's
+    // UDT's
     if (fromType.getSqlTypeName() == SqlTypeName.NULL) {
       // REVIEW jvs 4-Dec-2008: We allow assignment from NULL to any
       // type, including NOT NULL types, since in the case where no
@@ -783,11 +755,44 @@ public abstract class SqlTypeUtil {
       return true;
     }
 
-    if (fromType.getSqlTypeName() == SqlTypeName.ARRAY) {
-      if (toType.getSqlTypeName() != SqlTypeName.ARRAY) {
+    if (fromType.getSqlTypeName() == SqlTypeName.ARRAY
+        || fromType.getSqlTypeName() == SqlTypeName.MULTISET) {
+      if (toType.getSqlTypeName() != fromType.getSqlTypeName()) {
         return false;
       }
       return canAssignFrom(getComponentTypeOrThrow(toType), getComponentTypeOrThrow(fromType));
+    } else if (fromType.getSqlTypeName() == SqlTypeName.ROW) {
+      if (toType.getSqlTypeName() != fromType.getSqlTypeName()) {
+        return false;
+      }
+      List<RelDataTypeField> fromFields = fromType.getFieldList();
+      List<RelDataTypeField> toFields = toType.getFieldList();
+      if (fromFields.size() != toFields.size()) {
+        return false;
+      }
+      for (int i = 0; i < fromFields.size(); i++) {
+        RelDataTypeField fromField = fromFields.get(i);
+        RelDataTypeField toField = toFields.get(i);
+        if (!toField.getName().equals(fromField.getName())) {
+          return false;
+        }
+        if (!canAssignFrom(toField.getType(), fromField.getType())) {
+          return false;
+        }
+      }
+      return true;
+    } else if (fromType.getSqlTypeName() == SqlTypeName.MAP) {
+      if (toType.getSqlTypeName() != fromType.getSqlTypeName()) {
+        return false;
+      }
+      return
+          canAssignFrom(
+              requireNonNull(toType.getKeyType()),
+              requireNonNull(fromType.getKeyType())
+          ) && canAssignFrom(
+              requireNonNull(toType.getValueType()),
+              requireNonNull(fromType.getValueType())
+          );
     }
 
     if (areCharacterSetsMismatched(toType, fromType)) {
@@ -852,9 +857,6 @@ public abstract class SqlTypeUtil {
 
     final SqlTypeName fromTypeName = fromType.getSqlTypeName();
     final SqlTypeName toTypeName = toType.getSqlTypeName();
-    if (toTypeName == SqlTypeName.UNKNOWN) {
-      return true;
-    }
     if (toType.isStruct() || fromType.isStruct()) {
       if (toTypeName == SqlTypeName.DISTINCT) {
         if (fromTypeName == SqlTypeName.DISTINCT) {
@@ -868,7 +870,7 @@ public abstract class SqlTypeUtil {
             toType, fromType.getFieldList().get(0).getType(), coerce);
       } else if (toTypeName == SqlTypeName.ROW) {
         if (fromTypeName != SqlTypeName.ROW) {
-          return fromTypeName == SqlTypeName.NULL;
+          return false;
         }
         int n = toType.getFieldCount();
         if (fromType.getFieldCount() != n) {
@@ -1064,7 +1066,7 @@ public abstract class SqlTypeUtil {
     assert typeName != null;
 
     final SqlTypeNameSpec typeNameSpec;
-    if (isAtomic(type) || isNull(type) || type.getSqlTypeName() == SqlTypeName.UNKNOWN) {
+    if (isAtomic(type) || isNull(type)) {
       int precision = typeName.allowsPrec() ? type.getPrecision() : -1;
       // fix up the precision.
       if (maxPrecision > 0 && precision > maxPrecision) {
@@ -1145,17 +1147,6 @@ public abstract class SqlTypeUtil {
       boolean nullable) {
     RelDataType ret = typeFactory.createMapType(keyType, valueType);
     return typeFactory.createTypeWithNullability(ret, nullable);
-  }
-
-  /** Creates a MAP type from a record type. The record type must have exactly
-   * two fields. */
-  public static RelDataType createMapTypeFromRecord(
-      RelDataTypeFactory typeFactory, RelDataType type) {
-    Preconditions.checkArgument(type.getFieldCount() == 2,
-        "MAP requires exactly two fields, got %s; row type %s",
-        type.getFieldCount(), type);
-    return createMapType(typeFactory, type.getFieldList().get(0).getType(),
-        type.getFieldList().get(1).getType(), false);
   }
 
   /**

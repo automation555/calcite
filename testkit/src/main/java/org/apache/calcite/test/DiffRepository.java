@@ -23,6 +23,8 @@ import org.apache.calcite.util.Sources;
 import org.apache.calcite.util.Util;
 import org.apache.calcite.util.XmlOutput;
 
+import org.apache.commons.lang3.StringUtils;
+
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
@@ -52,6 +54,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -895,7 +898,17 @@ public class DiffRepository {
     DiffRepository toRepo() {
       final URL refFile = findFile(clazz, ".xml");
       final String refFilePath = Sources.of(refFile).file().getAbsolutePath();
-      final String logFilePath = refFilePath.replace(".xml", "_actual.xml");
+      final String logFilePath;
+      if (StringUtils.containsIgnoreCase(refFilePath, ".jar!")) {
+        // If the file is located in a JAR, we cannot write the file in place
+        // so we add it to the /tmp directory
+        // the expected output is /tmp/[jarname]/[path-to-file-in-jar/filename]_actual.xml
+        logFilePath = Pattern.compile(".*\\/(.*)\\.jar\\!(.*)\\.xml").
+            matcher(refFilePath).
+            replaceAll("/tmp/$1$2_actual.xml");
+      } else {
+        logFilePath = refFilePath.replace(".xml", "_actual.xml");
+      }
       final File logFile = new File(logFilePath);
       assert !refFilePath.equals(logFile.getAbsolutePath());
       return new DiffRepository(refFile, logFile, baseRepository, filter,

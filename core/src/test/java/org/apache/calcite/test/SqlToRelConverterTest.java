@@ -19,6 +19,7 @@ package org.apache.calcite.test;
 import org.apache.calcite.config.CalciteConnectionConfigImpl;
 import org.apache.calcite.config.CalciteConnectionProperty;
 import org.apache.calcite.config.NullCollation;
+import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
 import org.apache.calcite.plan.Contexts;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelTrait;
@@ -38,6 +39,8 @@ import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalSort;
 import org.apache.calcite.rel.logical.LogicalTableModify;
 import org.apache.calcite.rel.rules.CoreRules;
+import org.apache.calcite.rel.type.RelDataTypeSystem;
+import org.apache.calcite.rel.type.RelDataTypeSystemImpl;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -1288,21 +1291,6 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         + "from emp e");
   }
 
-  @Test void testCorrelatedScalarSubQueryInSelectList() {
-    Consumer<String> fn = sql -> {
-      sql(sql).withExpand(true).withDecorrelate(false)
-          .convertsTo("${planExpanded}");
-      sql(sql).withExpand(false).withDecorrelate(false)
-          .convertsTo("${planNotExpanded}");
-    };
-    fn.accept("select deptno,\n"
-        + "  (select min(1) from emp where empno > d.deptno) as i0,\n"
-        + "  (select min(0) from emp where deptno = d.deptno "
-        + "                            and ename = 'SMITH'"
-        + "                            and d.deptno > 0) as i1\n"
-        + "from dept as d");
-  }
-
   @Test void testCorrelationLateralSubQuery() {
     String sql = "SELECT deptno, ename\n"
         + "FROM\n"
@@ -2550,7 +2538,7 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
     programBuilder.addRuleInstance(CoreRules.PROJECT_TO_CALC);
     final HepPlanner planner = new HepPlanner(programBuilder.build());
     planner.setRoot(rel);
-    final RelNode calc = planner.findBestExp();
+    final LogicalCalc calc = (LogicalCalc) planner.findBestExp();
     final List<RelNode> rels = new ArrayList<>();
     final RelShuttleImpl visitor = new RelShuttleImpl() {
       @Override public RelNode visit(LogicalCalc calc) {
@@ -2559,14 +2547,14 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         return visitedRel;
       }
     };
-    calc.accept(visitor);
+    visitor.visit(calc);
     assertThat(rels.size(), is(1));
     assertThat(rels.get(0), isA(LogicalCalc.class));
   }
 
   @Test void testRelShuttleForLogicalTableModify() {
     final String sql = "insert into emp select * from emp";
-    final RelNode rel = sql(sql).toRel();
+    final LogicalTableModify rel = (LogicalTableModify) sql(sql).toRel();
     final List<RelNode> rels = new ArrayList<>();
     final RelShuttleImpl visitor = new RelShuttleImpl() {
       @Override public RelNode visit(LogicalTableModify modify) {
@@ -2575,7 +2563,7 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         return visitedRel;
       }
     };
-    rel.accept(visitor);
+    visitor.visit(rel);
     assertThat(rels.size(), is(1));
     assertThat(rels.get(0), isA(LogicalTableModify.class));
   }
@@ -4034,58 +4022,6 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
     sql(sql).ok();
   }
 
-  @Test void testJsonNestedJsonObjectConstructor() {
-    final String sql = "select\n"
-        + "json_object(\n"
-        + "  'key1' :\n"
-        + "  json_object(\n"
-        + "    'key2' :\n"
-        + "    ename)),\n"
-        + "  json_object(\n"
-        + "    'key3' :\n"
-        + "    json_array(12, 'hello', deptno))\n"
-        + "from emp";
-    sql(sql).ok();
-  }
-
-  @Test void testJsonNestedJsonArrayConstructor() {
-    final String sql = "select\n"
-        + "json_array(\n"
-        + "  json_object(\n"
-        + "    'key1' :\n"
-        + "    json_object(\n"
-        + "      'key2' :\n"
-        + "       ename)),\n"
-        + "  json_array(12, 'hello', deptno))\n"
-        + "from emp";
-    sql(sql).ok();
-  }
-
-  @Test void testJsonNestedJsonObjectAggConstructor() {
-    final String sql = "select\n"
-        + "json_object(\n"
-        + "  'k2' :\n"
-        + "  json_objectagg(\n"
-        + "    ename :\n"
-        + "    json_object(\n"
-        + "      'k1' :\n"
-        + "      deptno)))\n"
-        + "from emp";
-    sql(sql).ok();
-  }
-
-  @Test void testJsonNestedJsonArrayAggConstructor() {
-    final String sql = "select\n"
-        + "json_object(\n"
-        + "  'k2' :\n"
-        + "  json_arrayagg(\n"
-        + "    json_object(\n"
-        + "      ename :\n"
-        + "      deptno)))\n"
-        + "from emp";
-    sql(sql).ok();
-  }
-
   @Test void testWithinGroup1() {
     final String sql = "select deptno,\n"
         + " collect(empno) within group (order by deptno, hiredate desc)\n"
@@ -4434,15 +4370,6 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
     sql(sql).withTrim(true).ok();
   }
 
-  @Test void testJoinWithOnConditionQuery() {
-    String sql = ""
-        + "SELECT emp.deptno, emp.sal\n"
-        + "FROM dept\n"
-        + "JOIN emp\n"
-        + "ON (SELECT AVG(emp.sal) > 0 FROM emp)";
-    sql(sql).ok();
-  }
-
   @Test void testJoinExpandAndDecorrelation() {
     String sql = ""
         + "SELECT emp.deptno, emp.sal\n"
@@ -4509,27 +4436,25 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         .ok();
   }
 
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-5089">[CALCITE-5089]
-   * Allow GROUP BY ALL or DISTINCT set quantifier on GROUPING SETS</a>. */
-  @Test void testGroupByDistinct() {
-    final String sql = "SELECT deptno, job, count(*)\n"
-        + "FROM emp\n"
-        + "GROUP BY DISTINCT\n"
-        + "CUBE (deptno, job),\n"
-        + "ROLLUP (deptno, job)";
-    sql(sql).ok();
-  }
-
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-5089">[CALCITE-5089]
-   * Allow GROUP BY ALL or DISTINCT set quantifier on GROUPING SETS</a>. */
-  @Test void testGroupByAll() {
-    final String sql = "SELECT deptno, job, count(*)\n"
-        + "FROM emp\n"
-        + "GROUP BY ALL\n"
-        + "CUBE (deptno, job),\n"
-        + "ROLLUP (deptno, job)";
-    sql(sql).ok();
+  @Test void testBigIntervalHourPrecision() {
+    String expr = "interval '1000000' hour";
+    expr(expr).withFactory(
+        t -> t.withTypeFactoryFactory(
+          f -> new JavaTypeFactoryImpl() {
+            @Override public RelDataTypeSystem getTypeSystem() {
+              return new RelDataTypeSystemImpl() {
+                @Override public int getDefaultPrecision(SqlTypeName typeName) {
+                  switch (typeName) {
+                  case INTERVAL_HOUR:
+                    return SqlTypeName.MAX_INTERVAL_START_PRECISION;
+                  default:
+                    break;
+                  }
+                  return super.getDefaultPrecision(typeName);
+                }
+              };
+            }
+          }
+    )).ok();
   }
 }
