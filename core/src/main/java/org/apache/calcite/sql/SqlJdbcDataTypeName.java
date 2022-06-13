@@ -32,13 +32,12 @@ import org.apache.calcite.sql.type.SqlTypeName;
 public enum SqlJdbcDataTypeName {
   SQL_CHAR(SqlTypeName.CHAR),
   SQL_VARCHAR(SqlTypeName.VARCHAR),
+  SQL_TEXT(SqlTypeName.TEXT),
   SQL_DATE(SqlTypeName.DATE),
   SQL_TIME(SqlTypeName.TIME),
   SQL_TIME_WITH_LOCAL_TIME_ZONE(SqlTypeName.TIME_WITH_LOCAL_TIME_ZONE),
-  SQL_TIME_WITH_TIME_ZONE(SqlTypeName.TIME_WITH_TIME_ZONE),
   SQL_TIMESTAMP(SqlTypeName.TIMESTAMP),
   SQL_TIMESTAMP_WITH_LOCAL_TIME_ZONE(SqlTypeName.TIMESTAMP_WITH_LOCAL_TIME_ZONE),
-  SQL_TIMESTAMP_WITH_TIME_ZONE(SqlTypeName.TIMESTAMP_WITH_TIME_ZONE),
   SQL_DECIMAL(SqlTypeName.DECIMAL),
   SQL_NUMERIC(SqlTypeName.DECIMAL),
   SQL_BOOLEAN(SqlTypeName.BOOLEAN),
@@ -94,10 +93,13 @@ public enum SqlJdbcDataTypeName {
   public SqlNode createDataType(SqlParserPos pos) {
     if (typeName != null) {
       assert range == null;
-      return new SqlDataTypeSpec(new SqlBasicTypeNameSpec(typeName, pos), pos);
+      final SqlIdentifier id = new SqlIdentifier(typeName.name(), pos);
+      return new SqlDataTypeSpec(id, -1, -1, null, null, pos);
     } else {
       assert range != null;
       return new SqlIntervalQualifier(range.startUnit, range.endUnit, pos);
     }
   }
 }
+
+// End SqlJdbcDataTypeName.java
