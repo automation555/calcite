@@ -16,7 +16,6 @@
  */
 package org.apache.calcite.rex;
 
-import org.apache.calcite.DataContexts;
 import org.apache.calcite.linq4j.function.Predicate1;
 import org.apache.calcite.plan.RelOptPredicateList;
 import org.apache.calcite.plan.RelOptUtil;
@@ -31,6 +30,7 @@ import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeFamily;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexTableInputRef.RelTableRef;
+import org.apache.calcite.schema.Schemas;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
@@ -40,7 +40,6 @@ import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeUtil;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.util.ControlFlowException;
-import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Litmus;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.RangeSets;
@@ -55,7 +54,6 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Range;
 
 import org.apiguardian.api.API;
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -68,8 +66,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
-import static java.util.Objects.requireNonNull;
 
 /**
  * Utility methods concerning row-expressions.
@@ -78,7 +78,7 @@ public class RexUtil {
 
   /** Executor for a bit of constant reduction. The user can pass in another executor. */
   public static final RexExecutor EXECUTOR =
-      new RexExecutorImpl(DataContexts.EMPTY);
+      new RexExecutorImpl(Schemas.createDataContext(null, null));
 
   private RexUtil() {
   }
@@ -92,7 +92,7 @@ public class RexUtil {
    *            selectivity of 1.0)
    * @return guessed selectivity
    */
-  public static double getSelectivity(@Nullable RexNode exp) {
+  public static double getSelectivity(RexNode exp) {
     if ((exp == null) || exp.isAlwaysTrue()) {
       return 1d;
     }
@@ -470,11 +470,8 @@ public class RexUtil {
       RelDataTypeFactory typeFactory) {
     final SqlTypeName name1 = type1.getSqlTypeName();
     final SqlTypeName name2 = type2.getSqlTypeName();
-    final RelDataType type1Final = type1;
-    SqlTypeFamily family = requireNonNull(name1.getFamily(),
-        () -> "SqlTypeFamily is null for type " + type1Final + ", SqlTypeName " + name1);
-    if (family == name2.getFamily()) {
-      switch (family) {
+    if (name1.getFamily() == name2.getFamily()) {
+      switch (name1.getFamily()) {
       case NUMERIC:
         if (SqlTypeUtil.isExactNumeric(type1)
             && SqlTypeUtil.isExactNumeric(type2)) {
@@ -569,41 +566,33 @@ public class RexUtil {
     };
   }
 
-  /** Expands all the calls to {@link SqlStdOperatorTable#SEARCH} in an expression. */
   public static RexNode expandSearch(RexBuilder rexBuilder,
       @Nullable RexProgram program, RexNode node) {
-    return expandSearch(rexBuilder, program, node, -1);
-  }
-
-  /** Expands calls to {@link SqlStdOperatorTable#SEARCH}
-   * whose complexity is greater than {@code maxComplexity} in an expression. */
-  public static RexNode expandSearch(RexBuilder rexBuilder,
-       @Nullable RexProgram program, RexNode node, int maxComplexity) {
-    return node.accept(searchShuttle(rexBuilder, program, maxComplexity));
-  }
-
-  /** Creates a shuttle that expands calls to
-   * {@link SqlStdOperatorTable#SEARCH}.
-   *
-   * <p>If {@code maxComplexity} is non-negative, a {@link Sarg} whose
-   * complexity is greater than {@code maxComplexity} is retained (not
-   * expanded); this gives a means to simplify simple expressions such as
-   * {@code x IS NULL} or {@code x > 10} while keeping more complex expressions
-   * such as {@code x IN (3, 5, 7) OR x IS NULL} as a Sarg. */
-  public static RexShuttle searchShuttle(RexBuilder rexBuilder,
-      @Nullable RexProgram program, int maxComplexity) {
-    return new SearchExpandingShuttle(program, rexBuilder, maxComplexity);
+    final RexShuttle shuttle = new RexShuttle() {
+      @Override public RexNode visitCall(RexCall call) {
+        switch (call.getKind()) {
+        case SEARCH:
+          return visitSearch(rexBuilder, program, call);
+        default:
+          return super.visitCall(call);
+        }
+      }
+    };
+    return node.accept(shuttle);
   }
 
   @SuppressWarnings("BetaApi")
-  public static <C extends Comparable<C>> RexNode sargRef(RexBuilder rexBuilder,
-      RexNode ref, Sarg<C> sarg, RelDataType type, RexUnknownAs unknownAs) {
-    if (sarg.isAll() || sarg.isNone()) {
-      return simpleSarg(rexBuilder, ref, sarg, unknownAs);
-    }
+  private static <C extends Comparable<C>> RexNode
+      visitSearch(RexBuilder rexBuilder,
+          @Nullable RexProgram program, RexCall call) {
+    final RexNode ref = call.operands.get(0);
+    final RexLiteral literal =
+        (RexLiteral) deref(program, call.operands.get(1));
+    @SuppressWarnings("unchecked")
+    final Sarg<C> sarg = literal.getValueAs(Sarg.class);
     final List<RexNode> orList = new ArrayList<>();
-    if (sarg.nullAs == RexUnknownAs.TRUE
-        && unknownAs == RexUnknownAs.UNKNOWN) {
+
+    if (sarg.containsNull) {
       orList.add(rexBuilder.makeCall(SqlStdOperatorTable.IS_NULL, ref));
     }
     if (sarg.isPoints()) {
@@ -612,71 +601,27 @@ public class RexUtil {
           orList.add(
               rexBuilder.makeCall(SqlStdOperatorTable.EQUALS, ref,
                   rexBuilder.makeLiteral(range.lowerEndpoint(),
-                      type, true, true))));
+                      literal.getType(), true, true))));
     } else if (sarg.isComplementedPoints()) {
       // Generate 'ref <> value1 AND ... AND ref <> valueN'
       final List<RexNode> list = sarg.rangeSet.complement().asRanges().stream()
           .map(range ->
               rexBuilder.makeCall(SqlStdOperatorTable.NOT_EQUALS, ref,
                   rexBuilder.makeLiteral(range.lowerEndpoint(),
-                      type, true, true)))
+                      literal.getType(), true, true)))
           .collect(Util.toImmutableList());
       orList.add(composeConjunction(rexBuilder, list));
     } else {
       final RangeSets.Consumer<C> consumer =
-          new RangeToRex<>(ref, orList, rexBuilder, type);
+          new RangeToRex<>(ref, orList, rexBuilder, literal.getType());
       RangeSets.forEach(sarg.rangeSet, consumer);
     }
-    RexNode node = composeDisjunction(rexBuilder, orList);
-    if (sarg.nullAs == RexUnknownAs.FALSE
-        && unknownAs == RexUnknownAs.UNKNOWN) {
-      node =
-          rexBuilder.makeCall(SqlStdOperatorTable.AND,
-              rexBuilder.makeCall(SqlStdOperatorTable.IS_NOT_NULL, ref),
-              node);
-    }
-    return node;
+    return composeDisjunction(rexBuilder, orList);
   }
 
-  /** Expands an 'all' or 'none' sarg. */
-  public static <C extends Comparable<C>> RexNode simpleSarg(RexBuilder rexBuilder,
-      RexNode ref, Sarg<C> sarg, RexUnknownAs unknownAs) {
-    assert sarg.isAll() || sarg.isNone();
-    final RexUnknownAs nullAs =
-        sarg.nullAs == RexUnknownAs.UNKNOWN ? unknownAs
-            : sarg.nullAs;
-    if (sarg.isAll()) {
-      switch (nullAs) {
-      case TRUE:
-        return rexBuilder.makeLiteral(true);
-      case FALSE:
-        return rexBuilder.makeCall(SqlStdOperatorTable.IS_NOT_NULL, ref);
-      case UNKNOWN:
-        // "x IS NOT NULL OR UNKNOWN"
-        return rexBuilder.makeCall(SqlStdOperatorTable.OR,
-            rexBuilder.makeCall(SqlStdOperatorTable.IS_NOT_NULL, ref),
-            rexBuilder.makeNullLiteral(
-                rexBuilder.typeFactory.createSqlType(SqlTypeName.BOOLEAN)));
-      }
-    }
-    if (sarg.isNone()) {
-      switch (nullAs) {
-      case TRUE:
-        return rexBuilder.makeCall(SqlStdOperatorTable.IS_NULL, ref);
-      case FALSE:
-        return rexBuilder.makeLiteral(false);
-      case UNKNOWN:
-        // "CASE WHEN x IS NULL THEN UNKNOWN ELSE FALSE END", or "x <> x"
-        return rexBuilder.makeCall(SqlStdOperatorTable.NOT_EQUALS, ref, ref);
-      }
-    }
-    throw new AssertionError();
-  }
-
-  private static RexNode deref(@Nullable RexProgram program, RexNode node) {
+  private static RexNode deref(RexProgram program, RexNode node) {
     while (node instanceof RexLocalRef) {
-      node = requireNonNull(program, "program")
-          .getExprList().get(((RexLocalRef) node).index);
+      node = program.getExprList().get(((RexLocalRef) node).index);
     }
     return node;
   }
@@ -796,7 +741,7 @@ public class RexUtil {
    * @param operator Operator to look for
    * @param node     a RexNode tree
    */
-  public static @Nullable RexCall findOperatorCall(
+  public static RexCall findOperatorCall(
       final SqlOperator operator,
       RexNode node) {
     try {
@@ -1075,7 +1020,7 @@ public class RexUtil {
    * @param node a RexNode tree
    * @return first such node found or null if it there is no such node
    */
-  public static @Nullable RexTableInputRef containsTableInputRef(RexNode node) {
+  public static RexTableInputRef containsTableInputRef(RexNode node) {
     try {
       RexVisitor<Void> visitor =
           new RexVisitorImpl<Void>(true) {
@@ -1135,8 +1080,8 @@ public class RexUtil {
   public static RelDataType createStructType(
       RelDataTypeFactory typeFactory,
       final List<? extends RexNode> exprs,
-      @Nullable List<? extends @Nullable String> names,
-      SqlValidatorUtil.@Nullable Suggester suggester) {
+      List<String> names,
+      SqlValidatorUtil.Suggester suggester) {
     if (names != null && suggester != null) {
       names = SqlValidatorUtil.uniquify(names, suggester,
           typeFactory.getTypeSystem().isSchemaCaseSensitive());
@@ -1241,10 +1186,10 @@ public class RexUtil {
 
   /** As {@link #composeConjunction(RexBuilder, Iterable, boolean)} but never
    * returns null. */
-  public static RexNode composeConjunction(RexBuilder rexBuilder,
-      Iterable<? extends @Nullable RexNode> nodes) {
+  public static @Nonnull RexNode composeConjunction(RexBuilder rexBuilder,
+      Iterable<? extends RexNode> nodes) {
     final RexNode e = composeConjunction(rexBuilder, nodes, false);
-    return requireNonNull(e, "e");
+    return Objects.requireNonNull(e);
   }
 
   /**
@@ -1255,8 +1200,8 @@ public class RexUtil {
    * Removes expressions that always evaluate to TRUE.
    * Returns null only if {@code nullOnEmpty} and expression is TRUE.
    */
-  public static @Nullable RexNode composeConjunction(RexBuilder rexBuilder,
-      Iterable<? extends @Nullable RexNode> nodes, boolean nullOnEmpty) {
+  public static RexNode composeConjunction(RexBuilder rexBuilder,
+      Iterable<? extends RexNode> nodes, boolean nullOnEmpty) {
     ImmutableList<RexNode> list = flattenAnd(nodes);
     switch (list.size()) {
     case 0:
@@ -1277,7 +1222,7 @@ public class RexUtil {
    *
    * <p>Treats null nodes as literal TRUE (i.e. ignores them). */
   public static ImmutableList<RexNode> flattenAnd(
-      Iterable<? extends @Nullable RexNode> nodes) {
+      Iterable<? extends RexNode> nodes) {
     if (nodes instanceof Collection && ((Collection) nodes).isEmpty()) {
       // Optimize common case
       return ImmutableList.of();
@@ -1315,17 +1260,17 @@ public class RexUtil {
    * Removes expressions that always evaluate to FALSE.
    * Flattens expressions that are ORs.
    */
-  public static RexNode composeDisjunction(RexBuilder rexBuilder,
+  @Nonnull public static RexNode composeDisjunction(RexBuilder rexBuilder,
       Iterable<? extends RexNode> nodes) {
     final RexNode e = composeDisjunction(rexBuilder, nodes, false);
-    return requireNonNull(e, "e");
+    return Objects.requireNonNull(e);
   }
 
   /**
    * Converts a collection of expressions into an OR,
    * optionally returning null if the list is empty.
    */
-  public static @Nullable RexNode composeDisjunction(RexBuilder rexBuilder,
+  public static RexNode composeDisjunction(RexBuilder rexBuilder,
       Iterable<? extends RexNode> nodes, boolean nullOnEmpty) {
     ImmutableList<RexNode> list = flattenOr(nodes);
     switch (list.size()) {
@@ -1442,7 +1387,7 @@ public class RexUtil {
    * @param fieldCollation Field collation
    * @return collation with mapping applied
    */
-  public static @Nullable RelFieldCollation apply(
+  public static RelFieldCollation apply(
       Mappings.TargetMapping mapping,
       RelFieldCollation fieldCollation) {
     final int target =
@@ -1519,7 +1464,7 @@ public class RexUtil {
   public static void apply(
       RexVisitor<Void> visitor,
       RexNode[] exprs,
-      @Nullable RexNode expr) {
+      RexNode expr) {
     for (RexNode e : exprs) {
       e.accept(visitor);
     }
@@ -1539,7 +1484,7 @@ public class RexUtil {
   public static void apply(
       RexVisitor<Void> visitor,
       List<? extends RexNode> exprs,
-      @Nullable RexNode expr) {
+      RexNode expr) {
     for (RexNode e : exprs) {
       e.accept(visitor);
     }
@@ -2001,8 +1946,7 @@ public class RexUtil {
         ImmutableList.of(e));
   }
 
-  @API(since = "1.27.0", status = API.Status.EXPERIMENTAL)
-  public static SqlOperator op(SqlKind kind) {
+  static SqlOperator op(SqlKind kind) {
     switch (kind) {
     case IS_FALSE:
       return SqlStdOperatorTable.IS_FALSE;
@@ -2066,7 +2010,7 @@ public class RexUtil {
         .simplifyAnd2ForUnknownAsFalse(terms, notTerms);
   }
 
-  public static @Nullable RexNode negate(RexBuilder rexBuilder, RexCall call) {
+  public static RexNode negate(RexBuilder rexBuilder, RexCall call) {
     switch (call.getKind()) {
     case EQUALS:
     case NOT_EQUALS:
@@ -2082,7 +2026,7 @@ public class RexUtil {
     return null;
   }
 
-  public static @Nullable RexNode invert(RexBuilder rexBuilder, RexCall call) {
+  public static RexNode invert(RexBuilder rexBuilder, RexCall call) {
     switch (call.getKind()) {
     case EQUALS:
     case NOT_EQUALS:
@@ -2090,11 +2034,12 @@ public class RexUtil {
     case GREATER_THAN:
     case LESS_THAN_OR_EQUAL:
     case GREATER_THAN_OR_EQUAL:
-      final SqlOperator op = requireNonNull(call.getOperator().reverse());
+      final SqlOperator op = op(call.getKind().reverse());
       return rexBuilder.makeCall(op, Lists.reverse(call.getOperands()));
     default:
-      return null;
+      break;
     }
+    return null;
   }
 
   @Deprecated // to be removed before 2.0
@@ -2130,7 +2075,7 @@ public class RexUtil {
    *       returns "x = 10 AND NOT (y = 30)"
    * </ul>
    */
-  public static RexNode andNot(final RexBuilder rexBuilder, RexNode e,
+  public static @Nonnull RexNode andNot(final RexBuilder rexBuilder, RexNode e,
       Iterable<? extends RexNode> notTerms) {
     // If "e" is of the form "x = literal", remove all "x = otherLiteral"
     // terms from notTerms.
@@ -2208,10 +2153,7 @@ public class RexUtil {
     return e -> not(rexBuilder, e);
   }
 
-  /** Applies NOT to an expression.
-   *
-   * <p>Unlike {@link #not}, may strengthen the type from {@code BOOLEAN}
-   * to {@code BOOLEAN NOT NULL}. */
+  /** Applies NOT to an expression. */
   static RexNode not(final RexBuilder rexBuilder, RexNode input) {
     return input.isAlwaysTrue()
         ? rexBuilder.makeLiteral(false)
@@ -2258,16 +2200,14 @@ public class RexUtil {
    * in the second map (in particular, the first element of the set in the map value).
    */
   public static RexNode swapTableColumnReferences(final RexBuilder rexBuilder,
-      final RexNode node, final @Nullable Map<RelTableRef, RelTableRef> tableMapping,
-      final @Nullable Map<RexTableInputRef, Set<RexTableInputRef>> ec) {
+      final RexNode node, final Map<RelTableRef, RelTableRef> tableMapping,
+      final Map<RexTableInputRef, Set<RexTableInputRef>> ec) {
     RexShuttle visitor =
         new RexShuttle() {
           @Override public RexNode visitTableInputRef(RexTableInputRef inputRef) {
             if (tableMapping != null) {
-              RexTableInputRef inputRefFinal = inputRef;
               inputRef = RexTableInputRef.of(
-                  requireNonNull(tableMapping.get(inputRef.getTableRef()),
-                      () -> "tableMapping.get(...) for " + inputRefFinal.getTableRef()),
+                  tableMapping.get(inputRef.getTableRef()),
                   inputRef.getIndex(),
                   inputRef.getType());
             }
@@ -2290,8 +2230,8 @@ public class RexUtil {
    * {@link RexTableInputRef} using the contents in the second map.
    */
   public static RexNode swapColumnTableReferences(final RexBuilder rexBuilder,
-      final RexNode node, final Map<RexTableInputRef, ? extends @Nullable Set<RexTableInputRef>> ec,
-      final @Nullable Map<RelTableRef, RelTableRef> tableMapping) {
+      final RexNode node, final Map<RexTableInputRef, Set<RexTableInputRef>> ec,
+      final Map<RelTableRef, RelTableRef> tableMapping) {
     RexShuttle visitor =
         new RexShuttle() {
           @Override public RexNode visitTableInputRef(RexTableInputRef inputRef) {
@@ -2302,10 +2242,8 @@ public class RexUtil {
               }
             }
             if (tableMapping != null) {
-              RexTableInputRef inputRefFinal = inputRef;
               inputRef = RexTableInputRef.of(
-                  requireNonNull(tableMapping.get(inputRef.getTableRef()),
-                      () -> "tableMapping.get(...) for " + inputRefFinal.getTableRef()),
+                  tableMapping.get(inputRef.getTableRef()),
                   inputRef.getIndex(),
                   inputRef.getType());
             }
@@ -2332,34 +2270,12 @@ public class RexUtil {
     return occurrences;
   }
 
-  /**
-   * Given some expressions, gets the indices of the non-constant ones.
-   */
-  public static ImmutableBitSet getNonConstColumns(List<RexNode> expressions) {
-    ImmutableBitSet cols = ImmutableBitSet.range(0, expressions.size());
-    return getNonConstColumns(cols, expressions);
-  }
-
-  /**
-   * Given some expressions and columns, gets the indices of the non-constant ones.
-   */
-  public static ImmutableBitSet getNonConstColumns(
-      ImmutableBitSet columns, List<RexNode> expressions) {
-    ImmutableBitSet.Builder nonConstCols = ImmutableBitSet.builder();
-    for (int col : columns) {
-      if (!isLiteral(expressions.get(col), true)) {
-        nonConstCols.set(col);
-      }
-    }
-    return nonConstCols.build();
-  }
-
   //~ Inner Classes ----------------------------------------------------------
 
   /**
    * Walks over expressions and builds a bank of common sub-expressions.
    */
-  private static class ExpressionNormalizer extends RexVisitorImpl<@Nullable RexNode> {
+  private static class ExpressionNormalizer extends RexVisitorImpl<RexNode> {
     final Map<RexNode, RexNode> map = new HashMap<>();
     final boolean allowDups;
 
@@ -2377,9 +2293,7 @@ public class RexUtil {
     }
 
     protected RexNode lookup(RexNode expr) {
-      return requireNonNull(
-          map.get(expr),
-          () -> "missing normalization for expression " + expr);
+      return map.get(expr);
     }
 
     @Override public RexNode visitInputRef(RexInputRef inputRef) {
@@ -2644,7 +2558,7 @@ public class RexUtil {
       return list;
     }
 
-    private static Map<RexNode, RexNode> commonFactors(List<RexNode> nodes) {
+    private Map<RexNode, RexNode> commonFactors(List<RexNode> nodes) {
       final Map<RexNode, RexNode> map = new HashMap<>();
       int i = 0;
       for (RexNode node : nodes) {
@@ -2681,6 +2595,24 @@ public class RexUtil {
   /** Transforms a list of expressions to the list of digests. */
   public static List<String> strings(List<RexNode> list) {
     return Util.transform(list, Object::toString);
+  }
+
+  /**
+   * Generate normalized rex call, with operands and the resulting expression
+   * being cast wherever necessary.
+   */
+  public static RexNode normalizedRexCall(
+      RexBuilder rexBuilder, SqlOperator op, List<RexNode> operands,
+      RelDataType returnType, RelDataType operandType) {
+    List<RexNode> newOperands = operands.stream()
+        .map(r -> r.getType().equals(operandType) ? r : rexBuilder.makeAbstractCast(operandType, r))
+        .collect(Collectors.toList());
+
+    RexNode node = rexBuilder.makeCall(op, newOperands);
+    if (!node.getType().equals(returnType)) {
+      node = rexBuilder.makeAbstractCast(returnType, node);
+    }
+    return node;
   }
 
   /** Helps {@link org.apache.calcite.rex.RexUtil#toDnf}. */
@@ -2874,7 +2806,7 @@ public class RexUtil {
       throw new Util.FoundOne(subQuery);
     }
 
-    public static @Nullable RexSubQuery find(Iterable<RexNode> nodes) {
+    public static RexSubQuery find(Iterable<RexNode> nodes) {
       for (RexNode node : nodes) {
         try {
           node.accept(INSTANCE);
@@ -2885,7 +2817,7 @@ public class RexUtil {
       return null;
     }
 
-    public static @Nullable RexSubQuery find(RexNode node) {
+    public static RexSubQuery find(RexNode node) {
       try {
         node.accept(INSTANCE);
         return null;
@@ -3015,10 +2947,10 @@ public class RexUtil {
 
     RangeToRex(RexNode ref, List<RexNode> list, RexBuilder rexBuilder,
         RelDataType type) {
-      this.ref = requireNonNull(ref, "ref");
-      this.list = requireNonNull(list, "list");
-      this.rexBuilder = requireNonNull(rexBuilder, "rexBuilder");
-      this.type = requireNonNull(type, "type");
+      this.ref = Objects.requireNonNull(ref);
+      this.list = Objects.requireNonNull(list);
+      this.rexBuilder = Objects.requireNonNull(rexBuilder);
+      this.type = Objects.requireNonNull(type);
     }
 
     private void addAnd(RexNode... nodes) {
@@ -3072,58 +3004,6 @@ public class RexUtil {
     @Override public void open(C lower, C upper) {
       addAnd(op(SqlStdOperatorTable.GREATER_THAN, lower),
           op(SqlStdOperatorTable.LESS_THAN, upper));
-    }
-  }
-
-  /** Shuttle that expands calls to
-   * {@link org.apache.calcite.sql.fun.SqlStdOperatorTable#SEARCH}.
-   *
-   * <p>Calls whose complexity is greater than {@link #maxComplexity}
-   * are retained (not expanded). */
-  private static class SearchExpandingShuttle extends RexShuttle {
-    private final RexBuilder rexBuilder;
-    private final @Nullable RexProgram program;
-    private final int maxComplexity;
-
-    SearchExpandingShuttle(@Nullable RexProgram program, RexBuilder rexBuilder,
-        int maxComplexity) {
-      this.program = program;
-      this.rexBuilder = rexBuilder;
-      this.maxComplexity = maxComplexity;
-    }
-
-    @Override public RexNode visitCall(RexCall call) {
-      final boolean[] update = {false};
-      final List<RexNode> clonedOperands;
-      switch (call.getKind()) {
-      // Flatten AND/OR operands.
-      case OR:
-        clonedOperands = visitList(call.operands, update);
-        if (update[0]) {
-          return composeDisjunction(rexBuilder, clonedOperands);
-        } else {
-          return call;
-        }
-      case AND:
-        clonedOperands = visitList(call.operands, update);
-        if (update[0]) {
-          return composeConjunction(rexBuilder, clonedOperands);
-        } else {
-          return call;
-        }
-      case SEARCH:
-        final RexNode ref = call.operands.get(0);
-        final RexLiteral literal =
-            (RexLiteral) deref(program, call.operands.get(1));
-        final Sarg sarg = requireNonNull(literal.getValueAs(Sarg.class), "Sarg");
-        if (maxComplexity < 0 || sarg.complexity() < maxComplexity) {
-          return sargRef(rexBuilder, ref, sarg, literal.getType(),
-              RexUnknownAs.UNKNOWN);
-        }
-        // Sarg is complex (therefore useful); fall through
-      default:
-        return super.visitCall(call);
-      }
     }
   }
 }
