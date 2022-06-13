@@ -28,14 +28,10 @@ import org.apache.calcite.sql.validate.SqlValidatorScope;
 import org.apache.calcite.util.Litmus;
 import org.apache.calcite.util.Util;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.math.BigDecimal;
 import java.nio.charset.Charset;
 
 import static org.apache.calcite.util.Static.RESOURCE;
-
-import static java.util.Objects.requireNonNull;
 
 /**
  * <code>SqlBinaryOperator</code> is a binary operator.
@@ -59,9 +55,9 @@ public class SqlBinaryOperator extends SqlOperator {
       SqlKind kind,
       int prec,
       boolean leftAssoc,
-      @Nullable SqlReturnTypeInference returnTypeInference,
-      @Nullable SqlOperandTypeInference operandTypeInference,
-      @Nullable SqlOperandTypeChecker operandTypeChecker) {
+      SqlReturnTypeInference returnTypeInference,
+      SqlOperandTypeInference operandTypeInference,
+      SqlOperandTypeChecker operandTypeChecker) {
     super(
         name,
         kind,
@@ -74,11 +70,11 @@ public class SqlBinaryOperator extends SqlOperator {
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public SqlSyntax getSyntax() {
+  public SqlSyntax getSyntax() {
     return SqlSyntax.BINARY;
   }
 
-  @Override public @Nullable String getSignatureTemplate(final int operandsCount) {
+  public String getSignatureTemplate(final int operandsCount) {
     Util.discard(operandsCount);
 
     // op0 opname op1
@@ -99,65 +95,35 @@ public class SqlBinaryOperator extends SqlOperator {
     return !getName().equals(".");
   }
 
-  @Override public @Nullable SqlOperator reverse() {
-    switch (kind) {
-    case EQUALS:
-    case NOT_EQUALS:
-    case IS_DISTINCT_FROM:
-    case IS_NOT_DISTINCT_FROM:
-    case OR:
-    case AND:
-    case PLUS:
-    case TIMES:
-      return this;
-
-    case GREATER_THAN:
-      return SqlStdOperatorTable.LESS_THAN;
-    case GREATER_THAN_OR_EQUAL:
-      return SqlStdOperatorTable.LESS_THAN_OR_EQUAL;
-    case LESS_THAN:
-      return SqlStdOperatorTable.GREATER_THAN;
-    case LESS_THAN_OR_EQUAL:
-      return SqlStdOperatorTable.GREATER_THAN_OR_EQUAL;
-
-    default:
-      return null;
-    }
-  }
-
-  @Override protected RelDataType adjustType(
+  protected RelDataType adjustType(
       SqlValidator validator,
       final SqlCall call,
       RelDataType type) {
-    return convertType(validator, call, type);
-  }
-
-  private RelDataType convertType(SqlValidator validator, SqlCall call, RelDataType type) {
-    RelDataType operandType0 =
-        validator.getValidatedNodeType(call.operand(0));
     RelDataType operandType1 =
+        validator.getValidatedNodeType(call.operand(0));
+    RelDataType operandType2 =
         validator.getValidatedNodeType(call.operand(1));
-    if (SqlTypeUtil.inCharFamily(operandType0)
-        && SqlTypeUtil.inCharFamily(operandType1)) {
-      Charset cs0 = operandType0.getCharset();
+    if (SqlTypeUtil.inCharFamily(operandType1)
+        && SqlTypeUtil.inCharFamily(operandType2)) {
       Charset cs1 = operandType1.getCharset();
-      assert (null != cs0) && (null != cs1)
+      Charset cs2 = operandType2.getCharset();
+      assert (null != cs1) && (null != cs2)
           : "An implicit or explicit charset should have been set";
-      if (!cs0.equals(cs1)) {
+      if (!cs1.equals(cs2)) {
         throw validator.newValidationError(call,
-            RESOURCE.incompatibleCharset(getName(), cs0.name(), cs1.name()));
+            RESOURCE.incompatibleCharset(getName(), cs1.name(), cs2.name()));
       }
 
-      SqlCollation collation0 = operandType0.getCollation();
-      SqlCollation collation1 = operandType1.getCollation();
-      assert (null != collation0) && (null != collation1)
+      SqlCollation col1 = operandType1.getCollation();
+      SqlCollation col2 = operandType2.getCollation();
+      assert (null != col1) && (null != col2)
           : "An implicit or explicit collation should have been set";
 
-      // Validation will occur inside getCoercibilityDyadicOperator...
+      // validation will occur inside getCoercibilityDyadicOperator...
       SqlCollation resultCol =
           SqlCollation.getCoercibilityDyadicOperator(
-              collation0,
-              collation1);
+              col1,
+              col2);
 
       if (SqlTypeUtil.inCharFamily(type)) {
         type =
@@ -165,37 +131,80 @@ public class SqlBinaryOperator extends SqlOperator {
                 .createTypeWithCharsetAndCollation(
                     type,
                     type.getCharset(),
-                    requireNonNull(resultCol, "resultCol"));
+                    resultCol);
       }
     }
     return type;
   }
 
-  @Override public RelDataType deriveType(
+  public RelDataType deriveType(
       SqlValidator validator,
       SqlValidatorScope scope,
       SqlCall call) {
     RelDataType type = super.deriveType(validator, scope, call);
-    return convertType(validator, call, type);
+
+    RelDataType operandType1 =
+        validator.getValidatedNodeType(call.operand(0));
+    RelDataType operandType2 =
+        validator.getValidatedNodeType(call.operand(1));
+    if (SqlTypeUtil.inCharFamily(operandType1)
+        && SqlTypeUtil.inCharFamily(operandType2)) {
+      Charset cs1 = operandType1.getCharset();
+      Charset cs2 = operandType2.getCharset();
+      assert (null != cs1) && (null != cs2)
+          : "An implicit or explicit charset should have been set";
+      if (!cs1.equals(cs2)) {
+        throw validator.newValidationError(call,
+            RESOURCE.incompatibleCharset(getName(), cs1.name(), cs2.name()));
+      }
+
+      SqlCollation col1 = operandType1.getCollation();
+      SqlCollation col2 = operandType2.getCollation();
+      assert (null != col1) && (null != col2)
+          : "An implicit or explicit collation should have been set";
+
+      // validation will occur inside getCoercibilityDyadicOperator...
+      SqlCollation resultCol =
+          SqlCollation.getCoercibilityDyadicOperator(
+              col1,
+              col2);
+
+      if (SqlTypeUtil.inCharFamily(type)) {
+        type =
+            validator.getTypeFactory()
+                .createTypeWithCharsetAndCollation(
+                    type,
+                    type.getCharset(),
+                    resultCol);
+      }
+    }
+    return type;
+  }
+
+  protected boolean hasNullOperand(final SqlOperatorBinding call) {
+    for (int i = 0; i < call.getOperandCount(); i++) {
+      if (call.isOperandNull(i, true)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @Override public SqlMonotonicity getMonotonicity(SqlOperatorBinding call) {
-    if (getName().equals("/")) {
-      if (call.isOperandNull(0, true)
-          || call.isOperandNull(1, true)) {
-        // null result => CONSTANT monotonicity
+    // specially handle cases with null operands
+    if (hasNullOperand(call)) {
+      switch (this.kind) {
+      case DIVIDE:
         return SqlMonotonicity.CONSTANT;
       }
+    }
 
+    if (getName().equals("/")) {
       final SqlMonotonicity mono0 = call.getOperandMonotonicity(0);
       final SqlMonotonicity mono1 = call.getOperandMonotonicity(1);
       if (mono1 == SqlMonotonicity.CONSTANT) {
         if (call.isOperandLiteral(1, false)) {
-          BigDecimal value = call.getOperandLiteralValue(1, BigDecimal.class);
-          if (value == null) {
-            return SqlMonotonicity.CONSTANT;
-          }
-          switch (value.signum()) {
+          switch (call.getOperandLiteralValue(1, BigDecimal.class).signum()) {
           case -1:
 
             // mono / -ve constant --> reverse mono, unstrict
@@ -229,3 +238,5 @@ public class SqlBinaryOperator extends SqlOperator {
     return litmus.succeed();
   }
 }
+
+// End SqlBinaryOperator.java

@@ -28,20 +28,19 @@ import org.apache.calcite.sql.SqlOperandCountRange;
 import org.apache.calcite.sql.SqlOperatorBinding;
 import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.SqlWriter;
-import org.apache.calcite.sql.type.FamilyOperandTypeChecker;
 import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlOperandCountRanges;
-import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeUtil;
 import org.apache.calcite.sql.validate.SqlMonotonicity;
+import org.apache.calcite.sql.validate.SqlValidator;
+import org.apache.calcite.sql.validate.SqlValidatorScope;
 
 import com.google.common.collect.ImmutableList;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Objects;
 
 /**
  * Definition of the "SUBSTRING" builtin SQL function.
@@ -64,7 +63,7 @@ public class SqlSubstringFunction extends SqlFunction {
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public String getSignatureTemplate(final int operandsCount) {
+  public String getSignatureTemplate(final int operandsCount) {
     switch (operandsCount) {
     case 2:
       return "{0}({1} FROM {2})";
@@ -75,7 +74,7 @@ public class SqlSubstringFunction extends SqlFunction {
     }
   }
 
-  @Override public String getAllowedSignatures(String opName) {
+  public String getAllowedSignatures(String opName) {
     StringBuilder ret = new StringBuilder();
     for (Ord<SqlTypeName> typeName : Ord.zip(SqlTypeName.STRING_TYPES)) {
       if (typeName.i > 0) {
@@ -93,38 +92,71 @@ public class SqlSubstringFunction extends SqlFunction {
     return ret.toString();
   }
 
-  @Override public boolean checkOperandTypes(
+  public boolean checkOperandTypes(
       SqlCallBinding callBinding,
       boolean throwOnFailure) {
-    List<SqlNode> operands = callBinding.operands();
+    SqlValidator validator = callBinding.getValidator();
+    SqlValidatorScope scope = callBinding.getScope();
+
+    final List<SqlNode> operands = callBinding.operands();
     int n = operands.size();
     assert (3 == n) || (2 == n);
+    if (!OperandTypes.STRING.checkSingleOperandType(
+        callBinding,
+        operands.get(0),
+        0,
+        throwOnFailure)) {
+      return false;
+    }
     if (2 == n) {
-      return OperandTypes.family(SqlTypeFamily.STRING, SqlTypeFamily.NUMERIC)
-          .checkOperandTypes(callBinding, throwOnFailure);
-    } else {
-      final FamilyOperandTypeChecker checker1 = OperandTypes.STRING_STRING_STRING;
-      final FamilyOperandTypeChecker checker2 = OperandTypes.family(
-          SqlTypeFamily.STRING,
-          SqlTypeFamily.NUMERIC,
-          SqlTypeFamily.NUMERIC);
-      // Put the STRING_NUMERIC_NUMERIC checker first because almost every other type
-      // can be coerced to STRING.
-      if (!OperandTypes.or(checker2, checker1)
-          .checkOperandTypes(callBinding, throwOnFailure)) {
+      if (!OperandTypes.NUMERIC.checkSingleOperandType(
+          callBinding,
+          operands.get(1),
+          0,
+          throwOnFailure)) {
         return false;
       }
-      // Reset the operands because they may be coerced during
-      // implicit type coercion.
-      operands = callBinding.getCall().getOperandList();
-      final RelDataType t1 = callBinding.getOperandType(1);
-      final RelDataType t2 = callBinding.getOperandType(2);
+    } else {
+      RelDataType t1 = validator.deriveType(scope, operands.get(1));
+      RelDataType t2 = validator.deriveType(scope, operands.get(2));
+
       if (SqlTypeUtil.inCharFamily(t1)) {
+        if (!OperandTypes.STRING.checkSingleOperandType(
+            callBinding,
+            operands.get(1),
+            0,
+            throwOnFailure)) {
+          return false;
+        }
+        if (!OperandTypes.STRING.checkSingleOperandType(
+            callBinding,
+            operands.get(2),
+            0,
+            throwOnFailure)) {
+          return false;
+        }
+
         if (!SqlTypeUtil.isCharTypeComparable(callBinding, operands,
             throwOnFailure)) {
           return false;
         }
+      } else {
+        if (!OperandTypes.NUMERIC.checkSingleOperandType(
+            callBinding,
+            operands.get(1),
+            0,
+            throwOnFailure)) {
+          return false;
+        }
+        if (!OperandTypes.NUMERIC.checkSingleOperandType(
+            callBinding,
+            operands.get(2),
+            0,
+            throwOnFailure)) {
+          return false;
+        }
       }
+
       if (!SqlTypeUtil.inSameFamily(t1, t2)) {
         if (throwOnFailure) {
           throw callBinding.newValidationSignatureError();
@@ -135,11 +167,11 @@ public class SqlSubstringFunction extends SqlFunction {
     return true;
   }
 
-  @Override public SqlOperandCountRange getOperandCountRange() {
+  public SqlOperandCountRange getOperandCountRange() {
     return SqlOperandCountRanges.between(2, 3);
   }
 
-  @Override public void unparse(
+  public void unparse(
       SqlWriter writer,
       SqlCall call,
       int leftPrec,
@@ -161,14 +193,20 @@ public class SqlSubstringFunction extends SqlFunction {
     // SUBSTRING(x FROM 0 FOR constant) has same monotonicity as x
     if (call.getOperandCount() == 3) {
       final SqlMonotonicity mono0 = call.getOperandMonotonicity(0);
-      if (mono0 != null
-          && mono0 != SqlMonotonicity.NOT_MONOTONIC
+      if ((mono0 != SqlMonotonicity.NOT_MONOTONIC)
           && call.getOperandMonotonicity(1) == SqlMonotonicity.CONSTANT
-          && Objects.equals(call.getOperandLiteralValue(1, BigDecimal.class), BigDecimal.ZERO)
           && call.getOperandMonotonicity(2) == SqlMonotonicity.CONSTANT) {
-        return mono0.unstrict();
+        if (call.isOperandNull(1, true)) {
+          return SqlMonotonicity.CONSTANT;
+        }
+        if (call.getOperandLiteralValue(1, BigDecimal.class)
+            .equals(BigDecimal.ZERO)) {
+          return mono0.unstrict();
+        }
       }
     }
     return super.getMonotonicity(call);
   }
 }
+
+// End SqlSubstringFunction.java
