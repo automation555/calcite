@@ -130,6 +130,9 @@ public enum SqlKind {
    */
   OTHER_FUNCTION,
 
+  /** Clause of input table with set semantics of Table Function. */
+  SET_SEMANTICS_TABLE,
+
   /** POSITION function. */
   POSITION,
 
@@ -156,9 +159,6 @@ public enum SqlKind {
 
   /** A dynamic parameter. */
   DYNAMIC_PARAM,
-
-  /** The DISTINCT keyword of the GROUP BY clause. */
-  GROUP_BY_DISTINCT,
 
   /**
    * ORDER BY clause.
@@ -676,9 +676,6 @@ public enum SqlKind {
 
   /** {@code JSON_OBJECTAGG} aggregate function. */
   JSON_OBJECTAGG,
-
-  /** {@code JSON} type function. */
-  JSON_TYPE,
 
   /** {@code UNNEST} operator. */
   UNNEST,

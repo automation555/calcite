@@ -1564,6 +1564,50 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .fails("No match found for function signature FOO..");
   }
 
+  @Test void testInvalidTableFunction() {
+    // A table function at most have one input table with row semantics
+    sql("select * from table(^invalid(table orders, table emp)^)")
+        .fails("A table function at most has one input table with row semantics."
+            + " Table function 'INVALID' has multiple input tables with row semantics");
+    // Only tables with set semantics may be partitioned
+    sql("select * from table(^score(table orders partition by productid)^)")
+        .fails("Only tables with set semantics may be partitioned."
+            + " Invalid PARTITION BY clause in the 0-th operand of table function 'SCORE'");
+    // Only tables with set semantics may be ordered
+    sql("select * from table(^score(table orders order by orderId)^)")
+        .fails("Only tables with set semantics may be ordered."
+            + " Invalid ORDER BY clause in the 0-th operand of table function 'SCORE'");
+  }
+
+  @Test void testTableFunctionWithTableParam() {
+    // test input table with row semantic
+    sql("select * from table(score(table orders))").ok();
+    // test no partition by clause and order by clause for input table with set semantic
+    sql("select * from table(topn(table orders, 3))").ok();
+    // test one partition key for input table with set semantic
+    sql("select * from table(topn(table orders partition by productid, 3))")
+        .ok();
+    // test multiple partition keys for input table with set semantic
+    sql("select * from table(topn(table orders partition by (orderId, productid), 3))")
+        .ok();
+    // test one order key for input table with set semantic
+    sql("select * from table(topn(table orders order by orderId, 3))")
+        .ok();
+    // test multiple order keys for input table with set semantic
+    sql("select * from table(topn(table orders order by (orderId, productid), 3))")
+        .ok();
+    // test complex order-by clause for input table with set semantic
+    sql("select * from table(topn(table orders order by (orderId desc, productid asc), 3))")
+        .ok();
+    // test partition by clause and order by clause for input table with set semantic
+    sql("select * from table(topn(table orders partition by productid order by orderId, 3))")
+        .ok();
+    // test partition by clause and order by clause for subquery
+    sql("select * from table(topn(select * from Orders partition by productid "
+        + "order by orderId, 3))")
+        .ok();
+  }
+
   @Test void testUnknownFunctionHandling() {
     final SqlValidatorFixture s = fixture().withLenientOperatorLookup(true);
     s.withExpr("concat('a', 2)").ok();
@@ -6069,7 +6113,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
   @Test void testNaturalJoinIncompatibleDatatype() {
     sql("select *\n"
         + "from (select ename as name, hiredate as deptno from emp)\n"
-        + "^natural^ join\n"
+        + "natural ^join^\n"
         + "(select deptno, name as sal from dept)")
         .fails("Column 'DEPTNO' matched using NATURAL keyword or USING clause "
             + "has incompatible types: "
@@ -6105,72 +6149,9 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .fails("Column 'GENDER' not found in any table");
   }
 
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-5171">[CALCITE-5171]
-   * NATURAL join and USING should fail if join columns are not unique</a>. */
-  @Test void testNaturalJoinDuplicateColumns() {
-    // NATURAL join and USING should fail if join columns are not unique
-    final String message = "Column name 'DEPTNO' in NATURAL join or "
-        + "USING clause is not unique on one side of join";
-    sql("select e.ename, d.name\n"
-        + "from dept as d\n"
-        + "^natural^ join (select ename, sal as deptno, deptno from emp) as e")
-        .fails(message);
-
-    // A similar query with USING fails with the same error
-    sql("select e.ename, d.name\n"
-        + "from dept as d\n"
-        + "join (select ename, sal as deptno, deptno from emp) as e\n"
-        + "  using (^deptno^)")
-        .fails(message);
-
-    // Also with "*". (Proves that FROM is validated before SELECT.)
-    sql("select *\n"
-        + "from emp\n"
-        + "left join (select deptno, name as deptno from dept)\n"
-        + "  using (^deptno^)")
-        .fails(message);
-
-    // Reversed query gives reversed error message
-    sql("select e.ename, d.name\n"
-        + "from (select ename, sal as deptno, deptno from emp) as e\n"
-        + "join dept as d\n"
-        + "  using (^deptno^)")
-        .fails(message);
-
-    // The error only occurs if the duplicate column is referenced. The
-    // following query has a duplicate hiredate column.
-    sql("select e.ename, d.name\n"
-        + "from dept as d\n"
-        + "join (select ename, sal as hiredate, deptno from emp) as e\n"
-        + "  using (deptno)")
-        .ok();
-  }
-
-  @Test void testNaturalEmptyKey() {
-    // If there are no columns in common, natural join is empty, and that's OK.
-    sql("select *\n"
-        + "from (select ename from emp) as e\n"
-        + "natural join dept as d")
-        .type("RecordType("
-            + "VARCHAR(20) NOT NULL ENAME, "
-            + "INTEGER NOT NULL DEPTNO, "
-            + "VARCHAR(10) NOT NULL NAME) NOT NULL");
-
-    // If there are duplicates on one side, that's OK, because the empty natural
-    // join prevents us from checking.
-    sql("select d.*\n"
-        + "from (select ename, sal as ename from emp) as e\n"
-        + "natural join dept as d")
-        .type("RecordType("
-            + "INTEGER NOT NULL DEPTNO, "
-            + "VARCHAR(10) NOT NULL NAME) NOT NULL");
-    // Cannot expand star if it contains duplicate columns.
-    // (Postgres thinks this query is OK.)
-    sql("select ^e.*^\n"
-        + "from (select ename, sal as ename from emp) as e\n"
-        + "natural join dept as d")
-        .fails("Column 'ENAME' is ambiguous");
+  @Test void testJoinUsingDupColsFails() {
+    sql("select * from emp left join (select deptno, name as deptno from dept) using (^deptno^)")
+        .fails("Column name 'DEPTNO' in USING clause is not unique on one side of join");
   }
 
   @Test void testJoinRowType() {
@@ -6214,24 +6195,25 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
             + " VARCHAR(10) NAME) NOT NULL");
   }
 
-  @Test void testJoinUsingWithParentheses() {
+  // todo: Cannot handle '(a join b)' yet -- we see the '(' and expect to
+  // see 'select'.
+  public void _testJoinUsing() {
     sql("select * from (emp join bonus using (job))\n"
         + "join dept using (deptno)").ok();
 
-    // Cannot alias a JOIN (until
-    // [CALCITE-5168] Allow AS after parenthesized JOIN
-    // is fixed).
-    sql("select * from (emp ^join^ bonus using (job)) as x\n"
+    // cannot alias a JOIN (actually this is a parser error, but who's
+    // counting?)
+    sql("select * from (emp join bonus using (job)) as x\n"
         + "join dept using (deptno)")
-        .fails("Join expression encountered in illegal context");
+        .fails("as wrong here");
     sql("select * from (emp join bonus using (job))\n"
         + "join dept using (^dname^)")
-        .fails("Column 'DNAME' not found in any table");
+        .fails("dname not found in lhs");
 
     // Needs real Error Message and error marks in query
     sql("select * from (emp join bonus using (job))\n"
-        + "join (select 1 as job from ^(^true)) using (job)")
-        .fails("(?s).*Encountered \"\\( true\" at .*");
+        + "join (select 1 as job from (true)) using (job)")
+        .fails("ambig");
   }
 
   @Disabled("bug: should fail if sub-query does not have alias")
@@ -6292,8 +6274,8 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + "from emp as e\n"
         + "join dept as d using (deptno)\n"
         + "join dept as d2 using (^deptno^)";
-    final String expected = "Column name 'DEPTNO' in NATURAL join or "
-        + "USING clause is not unique on one side of join";
+    final String expected = "Column name 'DEPTNO' in USING clause is not "
+        + "unique on one side of join";
     sql(sql1).fails(expected);
 
     final String sql2 = "select *\n"
@@ -9039,43 +9021,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .rewritesTo(expected2);
   }
 
-  @Test void testDatePartWithRewrite() {
-    final String sql = "select week(date '2022-04-27'), year(date '2022-04-27')";
-    final String expected = "SELECT EXTRACT(WEEK FROM DATE '2022-04-27'),"
-        + " EXTRACT(YEAR FROM DATE '2022-04-27')";
-    sql(sql)
-        .withValidatorCallRewrite(true)
-        .rewritesTo(expected);
-
-    final String noParamSql = "select ^week()^";
-    sql(noParamSql)
-        .withValidatorCallRewrite(true)
-        .fails("Invalid number of arguments to function 'WEEK'. Was expecting 1 arguments");
-
-    final String multiParamsSql = "select ^week(date '2022-04-27', 1)^";
-    sql(multiParamsSql)
-        .withValidatorCallRewrite(true)
-        .fails("Invalid number of arguments to function 'WEEK'. Was expecting 1 arguments");
-  }
-
-  @Test void testDatePartWithoutRewrite() {
-    final String sql = "select week(date '2022-04-27'), year(date '2022-04-27')";
-    final String expected = "SELECT WEEK(DATE '2022-04-27'), YEAR(DATE '2022-04-27')";
-    sql(sql)
-        .withValidatorCallRewrite(false)
-        .rewritesTo(expected);
-
-    final String noParamSql = "select ^week()^";
-    sql(noParamSql)
-        .withValidatorCallRewrite(false)
-        .fails("Invalid number of arguments to function 'WEEK'. Was expecting 1 arguments");
-
-    final String multiParamsSql = "select ^week(date '2022-04-27', 1)^";
-    sql(multiParamsSql)
-        .withValidatorCallRewrite(false)
-        .fails("Invalid number of arguments to function 'WEEK'. Was expecting 1 arguments");
-  }
-
   @Disabled
   @Test void testValuesWithAggFuncs() {
     sql("values(^count(1)^)")
@@ -9228,8 +9173,9 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
 
   /** Tests using case-insensitive matching of user-defined functions. */
   @Test void testCaseInsensitiveUdfs() {
-    final SqlOperatorTable operatorTable =
-        MockSqlOperatorTable.standard().extend();
+    final MockSqlOperatorTable operatorTable =
+        new MockSqlOperatorTable(SqlStdOperatorTable.instance());
+    MockSqlOperatorTable.addRamp(operatorTable);
     final SqlValidatorFixture insensitive = fixture()
         .withCaseSensitive(false)
         .withQuoting(Quoting.BRACKET)
@@ -9687,6 +9633,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + "\n"
         + "$throw -\n"
         + "Reinterpret -\n"
+        + "SET_SEMANTICS_TABLE -\n"
         + "TABLE pre\n"
         + "VALUES -\n"
         + "\n"
@@ -12196,8 +12143,9 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
   }
 
   @Test void testInvalidFunctionCall() {
-    final SqlOperatorTable operatorTable =
-        MockSqlOperatorTable.standard().extend();
+    final MockSqlOperatorTable operatorTable =
+        new MockSqlOperatorTable(SqlStdOperatorTable.instance());
+    MockSqlOperatorTable.addRamp(operatorTable);
 
     // With implicit type coercion.
     expr("^unknown_udf(1, 2)^")
@@ -12317,8 +12265,9 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .withExtendedCatalog()
         .type("RecordType(BIGINT EXPR$0) NOT NULL");
 
-    final SqlOperatorTable operatorTable =
-        MockSqlOperatorTable.standard().extend();
+    final MockSqlOperatorTable operatorTable =
+        new MockSqlOperatorTable(SqlStdOperatorTable.instance());
+    MockSqlOperatorTable.addRamp(operatorTable);
     sql("select * FROM TABLE(ROW_FUNC()) AS T(a, b)")
         .withOperatorTable(operatorTable)
         .type("RecordType(BIGINT NOT NULL A, BIGINT B) NOT NULL");
