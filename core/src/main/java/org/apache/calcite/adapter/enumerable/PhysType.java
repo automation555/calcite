@@ -23,8 +23,6 @@ import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.util.Pair;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.lang.reflect.Type;
 import java.util.List;
 
@@ -94,7 +92,7 @@ public interface PhysType {
    * @return Expression to access the field of the expression
    */
   Expression fieldReference(Expression expression, int field,
-      @Nullable Type storageType);
+      Type storageType);
 
   /** Generates an accessor function for a given list of fields.  The resulting
    * object is a {@link List} (implementing {@link Object#hashCode()} and
@@ -111,7 +109,8 @@ public interface PhysType {
    * }
    * }</pre></blockquote>
    */
-  Expression generateAccessor(List<Integer> fields);
+  Expression generateAccessor(List<Integer> fields,
+      List<Class> targetFieldClassList);
 
   /** Generates a selector for the given fields from an expression, with the
    * default row format. */
@@ -179,7 +178,7 @@ public interface PhysType {
 
   /** Returns a expression that yields a comparer, or null if this type
    * is comparable. */
-  @Nullable Expression comparer();
+  Expression comparer();
 
   /** Generates an expression that creates a record for a row, initializing
    * its fields with the given expressions. There must be one expression per
@@ -214,3 +213,5 @@ public interface PhysType {
    * the <code>targetFormat</code> for representing its rows. */
   Expression convertTo(Expression expression, JavaRowFormat targetFormat);
 }
+
+// End PhysType.java
