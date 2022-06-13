@@ -21,7 +21,7 @@ package org.apache.calcite.sql.validate;
  * <p>Most commonly, it is an item in a FROM clause, and consists of a namespace
  * (the columns it provides), and optional name (table alias), and ordinal
  * within the FROM clause. */
-class ScopeChild {
+public class ScopeChild {
   final int ordinal;
   final String name;
   final SqlValidatorNamespace namespace;
@@ -41,6 +41,21 @@ class ScopeChild {
     this.name = name;
     this.namespace = namespace;
     this.nullable = nullable;
+  }
+
+  /**
+   * Whether this namespace produces nullable result.
+   *
+   * For example, in below query,
+   * <pre>
+   *   SELECT *
+   *   FROM EMPS
+   *   LEFT OUTER JOIN DEPT
+   * </pre>
+   * the namespace which corresponding to 'DEPT' is nullable.
+   */
+  public boolean isNullable() {
+    return nullable;
   }
 
   @Override public String toString() {
