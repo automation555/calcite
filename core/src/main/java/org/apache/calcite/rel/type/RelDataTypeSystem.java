@@ -20,8 +20,6 @@ import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeUtil;
 import org.apache.calcite.util.Glossary;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 /**
  * Type system.
  *
@@ -61,7 +59,7 @@ public interface RelDataTypeSystem {
   int getMaxNumericPrecision();
 
   /** Returns the LITERAL string for the type, either PREFIX/SUFFIX. */
-  @Nullable String getLiteral(SqlTypeName typeName, boolean isPrefix);
+  String getLiteral(SqlTypeName typeName, boolean isPrefix);
 
   /** Returns whether the type is case sensitive. */
   boolean isCaseSensitive(SqlTypeName typeName);
@@ -147,7 +145,7 @@ public interface RelDataTypeSystem {
    * @param type2       Type of the second operand
    * @return Result type for a decimal addition
    */
-  default @Nullable RelDataType deriveDecimalPlusType(RelDataTypeFactory typeFactory,
+  default RelDataType deriveDecimalPlusType(RelDataTypeFactory typeFactory,
       RelDataType type1, RelDataType type2) {
     if (SqlTypeUtil.isExactNumeric(type1)
             && SqlTypeUtil.isExactNumeric(type2)) {
@@ -216,7 +214,7 @@ public interface RelDataTypeSystem {
    * @return Result type for a decimal multiplication, or null if decimal
    * multiplication should not be applied to the operands
    */
-  default @Nullable RelDataType deriveDecimalMultiplyType(RelDataTypeFactory typeFactory,
+  default RelDataType deriveDecimalMultiplyType(RelDataTypeFactory typeFactory,
       RelDataType type1, RelDataType type2) {
     if (SqlTypeUtil.isExactNumeric(type1)
             && SqlTypeUtil.isExactNumeric(type2)) {
@@ -288,7 +286,7 @@ public interface RelDataTypeSystem {
    * @return Result type for a decimal division, or null if decimal
    * division should not be applied to the operands
    */
-  default @Nullable RelDataType deriveDecimalDivideType(RelDataTypeFactory typeFactory,
+  default RelDataType deriveDecimalDivideType(RelDataTypeFactory typeFactory,
       RelDataType type1, RelDataType type2) {
 
     if (SqlTypeUtil.isExactNumeric(type1)
@@ -370,7 +368,7 @@ public interface RelDataTypeSystem {
    * @return Result type for a decimal modulus, or null if decimal
    * modulus should not be applied to the operands
    */
-  default @Nullable RelDataType deriveDecimalModType(RelDataTypeFactory typeFactory,
+  default RelDataType deriveDecimalModType(RelDataTypeFactory typeFactory,
       RelDataType type1, RelDataType type2) {
     if (SqlTypeUtil.isExactNumeric(type1)
             && SqlTypeUtil.isExactNumeric(type2)) {
@@ -402,6 +400,84 @@ public interface RelDataTypeSystem {
 
         return typeFactory.createSqlType(SqlTypeName.DECIMAL,
                 precision, scale);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Infers the return type of a decimal truncate operation. Decimal truncate
+   * involves at least one decimal operand.
+   *
+   * <p>Rules:
+   *
+   * <ul>
+   * <li>Let p1, s1 be the precision and scale of the first operand</li>
+   * <li>Let p, s be the precision and scale of the result</li>
+   * <li>Then the result type is a decimal with:
+   *   <ul>
+   *   <li>p = p1</li>
+   *   <li>s = s1</li>
+   *   </ul>
+   * </li>
+   * <li>p and s are capped at their maximum values</li>
+   * </ul>
+   *
+   * @param typeFactory TypeFactory used to create output type
+   * @param type1       Type of the first operand
+   * @param scale2      Scale value to truncate to
+   * @return Result type for a decimal truncate
+   */
+  default RelDataType deriveDecimalTruncateType(RelDataTypeFactory typeFactory,
+      RelDataType type1, Integer scale2) {
+    if (SqlTypeUtil.isExactNumeric(type1)) {
+      if (SqlTypeUtil.isDecimal(type1)) {
+        // Java numeric will always have invalid precision/scale,
+        // use its default decimal precision/scale instead.
+        type1 = RelDataTypeFactoryImpl.isJavaType(type1)
+            ? typeFactory.decimalOf(type1)
+            : type1;
+
+        return type1;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Infers the return type of a decimal round operation. Decimal round
+   * involves at least one decimal operand.
+   *
+   * <p>Rules:
+   *
+   * <ul>
+   * <li>Let p1, s1 be the precision and scale of the first operand</li>
+   * <li>Let p, s be the precision and scale of the result</li>
+   * <li>Then the result type is a decimal with:
+   *   <ul>
+   *   <li>p = p1</li>
+   *   <li>s = s1</li>
+   *   </ul>
+   * </li>
+   * <li>p and s are capped at their maximum values</li>
+   * </ul>
+   *
+   * @param typeFactory TypeFactory used to create output type
+   * @param type1       Type of the first operand
+   * @param scale2      Scale value to round to
+   * @return Result type for a decimal round
+   */
+  default RelDataType deriveDecimalRoundType(RelDataTypeFactory typeFactory,
+      RelDataType type1, Integer scale2) {
+    if (SqlTypeUtil.isExactNumeric(type1)) {
+      if (SqlTypeUtil.isDecimal(type1)) {
+        // Java numeric will always have invalid precision/scale,
+        // use its default decimal precision/scale instead.
+        type1 = RelDataTypeFactoryImpl.isJavaType(type1)
+            ? typeFactory.decimalOf(type1)
+            : type1;
+
+        return type1;
       }
     }
     return null;
