@@ -37,10 +37,8 @@ import org.apache.calcite.util.Bug;
 import org.apache.calcite.util.NumberUtil;
 import org.apache.calcite.util.TimeWithTimeZoneString;
 import org.apache.calcite.util.TimestampWithTimeZoneString;
-import org.apache.calcite.util.Unsafe;
 import org.apache.calcite.util.Util;
 
-import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.codec.language.Soundex;
 
 import com.google.common.base.Splitter;
@@ -54,8 +52,6 @@ import java.math.RoundingMode;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.text.DecimalFormat;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -97,12 +93,6 @@ public class SqlFunctions {
       NumberUtil.decimalFormat("0.0E0");
 
   private static final TimeZone LOCAL_TZ = TimeZone.getDefault();
-
-  private static final DateTimeFormatter ROOT_DAY_FORMAT =
-      DateTimeFormatter.ofPattern("EEEE", Locale.ROOT);
-
-  private static final DateTimeFormatter ROOT_MONTH_FORMAT =
-      DateTimeFormatter.ofPattern("MMMM", Locale.ROOT);
 
   private static final Soundex SOUNDEX = new Soundex();
 
@@ -172,82 +162,6 @@ public class SqlFunctions {
     } catch (IllegalArgumentException e) {
       return null;
     }
-  }
-
-  /** SQL MD5(string) function. */
-  public static @Nonnull String md5(@Nonnull String string)  {
-    return DigestUtils.md5Hex(string.getBytes(UTF_8));
-  }
-
-  /** SQL MD5(string) function for binary string. */
-  public static @Nonnull String md5(@Nonnull ByteString string)  {
-    return DigestUtils.md5Hex(string.getBytes());
-  }
-
-  /** SQL SHA1(string) function. */
-  public static @Nonnull String sha1(@Nonnull String string)  {
-    return DigestUtils.sha1Hex(string.getBytes(UTF_8));
-  }
-
-  /** SQL SHA1(string) function for binary string. */
-  public static @Nonnull String sha1(@Nonnull ByteString string)  {
-    return DigestUtils.sha1Hex(string.getBytes());
-  }
-
-  /** SQL {@code REGEXP_REPLACE} function with 3 arguments. */
-  public static String regexpReplace(String s, String regex,
-      String replacement) {
-    return regexpReplace(s, regex, replacement, 1, 0, null);
-  }
-
-  /** SQL {@code REGEXP_REPLACE} function with 4 arguments. */
-  public static String regexpReplace(String s, String regex, String replacement,
-      int pos) {
-    return regexpReplace(s, regex, replacement, pos, 0, null);
-  }
-
-  /** SQL {@code REGEXP_REPLACE} function with 5 arguments. */
-  public static String regexpReplace(String s, String regex, String replacement,
-      int pos, int occurrence) {
-    return regexpReplace(s, regex, replacement, pos, occurrence, null);
-  }
-
-  /** SQL {@code REGEXP_REPLACE} function with 6 arguments. */
-  public static String regexpReplace(String s, String regex, String replacement,
-      int pos, int occurrence, String matchType) {
-    if (pos < 1 || pos > s.length()) {
-      throw RESOURCE.invalidInputForRegexpReplace(Integer.toString(pos)).ex();
-    }
-
-    final int flags = makeRegexpFlags(matchType);
-    final Pattern pattern = Pattern.compile(regex, flags);
-
-    return Unsafe.regexpReplace(s, pattern, replacement, pos, occurrence);
-  }
-
-  private static int makeRegexpFlags(String stringFlags) {
-    int flags = 0;
-    if (stringFlags != null) {
-      for (int i = 0; i < stringFlags.length(); ++i) {
-        switch (stringFlags.charAt(i)) {
-        case 'i':
-          flags |= Pattern.CASE_INSENSITIVE;
-          break;
-        case 'c':
-          flags &= ~Pattern.CASE_INSENSITIVE;
-          break;
-        case 'n':
-          flags |= Pattern.DOTALL;
-          break;
-        case 'm':
-          flags |= Pattern.MULTILINE;
-          break;
-        default:
-          throw RESOURCE.invalidInputForRegexpReplace(stringFlags).ex();
-        }
-      }
-    }
-    return flags;
   }
 
   /** SQL SUBSTRING(string FROM ... FOR ...) function. */
@@ -433,11 +347,6 @@ public class SqlFunctions {
     return s.substring(len - n);
   }
 
-  /** SQL CHR(long) function. */
-  public static String chr(long n) {
-    return String.valueOf(Character.toChars((int) n));
-  }
-
   /** SQL CHARACTER_LENGTH(string) function. */
   public static int charLength(String s) {
     return s.length();
@@ -557,16 +466,16 @@ public class SqlFunctions {
   /** SQL {@code OVERLAY} function applied to binary strings. */
   public static ByteString overlay(ByteString s, ByteString r, int start) {
     return s.substring(0, start - 1)
-        .concat(r)
-        .concat(s.substring(start - 1 + r.length()));
+           .concat(r)
+           .concat(s.substring(start - 1 + r.length()));
   }
 
   /** SQL {@code OVERLAY} function applied to binary strings. */
   public static ByteString overlay(ByteString s, ByteString r, int start,
       int length) {
     return s.substring(0, start - 1)
-        .concat(r)
-        .concat(s.substring(start - 1 + length));
+           .concat(r)
+           .concat(s.substring(start - 1 + length));
   }
 
   /** SQL {@code LIKE} function. */
@@ -612,12 +521,6 @@ public class SqlFunctions {
    * null). */
   public static boolean eq(BigDecimal b0, BigDecimal b1) {
     return b0.stripTrailingZeros().equals(b1.stripTrailingZeros());
-  }
-
-  /** SQL <code>=</code> operator applied to Object[] values (neither may be
-   * null). */
-  public static boolean eq(Object[] b0, Object[] b1) {
-    return Arrays.deepEquals(b0, b1);
   }
 
   /** SQL <code>=</code> operator applied to Object values (including String;
@@ -1155,11 +1058,6 @@ public class SqlFunctions {
   public static long mod(long b0, long b1) {
     return b0 % b1;
   }
-  
-  /** SQL <code>MOD</code> operator applied to long and int values. */
-  public static int mod(long b0, int b1) {
-    return (int) (b0 % b1);
-  }
 
   // temporary
   public static BigDecimal mod(BigDecimal b0, int b1) {
@@ -1167,8 +1065,8 @@ public class SqlFunctions {
   }
 
   // temporary
-  public static BigDecimal mod(int b0, BigDecimal b1) {
-    return mod(BigDecimal.valueOf(b0), b1);
+  public static int mod(int b0, BigDecimal b1) {
+    return mod(b0, b1.intValue());
   }
 
   public static BigDecimal mod(BigDecimal b0, BigDecimal b1) {
@@ -1857,8 +1755,8 @@ public class SqlFunctions {
   public static float toFloat(Object o) {
     return o instanceof Float ? (Float) o
         : o instanceof Number ? toFloat((Number) o)
-        : o instanceof String ? toFloat((String) o)
-        : (Float) cannotConvert(o, float.class);
+            : o instanceof String ? toFloat((String) o)
+                : (Float) cannotConvert(o, float.class);
   }
 
   public static double toDouble(String s) {
@@ -2164,78 +2062,6 @@ public class SqlFunctions {
     return DateTimeUtils.ymdToUnixDate(y0, m0, last);
   }
 
-  /**
-   * SQL {@code DAYNAME} function, applied to a TIMESTAMP argument.
-   *
-   * @param timestamp Milliseconds from epoch
-   * @param locale Locale
-   * @return Name of the weekday in the given locale
-   */
-  public static String dayNameWithTimestamp(long timestamp, Locale locale) {
-    return timeStampToLocalDate(timestamp)
-        .format(ROOT_DAY_FORMAT.withLocale(locale));
-  }
-
-  /**
-   * SQL {@code DAYNAME} function, applied to a DATE argument.
-   *
-   * @param date Days since epoch
-   * @param locale Locale
-   * @return Name of the weekday in the given locale
-   */
-  public static String dayNameWithDate(int date, Locale locale) {
-    return dateToLocalDate(date)
-        .format(ROOT_DAY_FORMAT.withLocale(locale));
-  }
-
-  /**
-   * SQL {@code MONTHNAME} function, applied to a TIMESTAMP argument.
-   *
-   * @param timestamp Milliseconds from epoch
-   * @param locale Locale
-   * @return Name of the month in the given locale
-   */
-  public static String monthNameWithTimestamp(long timestamp, Locale locale) {
-    return timeStampToLocalDate(timestamp)
-        .format(ROOT_MONTH_FORMAT.withLocale(locale));
-  }
-
-  /**
-   * SQL {@code MONTHNAME} function, applied to a DATE argument.
-   *
-   * @param date Days from epoch
-   * @param locale Locale
-   * @return Name of the month in the given locale
-   */
-  public static String monthNameWithDate(int date, Locale locale) {
-    return dateToLocalDate(date)
-        .format(ROOT_MONTH_FORMAT.withLocale(locale));
-  }
-
-  /**
-   * Converts a date (days since epoch) to a {@link LocalDate}.
-   *
-   * @param date days since epoch
-   * @return localDate
-   */
-  private static LocalDate dateToLocalDate(int date) {
-    int y0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.YEAR, date);
-    int m0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.MONTH, date);
-    int d0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.DAY, date);
-    return LocalDate.of(y0, m0, d0);
-  }
-
-  /**
-   * Converts a timestamp (milliseconds since epoch) to a {@link LocalDate}.
-   *
-   * @param timestamp milliseconds from epoch
-   * @return localDate
-   */
-  private static LocalDate timeStampToLocalDate(long timestamp) {
-    int date = (int) (timestamp / DateTimeUtils.MILLIS_PER_DAY);
-    return dateToLocalDate(date);
-  }
-
   /** SQL {@code CURRENT_TIMESTAMP} function. */
   @NonDeterministic
   public static long currentTimestamp(DataContext root) {
@@ -2293,11 +2119,6 @@ public class SqlFunctions {
   @Deterministic
   public static String systemUser(DataContext root) {
     return Objects.requireNonNull(DataContext.Variable.SYSTEM_USER.get(root));
-  }
-
-  @NonDeterministic
-  public static Locale locale(DataContext root) {
-    return (Locale) DataContext.Variable.LOCALE.get(root);
   }
 
   /** SQL {@code TRANSLATE(string, search_chars, replacement_chars)}
@@ -2548,7 +2369,7 @@ public class SqlFunctions {
         return (Function1) LIST_AS_ENUMERABLE;
       } else {
         return row -> p2(new Object[] { row }, fieldCounts, withOrdinality,
-            inputTypes);
+              inputTypes);
       }
     }
     return lists -> p2((Object[]) lists, fieldCounts, withOrdinality,
@@ -2702,6 +2523,39 @@ public class SqlFunctions {
     return x;
   }
 
+
+  public static Integer dateStringToUnixDate(String s) {
+    return s == null ? null : DateTimeUtils.dateStringToUnixDate(s);
+  }
+
+  public static Integer timeStringToUnixDate(String s) {
+    return s == null ? null : DateTimeUtils.timeStringToUnixDate(s);
+  }
+
+  public static Integer stringToInteger(String s) {
+    return s == null ? null : Integer.valueOf(s);
+  }
+
+  public static Byte stringToByte(String s) {
+    return s == null ? null : Byte.valueOf(s);
+  }
+
+  public static Short stringToShort(String s) {
+    return s == null ? null : Short.valueOf(s);
+  }
+
+  public static Long stringToLong(String s) {
+    return s == null ? null : Long.valueOf(s);
+  }
+
+  public static Float stringToFloat(String s) {
+    return s == null ? null : Float.valueOf(s);
+  }
+
+  public static Double stringToDouble(String s) {
+    return s == null ? null : Double.valueOf(s);
+  }
+
   /**
    * Implements the {@code .} (field access) operator on an object
    * whose type is not known until runtime.
@@ -2755,13 +2609,8 @@ public class SqlFunctions {
     public FlatLists.ComparableList<E> current() {
       int i = 0;
       for (Object element : (Object[]) elements) {
-        Object[] a;
-        if (element.getClass().isArray()) {
-          a = (Object[]) element;
-        } else {
-          final List list2 = (List) element;
-          a = list2.toArray();
-        }
+        final List list2 = (List) element;
+        Object[] a = list2.toArray();
         System.arraycopy(a, 0, flatElements, i, a.length);
         i += a.length;
       }
