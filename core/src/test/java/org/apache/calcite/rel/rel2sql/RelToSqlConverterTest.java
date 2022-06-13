@@ -71,16 +71,19 @@ import org.apache.calcite.tools.Programs;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RuleSet;
 import org.apache.calcite.tools.RuleSets;
+import org.apache.calcite.util.ConversionUtil;
 import org.apache.calcite.util.TestUtil;
 import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -98,13 +101,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class RelToSqlConverterTest {
   static final SqlToRelConverter.Config DEFAULT_REL_CONFIG =
-      SqlToRelConverter.config()
-          .withTrimUnusedFields(false);
+      SqlToRelConverter.configBuilder()
+          .withTrimUnusedFields(false)
+          .build();
 
   static final SqlToRelConverter.Config NO_EXPAND_CONFIG =
-      SqlToRelConverter.config()
+      SqlToRelConverter.configBuilder()
           .withTrimUnusedFields(false)
-          .withExpand(false);
+          .withExpand(false)
+          .build();
 
   /** Initiates a test case with a given SQL query. */
   private Sql sql(String sql) {
@@ -816,8 +821,8 @@ class RelToSqlConverterTest {
         .build();
     final String expected = "SELECT *\n"
         + "FROM \"scott\".\"EMP\"\n"
-        + "WHERE \"EMPNO\" >= 0 AND \"EMPNO\" <= 3 AND (\"DEPTNO\" >= 5 AND "
-        + "\"DEPTNO\" <= 7)";
+        + "WHERE (\"EMPNO\" = 0 OR \"EMPNO\" = 1 OR (\"EMPNO\" = 2 OR \"EMPNO\" = 3))"
+        + " AND (\"DEPTNO\" = 5 OR (\"DEPTNO\" = 6 OR \"DEPTNO\" = 7))";
     relFn(relFn).ok(expected);
   }
 
@@ -1445,18 +1450,22 @@ class RelToSqlConverterTest {
   @Test void testUnparseIn1() {
     final Function<RelBuilder, RelNode> relFn = b ->
         b.scan("EMP")
-            .filter(b.in(b.field("DEPTNO"), b.literal(21)))
+            .filter(
+                b.call(SqlStdOperatorTable.IN, b.field("DEPTNO"),
+                    b.literal(21)))
             .build();
     final String expectedSql = "SELECT *\n"
         + "FROM \"scott\".\"EMP\"\n"
-        + "WHERE \"DEPTNO\" = 21";
+        + "WHERE \"DEPTNO\" IN (21)";
     relFn(relFn).ok(expectedSql);
   }
 
   @Test void testUnparseIn2() {
     final Function<RelBuilder, RelNode> relFn = b -> b
         .scan("EMP")
-        .filter(b.in(b.field("DEPTNO"), b.literal(20), b.literal(21)))
+        .filter(
+            b.call(SqlStdOperatorTable.IN, b.field("DEPTNO"),
+                b.literal(20), b.literal(21)))
         .build();
     final String expectedSql = "SELECT *\n"
         + "FROM \"scott\".\"EMP\"\n"
@@ -1468,7 +1477,7 @@ class RelToSqlConverterTest {
     final Function<RelBuilder, RelNode> relFn = b ->
         b.scan("EMP")
             .filter(
-                b.in(
+                b.call(SqlStdOperatorTable.IN,
                     b.call(SqlStdOperatorTable.ROW,
                         b.field("DEPTNO"), b.field("JOB")),
                     b.call(SqlStdOperatorTable.ROW, b.literal(1),
@@ -1476,7 +1485,7 @@ class RelToSqlConverterTest {
             .build();
     final String expectedSql = "SELECT *\n"
         + "FROM \"scott\".\"EMP\"\n"
-        + "WHERE ROW(\"DEPTNO\", \"JOB\") = ROW(1, 'PRESIDENT')";
+        + "WHERE ROW(\"DEPTNO\", \"JOB\") IN (ROW(1, 'PRESIDENT'))";
     relFn(relFn).ok(expectedSql);
   }
 
@@ -1484,11 +1493,11 @@ class RelToSqlConverterTest {
     final Function<RelBuilder, RelNode> relFn = b ->
         b.scan("EMP")
             .filter(
-                b.in(
+                b.call(SqlStdOperatorTable.IN,
                     b.call(SqlStdOperatorTable.ROW,
                         b.field("DEPTNO"), b.field("JOB")),
                     b.call(SqlStdOperatorTable.ROW, b.literal(1),
-                        b.literal("PRESIDENT")),
+                b.literal("PRESIDENT")),
                     b.call(SqlStdOperatorTable.ROW, b.literal(2),
                         b.literal("PRESIDENT"))))
             .build();
@@ -5377,6 +5386,23 @@ class RelToSqlConverterTest {
         .schema(CalciteAssert.SchemaSpec.JDBC_SCOTT)
         .withBigQuery()
         .ok(expected);
+  }
+
+  @Disabled("CalciteSystemProperty can not load twice")
+  @Test void testMySqlCastUnicode() {
+    String query = "select \"product_id\", \"product_name\"\n"
+        + "from \"foodmart\".\"product\" where \"product_name\" = u&'\\82f1\\56fd'";
+    final String expected = "SELECT `product_id`, `product_name`\n"
+        + "FROM `foodmart`.`product`\n"
+        + "WHERE `product_name` = '\u82f1\u56fd'";
+    try (Hook.Closeable ignore =
+             Hook.LOAD_SYSTEM_PROPERTY.addThread((Properties property) -> {
+               property.put("calcite.default.charset", ConversionUtil.NATIVE_UTF16_CHARSET_NAME);
+             })) {
+      sql(query)
+          .withMysql()
+          .ok(expected);
+    }
   }
 
   /** Fluid interface to run tests. */

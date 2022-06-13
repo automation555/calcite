@@ -20,7 +20,6 @@ import org.apache.calcite.avatica.util.Casing;
 import org.apache.calcite.avatica.util.TimeUnit;
 import org.apache.calcite.avatica.util.TimeUnitRange;
 import org.apache.calcite.config.NullCollation;
-import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rel.type.RelDataTypeSystemImpl;
@@ -40,8 +39,6 @@ import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlSelect;
 import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.fun.SqlCase;
-import org.apache.calcite.sql.fun.SqlInternalOperators;
-import org.apache.calcite.sql.fun.SqlLibraryOperators;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.InferTypes;
@@ -49,11 +46,7 @@ import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlTypeName;
 
-import com.google.common.collect.ImmutableList;
-
-import org.checkerframework.checker.nullness.qual.Nullable;
-
-import java.util.List;
+import static org.apache.calcite.sql.type.SqlTypeName.TIMESTAMP;
 
 /**
  * A <code>SqlDialect</code> implementation for the MySQL database.
@@ -108,17 +101,17 @@ public class MysqlSqlDialect extends SqlDialect {
     return true;
   }
 
-  @Override public boolean supportsAliasedValues() {
+  public boolean supportsAliasedValues() {
     // MySQL supports VALUES only in INSERT; not in a FROM clause
     return false;
   }
 
-  @Override public void unparseOffsetFetch(SqlWriter writer, @Nullable SqlNode offset,
-      @Nullable SqlNode fetch) {
+  @Override public void unparseOffsetFetch(SqlWriter writer, SqlNode offset,
+      SqlNode fetch) {
     unparseFetchUsingLimit(writer, offset, fetch);
   }
 
-  @Override public @Nullable SqlNode emulateNullDirection(SqlNode node,
+  @Override public SqlNode emulateNullDirection(SqlNode node,
       boolean nullsFirst, boolean desc) {
     return emulateNullDirectionWithIsNull(node, nullsFirst, desc);
   }
@@ -136,8 +129,6 @@ public class MysqlSqlDialect extends SqlDialect {
       // MySQL 5 does not support standard "GROUP BY ROLLUP(x, y)",
       // only the non-standard "GROUP BY x, y WITH ROLLUP".
       return majorVersion >= 8;
-    default:
-      break;
     }
     return false;
   }
@@ -154,7 +145,7 @@ public class MysqlSqlDialect extends SqlDialect {
     return CalendarPolicy.SHIFT;
   }
 
-  @Override public @Nullable SqlNode getCastSpec(RelDataType type) {
+  @Override public SqlNode getCastSpec(RelDataType type) {
     switch (type.getSqlTypeName()) {
     case VARCHAR:
       // MySQL doesn't have a VARCHAR type, only CHAR.
@@ -181,8 +172,6 @@ public class MysqlSqlDialect extends SqlDialect {
               type.getSqlTypeName(),
               SqlParserPos.ZERO),
           SqlParserPos.ZERO);
-    default:
-      break;
     }
     return super.getCastSpec(type);
   }
@@ -229,57 +218,20 @@ public class MysqlSqlDialect extends SqlDialect {
       unparseFloor(writer, call);
       break;
 
-    case WITHIN_GROUP:
-      final List<SqlNode> operands = call.getOperandList();
-      if (operands.size() <= 0 || operands.get(0).getKind() != SqlKind.LISTAGG) {
-        super.unparseCall(writer, call, leftPrec, rightPrec);
-        return;
-      }
-      unparseListAggCall(writer, (SqlCall) operands.get(0),
-          operands.size() == 2 ? operands.get(1) : null, leftPrec, rightPrec);
-      break;
-
-    case LISTAGG:
-      unparseListAggCall(writer, call, null, leftPrec, rightPrec);
-      break;
-
     default:
       super.unparseCall(writer, call, leftPrec, rightPrec);
     }
   }
 
   /**
-   * Unparses LISTAGG for MySQL. This call is translated to GROUP_CONCAT.<br/>
-   * For example:
-   * source: <code>LISTAGG(DISTINCT c1, ',') WITHIN GROUP (ORDER BY c2, c3)</code>
-   * target: <code>GROUP_CONCAT(DISTINCT c1 ORDER BY c2, c3 SEPARATOR ',')</code>
-   *
-   * @param writer Writer
-   * @param listAggCall Call of LISTAGG
-   * @param orderItemNode Elems of WITHIN_GROUP, NULL means none elem in the WITHIN_GROUP
-   * @param leftPrec leftPrec
-   * @param rightPrec rightPrec
+   * mysql not support a unicode string literal. For example,
+   * <code>u'can''t\0009run\\'</code> will cause MySQLSyntaxErrorException: Unknown column 'u'
    */
-  private void unparseListAggCall(SqlWriter writer, SqlCall listAggCall,
-      @Nullable SqlNode orderItemNode, int leftPrec, int rightPrec) {
-    final List<SqlNode> listAggCallOperands = listAggCall.getOperandList();
-    final boolean separatorExist = listAggCallOperands.size() == 2;
-
-    final ImmutableList.Builder<SqlNode> newOperandListBuilder = ImmutableList.<SqlNode>builder()
-        .add(listAggCallOperands.get(0));
-    if (orderItemNode != null) {
-      newOperandListBuilder.add(orderItemNode);
-    }
-    if (separatorExist) {
-      newOperandListBuilder.add(
-          SqlInternalOperators.SEPARATOR.createCall(
-          SqlParserPos.ZERO, listAggCallOperands.get(1)));
-    }
-    SqlLibraryOperators.GROUP_CONCAT.createCall(listAggCall.getFunctionQuantifier(),
-        listAggCall.getParserPosition(), newOperandListBuilder.build())
-        .unparse(writer, leftPrec, rightPrec);
+  @Override public void quoteStringLiteralUnicode(StringBuilder buf, String val) {
+    buf.append("'");
+    buf.append(val);
+    buf.append("'");
   }
-
   /**
    * Unparses datetime floor for MySQL. There is no TRUNC function, so simulate
    * this using calls to DATE_FORMAT.
@@ -287,9 +239,9 @@ public class MysqlSqlDialect extends SqlDialect {
    * @param writer Writer
    * @param call Call
    */
-  private static void unparseFloor(SqlWriter writer, SqlCall call) {
+  private void unparseFloor(SqlWriter writer, SqlCall call) {
     SqlLiteral node = call.operand(1);
-    TimeUnitRange unit = node.getValueAs(TimeUnitRange.class);
+    TimeUnitRange unit = (TimeUnitRange) node.getValue();
 
     if (unit == TimeUnitRange.WEEK) {
       writer.print("STR_TO_DATE");
@@ -375,11 +327,7 @@ public class MysqlSqlDialect extends SqlDialect {
     }
   }
 
-  @Override public boolean supportsJoinType(JoinRelType joinType) {
-    return joinType != JoinRelType.FULL;
-  }
-
-  private static TimeUnit validate(TimeUnit timeUnit) {
+  private TimeUnit validate(TimeUnit timeUnit) {
     switch (timeUnit) {
     case MICROSECOND:
     case SECOND:
