@@ -50,12 +50,12 @@ import static java.util.Objects.requireNonNull;
  * <ul>
  *     <li>reflexive: e.lte(e) returns true;</li>
  *     <li>anti-symmetric: if e.lte(f) returns true,
- *     then f.lte(e) returns false only if e = f;</li>
+ *     then f.lte(e) returns true only if e = f;</li>
  *     <li>transitive: if e.lte(f) returns true and
  *     f.lte(g) returns true, then e.lte(g) must return true.</li>
  * </ul>
  *
- * <p>Note that not all pairs of elements are related. It is OK if e.lte(f)
+ * <p>Note that not all pairs of elements are related. If is OK if e.lte(f)
  * returns false and f.lte(e) returns false also.</p>
  *
  * <p>In addition to the usual set methods, there are methods to determine the
