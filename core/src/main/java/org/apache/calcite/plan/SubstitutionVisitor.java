@@ -16,10 +16,8 @@
  */
 package org.apache.calcite.plan;
 
-import org.apache.calcite.config.CalciteSystemProperty;
 import org.apache.calcite.linq4j.Ord;
-import org.apache.calcite.rel.RelCollation;
-import org.apache.calcite.rel.RelCollations;
+import org.apache.calcite.prepare.CalcitePrepareImpl;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
@@ -34,13 +32,11 @@ import org.apache.calcite.rel.mutable.MutableRel;
 import org.apache.calcite.rel.mutable.MutableRelVisitor;
 import org.apache.calcite.rel.mutable.MutableRels;
 import org.apache.calcite.rel.mutable.MutableScan;
-import org.apache.calcite.rel.mutable.MutableSort;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexExecutor;
-import org.apache.calcite.rex.RexExecutorImpl;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
@@ -51,13 +47,13 @@ import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RelBuilderFactory;
+import org.apache.calcite.util.Bug;
 import org.apache.calcite.util.ControlFlowException;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Litmus;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
 import org.apache.calcite.util.mapping.Mapping;
-import org.apache.calcite.util.mapping.MappingType;
 import org.apache.calcite.util.mapping.Mappings;
 import org.apache.calcite.util.trace.CalciteTrace;
 
@@ -115,7 +111,7 @@ import static org.apache.calcite.rex.RexUtil.removeAll;
  * {@link org.apache.calcite.rel.logical.LogicalAggregate}.</p>
  */
 public class SubstitutionVisitor {
-  private static final boolean DEBUG = CalciteSystemProperty.DEBUG.value();
+  private static final boolean DEBUG = CalcitePrepareImpl.DEBUG;
 
   private static final Logger LOGGER = CalciteTrace.getPlannerTracer();
 
@@ -125,7 +121,6 @@ public class SubstitutionVisitor {
           ScanToProjectUnifyRule.INSTANCE,
           ProjectToProjectUnifyRule.INSTANCE,
           FilterToProjectUnifyRule.INSTANCE,
-          SortOnProjectToSortOnProjectUnifyRule.INSTANCE,
 //          ProjectToFilterUnifyRule.INSTANCE,
 //          FilterToFilterUnifyRule.INSTANCE,
           AggregateToAggregateUnifyRule.INSTANCE,
@@ -978,7 +973,7 @@ public class SubstitutionVisitor {
 
     public UnifyResult apply(UnifyRuleCall call) {
       if (call.query.equals(call.target)) {
-        return call.result(call.target);
+        return call.result(call.query);
       }
       return null;
     }
@@ -1208,80 +1203,6 @@ public class SubstitutionVisitor {
   }
 
   /** Implementation of {@link UnifyRule} that matches a
-   * {@link MutableSort} on {@link MutableProject} to a
-   * {@link MutableSort} on {@link MutableProject}.
-   *
-   * <p>Example: target has same collation as that of query</p>
-   * <ul>
-   * <li>query:   Sort(sort0=[$0], dir0=[ASC])
-   *                Project(projects: [$0, $1])
-   *                  Scan(table: [hr, emps])</li>
-   * <li>target:  Sort(sort0=[$0], dir0=[ASC])
-   *                Project(projects: [$0, $1, $2])
-   *                  Scan(table: [hr, emps])</li>
-   * </ul>*/
-  private static class SortOnProjectToSortOnProjectUnifyRule extends AbstractUnifyRule {
-    public static final SortOnProjectToSortOnProjectUnifyRule INSTANCE =
-        new SortOnProjectToSortOnProjectUnifyRule();
-
-    private SortOnProjectToSortOnProjectUnifyRule() {
-      super(
-          operand(MutableSort.class,
-              operand(MutableProject.class, query(0))),
-          operand(MutableSort.class,
-              operand(MutableProject.class, target(0))), 1);
-    }
-
-    protected UnifyResult apply(UnifyRuleCall call) {
-      final MutableSort query = (MutableSort) call.query;
-      final MutableSort target = (MutableSort) call.target;
-      final MutableProject queryProject = (MutableProject) query.getInput();
-      final MutableProject targetProject = (MutableProject) target.getInput();
-      if (!queryProject.getInput().equals(targetProject.getInput())) {
-        return null;
-      }
-      if (!Objects.equals(query.fetch, target.fetch)
-          || !Objects.equals(query.offset, target.offset)) {
-        return null;
-      }
-      Mappings.TargetMapping queryProjectMapping = queryProject.getMapping();
-      Mappings.TargetMapping targetProjectMapping = targetProject.getMapping();
-      if (queryProjectMapping == null || targetProjectMapping == null) {
-        return null;
-      }
-      final int queryFieldCount = query.rowType.getFieldCount();
-      final int targetFieldCount = target.rowType.getFieldCount();
-      // Create fields mapping from query to target
-      Mappings.TargetMapping mapping =
-          Mappings.create(
-              MappingType.FUNCTION, // Every source has precisely one target
-              queryFieldCount,
-              targetFieldCount);
-      List<Integer> posList = new ArrayList<>();
-      for (int ordinal = 0; ordinal < queryFieldCount; ordinal++) {
-        int inputOrdinal =
-            queryProjectMapping.getSourceOpt(ordinal);
-        assert inputOrdinal >= 0;
-        int targetOrdinal =
-            targetProjectMapping.getTargetOpt(inputOrdinal);
-        // If target does not contain all fields of query, it cannot be reused
-        if (targetOrdinal < 0) {
-          return null;
-        }
-        mapping.set(ordinal, targetOrdinal);
-        posList.add(targetOrdinal);
-      }
-      RelCollation collation =
-          RelCollations.permute(query.collation, mapping);
-      if (!target.collation.satisfies(collation)) {
-        return null;
-      }
-      MutableRel result = MutableRels.createProject(target, posList);
-      return call.result(result);
-    }
-  }
-
-  /** Implementation of {@link UnifyRule} that matches a
    * {@link org.apache.calcite.rel.logical.LogicalAggregate} to a
    * {@link org.apache.calcite.rel.logical.LogicalAggregate}, provided
    * that they have the same child. */
@@ -1330,8 +1251,12 @@ public class SubstitutionVisitor {
 
   public static MutableRel unifyAggregates(MutableAggregate query,
       MutableAggregate target) {
+    if (query.getGroupType() != Aggregate.Group.SIMPLE
+        || target.getGroupType() != Aggregate.Group.SIMPLE) {
+      throw new AssertionError(Bug.CALCITE_461_FIXED);
+    }
     MutableRel result;
-    if (query.groupSets.equals(target.groupSets)) {
+    if (query.groupSet.equals(target.groupSet)) {
       // Same level of aggregation. Generate a project.
       final List<Integer> projects = new ArrayList<>();
       final int groupCount = query.groupSet.cardinality();
@@ -1346,20 +1271,16 @@ public class SubstitutionVisitor {
         projects.add(groupCount + i);
       }
       result = MutableRels.createProject(target, projects);
-    } else if (target.getGroupType() == Aggregate.Group.SIMPLE) {
-      // Query is coarser level of aggregation. Generate an aggregate.
-      final Map<Integer, Integer> map = new HashMap<>();
-      target.groupSet.forEach(k -> map.put(k, map.size()));
+    } else {
+      // Target is coarser level of aggregation. Generate an aggregate.
+      final ImmutableBitSet.Builder groupSet = ImmutableBitSet.builder();
+      final List<Integer> targetGroupList = target.groupSet.asList();
       for (int c : query.groupSet) {
-        if (!map.containsKey(c)) {
+        int c2 = targetGroupList.indexOf(c);
+        if (c2 < 0) {
           return null;
         }
-      }
-      final ImmutableBitSet groupSet = query.groupSet.permute(map);
-      ImmutableList<ImmutableBitSet> groupSets = null;
-      if (query.getGroupType() != Aggregate.Group.SIMPLE) {
-        groupSets = ImmutableBitSet.ORDERING.immutableSortedCopy(
-            ImmutableBitSet.permute(query.groupSets, map));
+        groupSet.set(c2);
       }
       final List<AggregateCall> aggregateCalls = new ArrayList<>();
       for (AggregateCall aggregateCall : query.aggCalls) {
@@ -1373,15 +1294,12 @@ public class SubstitutionVisitor {
         aggregateCalls.add(
             AggregateCall.create(getRollup(aggregateCall.getAggregation()),
                 aggregateCall.isDistinct(), aggregateCall.isApproximate(),
-                aggregateCall.ignoreNulls(),
                 ImmutableList.of(target.groupSet.cardinality() + i), -1,
                 aggregateCall.collation, aggregateCall.type,
                 aggregateCall.name));
       }
-      result = MutableAggregate.of(target, groupSet, groupSets,
+      result = MutableAggregate.of(target, groupSet.build(), null,
           aggregateCalls);
-    } else {
-      return null;
     }
     return MutableRels.createCastRel(result, query.rowType, true);
   }
@@ -1419,29 +1337,10 @@ public class SubstitutionVisitor {
       if (mapping == null) {
         return null;
       }
-      Mapping inverseMapping = mapping.inverse();
       final MutableAggregate aggregate2 =
-          permute(query, project.getInput(), inverseMapping);
-      final MutableRel unifiedAggregate = unifyAggregates(aggregate2, target);
-      if (unifiedAggregate == null) {
-        return null;
-      }
-      MutableRel result = unifiedAggregate;
-      // Add Project if the mapping breaks order of fields in GroupSet
-      if (!Mappings.keepsOrdering(mapping)) {
-        final List<Integer> posList = new ArrayList<>();
-        final int fieldCount = aggregate2.rowType.getFieldCount();
-        for (int group: aggregate2.groupSet) {
-          if (inverseMapping.getTargetOpt(group) != -1) {
-            posList.add(inverseMapping.getTarget(group));
-          }
-        }
-        for (int i = posList.size(); i < fieldCount; i++) {
-          posList.add(i);
-        }
-        result = MutableRels.createProject(unifiedAggregate, posList);
-      }
-      return call.result(result);
+          permute(query, project.getInput(), mapping.inverse());
+      final MutableRel result = unifyAggregates(aggregate2, target);
+      return result == null ? null : call.result(result);
     }
   }
 
@@ -1507,11 +1406,10 @@ public class SubstitutionVisitor {
       return false;
     }
 
-    RexExecutorImpl rexImpl =
-        (RexExecutorImpl) (rel.cluster.getPlanner().getExecutor());
+    RexExecutor rexExec = rel.cluster.getPlanner().getExecutor();
     RexImplicationChecker rexImplicationChecker =
         new RexImplicationChecker(
-            rel.cluster.getRexBuilder(), rexImpl, rel.rowType);
+            rel.cluster.getRexBuilder(), rexExec, rel.rowType);
 
     return rexImplicationChecker.implies(((MutableFilter) rel0).condition,
         ((MutableFilter) rel).condition);

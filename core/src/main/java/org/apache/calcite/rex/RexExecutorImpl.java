@@ -17,11 +17,9 @@
 package org.apache.calcite.rex;
 
 import org.apache.calcite.DataContext;
-import org.apache.calcite.adapter.enumerable.EnumUtils;
 import org.apache.calcite.adapter.enumerable.RexToLixTranslator;
 import org.apache.calcite.adapter.enumerable.RexToLixTranslator.InputGetter;
 import org.apache.calcite.adapter.java.JavaTypeFactory;
-import org.apache.calcite.config.CalciteSystemProperty;
 import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
 import org.apache.calcite.linq4j.tree.BlockBuilder;
 import org.apache.calcite.linq4j.tree.Expression;
@@ -30,6 +28,7 @@ import org.apache.calcite.linq4j.tree.IndexExpression;
 import org.apache.calcite.linq4j.tree.MethodCallExpression;
 import org.apache.calcite.linq4j.tree.MethodDeclaration;
 import org.apache.calcite.linq4j.tree.ParameterExpression;
+import org.apache.calcite.prepare.CalcitePrepareImpl;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.sql.validate.SqlConformance;
@@ -39,19 +38,12 @@ import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Type;
 import java.util.List;
 
 /**
- * Evaluates a {@link RexNode} expression.
- *
- * <p>For this impl, all the public methods should be
- * static except that it inherits from {@link RexExecutor}.
- * This pretends that other code in the project assumes
- * the executor instance is {@link RexExecutorImpl}.
+* Evaluates a {@link RexNode} expression.
 */
 public class RexExecutorImpl implements RexExecutor {
 
@@ -61,14 +53,14 @@ public class RexExecutorImpl implements RexExecutor {
     this.dataContext = dataContext;
   }
 
-  private static String compile(RexBuilder rexBuilder, List<RexNode> constExps,
+  private String compile(RexBuilder rexBuilder, List<RexNode> constExps,
       RexToLixTranslator.InputGetter getter) {
     final RelDataTypeFactory typeFactory = rexBuilder.getTypeFactory();
     final RelDataType emptyRowType = typeFactory.builder().build();
     return compile(rexBuilder, constExps, getter, emptyRowType);
   }
 
-  private static String compile(RexBuilder rexBuilder, List<RexNode> constExps,
+  private String compile(RexBuilder rexBuilder, List<RexNode> constExps,
       RexToLixTranslator.InputGetter getter, RelDataType rowType) {
     final RexProgramBuilder programBuilder =
         new RexProgramBuilder(rowType, rexBuilder);
@@ -76,10 +68,8 @@ public class RexExecutorImpl implements RexExecutor {
       programBuilder.addProject(
           node, "c" + programBuilder.getProjectList().size());
     }
-    final RelDataTypeFactory typeFactory = rexBuilder.getTypeFactory();
-    final JavaTypeFactory javaTypeFactory = typeFactory instanceof JavaTypeFactory
-        ? (JavaTypeFactory) typeFactory
-        : new JavaTypeFactoryImpl(typeFactory.getTypeSystem());
+    final JavaTypeFactoryImpl javaTypeFactory =
+        new JavaTypeFactoryImpl(rexBuilder.getTypeFactory().getTypeSystem());
     final BlockBuilder blockBuilder = new BlockBuilder();
     final ParameterExpression root0_ =
         Expressions.parameter(Object.class, "root0");
@@ -92,7 +82,7 @@ public class RexExecutorImpl implements RexExecutor {
     final RexProgram program = programBuilder.getProgram();
     final List<Expression> expressions =
         RexToLixTranslator.translateProjects(program, javaTypeFactory,
-            conformance, blockBuilder, null, null, root_, getter, null);
+            conformance, blockBuilder, null, root_, getter, null);
     blockBuilder.add(
         Expressions.return_(null,
             Expressions.newArrayInit(Object[].class, expressions)));
@@ -101,7 +91,7 @@ public class RexExecutorImpl implements RexExecutor {
             BuiltInMethod.FUNCTION1_APPLY.method.getName(),
             ImmutableList.of(root0_), blockBuilder.toBlock());
     String code = Expressions.toString(methodDecl);
-    if (CalciteSystemProperty.DEBUG.value()) {
+    if (CalcitePrepareImpl.DEBUG) {
       Util.debugCode(System.out, code);
     }
     return code;
@@ -115,7 +105,7 @@ public class RexExecutorImpl implements RexExecutor {
    * @param exps Expressions
    * @param rowType describes the structure of the input row.
    */
-  public static RexExecutable getExecutable(RexBuilder rexBuilder, List<RexNode> exps,
+  public RexExecutable getExecutable(RexBuilder rexBuilder, List<RexNode> exps,
       RelDataType rowType) {
     final JavaTypeFactoryImpl typeFactory =
         new JavaTypeFactoryImpl(rexBuilder.getTypeFactory().getTypeSystem());
@@ -127,7 +117,7 @@ public class RexExecutorImpl implements RexExecutor {
   /**
    * Do constant reduction using generated code.
    */
-  @Override public void reduce(RexBuilder rexBuilder, List<RexNode> constExps,
+  public void reduce(RexBuilder rexBuilder, List<RexNode> constExps,
       List<RexNode> reducedValues) {
     final String code = compile(rexBuilder, constExps,
         (list, index, storageType) -> {
@@ -155,13 +145,13 @@ public class RexExecutorImpl implements RexExecutor {
       this.typeFactory = typeFactory;
     }
 
-    @Override public Expression field(BlockBuilder list, int index, @Nullable Type storageType) {
+    public Expression field(BlockBuilder list, int index, Type storageType) {
       MethodCallExpression recFromCtx = Expressions.call(
           DataContext.ROOT,
           BuiltInMethod.DATA_CONTEXT_GET.method,
           Expressions.constant("inputRecord"));
       Expression recFromCtxCasted =
-          EnumUtils.convert(recFromCtx, Object[].class);
+          RexToLixTranslator.convert(recFromCtx, Object[].class);
       IndexExpression recordAccess = Expressions.arrayIndex(recFromCtxCasted,
           Expressions.constant(index));
       if (storageType == null) {
@@ -169,7 +159,16 @@ public class RexExecutorImpl implements RexExecutor {
             rowType.getFieldList().get(index).getType();
         storageType = ((JavaTypeFactory) typeFactory).getJavaClass(fieldType);
       }
-      return EnumUtils.convert(recordAccess, storageType);
+      return RexToLixTranslator.convert(recordAccess, storageType);
     }
   }
+
+  public Object[] execute(RexBuilder rexBuilder, List<RexNode> exps,
+                                     RelDataType rowType,  DataContext dataValues) {
+    final RexExecutable exec = getExecutable(rexBuilder, exps, rowType);
+    exec.setDataContext(dataValues);
+    return exec.execute();
+  }
 }
+
+// End RexExecutorImpl.java
