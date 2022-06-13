@@ -33,7 +33,7 @@ import org.apache.calcite.linq4j.function.Function1;
 import org.apache.calcite.linq4j.function.NonDeterministic;
 import org.apache.calcite.linq4j.tree.Primitive;
 import org.apache.calcite.runtime.FlatLists.ComparableList;
-import org.apache.calcite.sql.fun.SqlLibraryOperators;
+import org.apache.calcite.util.Bug;
 import org.apache.calcite.util.NumberUtil;
 import org.apache.calcite.util.TimeWithTimeZoneString;
 import org.apache.calcite.util.TimestampWithTimeZoneString;
@@ -60,7 +60,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -73,7 +72,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.BinaryOperator;
 import java.util.regex.Pattern;
 import javax.annotation.Nonnull;
 
@@ -142,8 +140,6 @@ public class SqlFunctions {
    * will want persistent values for sequences, shared among threads. */
   private static final ThreadLocal<Map<String, AtomicLong>> THREAD_SEQUENCES =
       ThreadLocal.withInitial(HashMap::new);
-
-  private static final Pattern PATTERN_0_STAR_E = Pattern.compile("0*E");
 
   private SqlFunctions() {
   }
@@ -372,11 +368,6 @@ public class SqlFunctions {
     return repeat(" ", n);
   }
 
-  /** SQL STRCMP(String,String) function. */
-  public static int strcmp(String s0, String s1) {
-    return (int) Math.signum(s1.compareTo(s0));
-  }
-
   /** SQL SOUNDEX(string) function. */
   public static String soundex(String s) {
     return SOUNDEX.soundex(s);
@@ -460,11 +451,6 @@ public class SqlFunctions {
   /** SQL {@code binary || binary} operator. */
   public static ByteString concat(ByteString s0, ByteString s1) {
     return s0.concat(s1);
-  }
-
-  /** SQL {@code concat(arg0, arg1, arg2, ...)} function. */
-  public static String concat(String... args) {
-    return String.join("", args);
   }
 
   /** SQL {@code RTRIM} function applied to string. */
@@ -613,7 +599,7 @@ public class SqlFunctions {
     String[] existingExpressions = Arrays.stream(POSIX_CHARACTER_CLASSES)
         .filter(v -> originalRegex.contains(v.toLowerCase(Locale.ROOT))).toArray(String[]::new);
     for (String v : existingExpressions) {
-      regex = regex.replace(v.toLowerCase(Locale.ROOT), "\\p{" + v + "}");
+      regex = regex.replaceAll(v.toLowerCase(Locale.ROOT), "\\\\p{" + v + "}");
     }
 
     int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE;
@@ -638,11 +624,6 @@ public class SqlFunctions {
    * neither side may be null). */
   public static boolean eq(Object b0, Object b1) {
     return b0.equals(b1);
-  }
-
-  /** SQL <code>=</code> operator applied to String values with a certain Comparator. */
-  public static boolean eq(String s0, String s1, Comparator<String> comparator) {
-    return comparator.compare(s0, s1) == 0;
   }
 
   /** SQL <code>=</code> operator applied to Object values (at least one operand
@@ -684,11 +665,6 @@ public class SqlFunctions {
     return !eq(b0, b1);
   }
 
-  /** SQL <code>&lt;gt;</code> operator applied to OString values with a certain Comparator. */
-  public static boolean ne(String s0, String s1, Comparator<String> comparator) {
-    return !eq(s0, s1, comparator);
-  }
-
   /** SQL <code>&lt;gt;</code> operator applied to Object values (at least one
    *  operand has ANY type, including String; neither may be null). */
   public static boolean neAny(Object b0, Object b1) {
@@ -705,11 +681,6 @@ public class SqlFunctions {
   /** SQL <code>&lt;</code> operator applied to String values. */
   public static boolean lt(String b0, String b1) {
     return b0.compareTo(b1) < 0;
-  }
-
-  /** SQL <code>&lt;</code> operator applied to String values. */
-  public static boolean lt(String b0, String b1, Comparator<String> comparator) {
-    return comparator.compare(b0, b1) < 0;
   }
 
   /** SQL <code>&lt;</code> operator applied to ByteString values. */
@@ -745,11 +716,6 @@ public class SqlFunctions {
   /** SQL <code>&le;</code> operator applied to String values. */
   public static boolean le(String b0, String b1) {
     return b0.compareTo(b1) <= 0;
-  }
-
-  /** SQL <code>&le;</code> operator applied to String values. */
-  public static boolean le(String b0, String b1, Comparator<String> comparator) {
-    return comparator.compare(b0, b1) <= 0;
   }
 
   /** SQL <code>&le;</code> operator applied to ByteString values. */
@@ -788,11 +754,6 @@ public class SqlFunctions {
     return b0.compareTo(b1) > 0;
   }
 
-  /** SQL <code>&gt;</code> operator applied to String values. */
-  public static boolean gt(String b0, String b1, Comparator<String> comparator) {
-    return comparator.compare(b0, b1) > 0;
-  }
-
   /** SQL <code>&gt;</code> operator applied to ByteString values. */
   public static boolean gt(ByteString b0, ByteString b1) {
     return b0.compareTo(b1) > 0;
@@ -827,11 +788,6 @@ public class SqlFunctions {
   /** SQL <code>&ge;</code> operator applied to String values. */
   public static boolean ge(String b0, String b1) {
     return b0.compareTo(b1) >= 0;
-  }
-
-  /** SQL <code>&ge;</code> operator applied to String values. */
-  public static boolean ge(String b0, String b1, Comparator<String> comparator) {
-    return comparator.compare(b0, b1) >= 0;
   }
 
   /** SQL <code>&ge;</code> operator applied to ByteString values. */
@@ -1110,92 +1066,27 @@ public class SqlFunctions {
         op, b1.getClass().toString()).ex();
   }
 
-  /** Bitwise function <code>BIT_AND</code> applied to integer values. */
+  // &
+  /** Helper function for implementing <code>BIT_AND</code> */
   public static long bitAnd(long b0, long b1) {
     return b0 & b1;
   }
 
-  /** Bitwise function <code>BIT_AND</code> applied to binary values. */
-  public static ByteString bitAnd(ByteString b0, ByteString b1) {
-    return binaryOperator(b0, b1, (x, y) -> (byte) (x & y));
+  /** Helper function for implementing <code>BITCOUNT</code> */
+  public static long bitCount(long b) {
+    return Long.bitCount(b);
   }
 
-  /** Bitwise function <code>BIT_AND</code> applied to long and binary values. */
-  public static ByteString bitAnd(long b0, ByteString b1) {
-    return binaryOperator(b1, b0, (x, y) -> (byte) (x & y));
-  }
-
-  /** Bitwise function <code>BIT_AND</code> applied to binary and long values. */
-  public static ByteString bitAnd(ByteString b0, long b1) {
-    return binaryOperator(b0, b1, (x, y) -> (byte) (x & y));
-  }
-
-  /** Bitwise function <code>BIT_OR</code> applied to integer values. */
+  // |
+  /** Helper function for implementing <code>BIT_OR</code> */
   public static long bitOr(long b0, long b1) {
     return b0 | b1;
   }
 
-  /** Bitwise function <code>BIT_OR</code> applied to binary values. */
-  public static ByteString bitOr(ByteString b0, ByteString b1) {
-    return binaryOperator(b0, b1, (x, y) -> (byte) (x | y));
-  }
-
-  /** Bitwise function <code>BIT_XOR</code> applied to integer values. */
+  // ^
+  /** Helper function for implementing <code>BIT_XOR</code> */
   public static long bitXor(long b0, long b1) {
     return b0 ^ b1;
-  }
-
-  /** Bitwise function <code>BIT_XOR</code> applied to binary values. */
-  public static ByteString bitXor(ByteString b0, ByteString b1) {
-    return binaryOperator(b0, b1, (x, y) -> (byte) (x ^ y));
-  }
-
-  /**
-   * Utility for bitwise function applied to two byteString values.
-   *
-   * @param b0 The first byteString value operand of bitwise function.
-   * @param b1 The second byteString value operand of bitwise function.
-   * @param bitOp BitWise binary operator.
-   * @return ByteString after bitwise operation.
-   */
-  private static ByteString binaryOperator(
-      ByteString b0, ByteString b1, BinaryOperator<Byte> bitOp) {
-    if (b0.length() == 0) {
-      return b1;
-    }
-    if (b1.length() == 0) {
-      return b0;
-    }
-
-    if (b0.length() != b1.length()) {
-      throw RESOURCE.differentLengthForBitwiseOperands(
-          b0.length(), b1.length()).ex();
-    }
-
-    final byte[] result = new byte[b0.length()];
-    for (int i = 0; i < b0.length(); i++) {
-      result[i] = bitOp.apply(b0.byteAt(i), b1.byteAt(i));
-    }
-
-    return new ByteString(result);
-  }
-
-  /**
-   * Utility for bitwise function applied to byteString and long values.
-   *
-   * @param b0 The first byteString value operand of bitwise function.
-   * @param b1 The second long value operand of bitwise function.
-   * @param bitOp BitWise binary operator.
-   * @return ByteString after bitwise operation.
-   */
-  private static ByteString binaryOperator(
-      ByteString b0, long b1, BinaryOperator<Byte> bitOp) {
-    final byte[] bytes0 = b0.getBytes();
-
-    for (int i = 0; i < bytes0.length; i++) {
-      bytes0[i] = bitOp.apply((byte) (b1 >> 8 * (bytes0.length - i - 1)), bytes0[i]);
-    }
-    return new ByteString(bytes0);
   }
 
   // EXP
@@ -1520,17 +1411,6 @@ public class SqlFunctions {
     return Math.cos(b0);
   }
 
-  // COSH
-  /** SQL <code>COSH</code> operator applied to BigDecimal values. */
-  public static double cosh(BigDecimal b) {
-    return cosh(b.doubleValue());
-  }
-
-  /** SQL <code>COSH</code> operator applied to double values. */
-  public static double cosh(double b) {
-    return Math.cosh(b);
-  }
-
   // COT
   /** SQL <code>COT</code> operator applied to BigDecimal values. */
   public static double cot(BigDecimal b0) {
@@ -1676,17 +1556,6 @@ public class SqlFunctions {
     return Math.sin(b0);
   }
 
-  // SINH
-  /** SQL <code>SINH</code> operator applied to BigDecimal values. */
-  public static double sinh(BigDecimal b) {
-    return sinh(b.doubleValue());
-  }
-
-  /** SQL <code>SINH</code> operator applied to double values. */
-  public static double sinh(double b) {
-    return Math.sinh(b);
-  }
-
   // TAN
   /** SQL <code>TAN</code> operator applied to BigDecimal values. */
   public static double tan(BigDecimal b0) {
@@ -1696,17 +1565,6 @@ public class SqlFunctions {
   /** SQL <code>TAN</code> operator applied to double values. */
   public static double tan(double b0) {
     return Math.tan(b0);
-  }
-
-  // TANH
-  /** SQL <code>TANH</code> operator applied to BigDecimal values. */
-  public static double tanh(BigDecimal b) {
-    return tanh(b.doubleValue());
-  }
-
-  /** SQL <code>TANH</code> operator applied to double values. */
-  public static double tanh(double b) {
-    return Math.tanh(b);
   }
 
   // Helpers
@@ -1808,7 +1666,7 @@ public class SqlFunctions {
     BigDecimal bigDecimal =
         new BigDecimal(x, MathContext.DECIMAL32).stripTrailingZeros();
     final String s = bigDecimal.toString();
-    return PATTERN_0_STAR_E.matcher(s).replaceAll("E").replace("E+", "E");
+    return s.replaceAll("0*E", "E").replace("E+", "E");
   }
 
   /** CAST(DOUBLE AS VARCHAR). */
@@ -1819,18 +1677,16 @@ public class SqlFunctions {
     BigDecimal bigDecimal =
         new BigDecimal(x, MathContext.DECIMAL64).stripTrailingZeros();
     final String s = bigDecimal.toString();
-    return PATTERN_0_STAR_E.matcher(s).replaceAll("E").replace("E+", "E");
+    return s.replaceAll("0*E", "E").replace("E+", "E");
   }
 
   /** CAST(DECIMAL AS VARCHAR). */
   public static String toString(BigDecimal x) {
     final String s = x.toString();
-    if (s.equals("0")) {
-      return s;
-    } else if (s.startsWith("0.")) {
+    if (s.startsWith("0")) {
       // we want ".1" not "0.1"
       return s.substring(1);
-    } else if (s.startsWith("-0.")) {
+    } else if (s.startsWith("-0")) {
       // we want "-.1" not "-0.1"
       return "-" + s.substring(2);
     } else {
@@ -1846,7 +1702,7 @@ public class SqlFunctions {
 
   @NonDeterministic
   private static Object cannotConvert(Object o, Class toType) {
-    throw RESOURCE.cannotConvert(String.valueOf(o), toType.toString()).ex();
+    throw RESOURCE.cannotConvert(o.toString(), toType.toString()).ex();
   }
 
   /** CAST(VARCHAR AS BOOLEAN). */
@@ -2171,52 +2027,6 @@ public class SqlFunctions {
         .getMillisOfDay();
   }
 
-  /** For {@link SqlLibraryOperators#TIMESTAMP_SECONDS}. */
-  public static long timestampSeconds(long v) {
-    return v * 1000;
-  }
-
-  /** For {@link SqlLibraryOperators#TIMESTAMP_MILLIS}. */
-  public static long timestampMillis(long v) {
-    // translation is trivial, because Calcite represents TIMESTAMP values as
-    // millis since epoch
-    return v;
-  }
-
-  /** For {@link SqlLibraryOperators#TIMESTAMP_MICROS}. */
-  public static long timestampMicros(long v) {
-    return v / 1000;
-  }
-
-  /** For {@link SqlLibraryOperators#UNIX_SECONDS}. */
-  public static long unixSeconds(long v) {
-    return v / 1000;
-  }
-
-  /** For {@link SqlLibraryOperators#UNIX_MILLIS}. */
-  public static long unixMillis(long v) {
-    // translation is trivial, because Calcite represents TIMESTAMP values as
-    // millis since epoch
-    return v;
-  }
-
-  /** For {@link SqlLibraryOperators#UNIX_MICROS}. */
-  public static long unixMicros(long v) {
-    return v * 1000;
-  }
-
-  /** For {@link SqlLibraryOperators#DATE_FROM_UNIX_DATE}. */
-  public static int dateFromUnixDate(int v) {
-    // translation is trivial, because Calcite represents dates as Unix integers
-    return v;
-  }
-
-  /** For {@link SqlLibraryOperators#UNIX_DATE}. */
-  public static int unixDate(int v) {
-    // translation is trivial, because Calcite represents dates as Unix integers
-    return v;
-  }
-
   public static Long toTimestampWithLocalTimeZone(String v) {
     return v == null ? null : new TimestampWithTimeZoneString(v)
         .withTimeZone(DateTimeUtils.UTC_ZONE)
@@ -2313,7 +2123,14 @@ public class SqlFunctions {
       return 0;
     }
 
-    return s.indexOf(seek, from0) + 1;
+    // ByteString doesn't have indexOf(ByteString, int) until avatica-1.9
+    // (see [CALCITE-1423]), so apply substring and find from there.
+    Bug.upgrade("in avatica-1.9, use ByteString.substring(ByteString, int)");
+    final int p = s.substring(from0).indexOf(seek);
+    if (p < 0) {
+      return 0;
+    }
+    return p + from;
   }
 
   /** Helper for rounding. Truncate(12345, 1000) returns 12000. */
@@ -2746,46 +2563,6 @@ public class SqlFunctions {
     return resultCollection;
   }
 
-  /**
-   * Function that, given a certain List containing single-item structs (i.e. arrays / lists with
-   * a single item), builds an Enumerable that returns those single items inside the structs.
-   */
-  public static Function1<Object, Enumerable<Comparable>> flatList() {
-    return inputObject -> {
-      final List list = (List) inputObject;
-      final Enumerator<List<Object>> enumerator = Linq4j.enumerator(list);
-      return new AbstractEnumerable<Comparable>() {
-        public Enumerator<Comparable> enumerator() {
-          return new Enumerator<Comparable>() {
-
-            @Override public boolean moveNext() {
-              return enumerator.moveNext();
-            }
-
-            @Override public Comparable current() {
-              final Object element = enumerator.current();
-              final Comparable comparable;
-              if (element.getClass().isArray()) {
-                comparable = (Comparable) ((Object[]) element)[0];
-              } else {
-                comparable = (Comparable) ((List) element).get(0);
-              }
-              return comparable;
-            }
-
-            @Override public void reset() {
-              enumerator.reset();
-            }
-
-            @Override public void close() {
-              enumerator.close();
-            }
-          };
-        }
-      };
-    };
-  }
-
   public static Function1<Object, Enumerable<ComparableList<Comparable>>> flatProduct(
       final int[] fieldCounts, final boolean withOrdinality,
       final FlatProductInputType[] inputTypes) {
@@ -2883,15 +2660,9 @@ public class SqlFunctions {
     int y0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.YEAR, date);
     int m0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.MONTH, date);
     int d0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.DAY, date);
-    m0 += m;
-    int deltaYear = (int) DateTimeUtils.floorDiv(m0, 12);
-    y0 += deltaYear;
-    m0 = (int) DateTimeUtils.floorMod(m0, 12);
-    if (m0 == 0) {
-      y0 -= 1;
-      m0 += 12;
-    }
-
+    int y = m / 12;
+    y0 += y;
+    m0 += m - y * 12;
     int last = lastDay(y0, m0);
     if (d0 > last) {
       d0 = last;

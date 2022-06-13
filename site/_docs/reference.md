@@ -253,7 +253,6 @@ hintOptions:
 
 hintKVOption:
       optionName '=' stringLiteral
-  |   stringLiteral '=' stringLiteral
 
 optionValue:
       stringLiteral
@@ -580,7 +579,6 @@ GRANTED,
 **HAVING**,
 HIERARCHY,
 **HOLD**,
-HOP,
 **HOUR**,
 HOURS,
 **IDENTITY**,
@@ -1767,18 +1765,15 @@ and `LISTAGG`).
 | COUNT( [ ALL &#124; DISTINCT ] value [, value ]*) | Returns the number of input rows for which *value* is not null (wholly not null if *value* is composite)
 | COUNT(*)                           | Returns the number of input rows
 | FUSION(multiset)                   | Returns the multiset union of *multiset* across all input values
-| INTERSECTION(multiset)             | Returns the multiset intersection of *multiset* across all input values
 | APPROX_COUNT_DISTINCT(value [, value ]*)      | Returns the approximate number of distinct values of *value*; the database is allowed to use an approximation but is not required to
 | AVG( [ ALL &#124; DISTINCT ] numeric)         | Returns the average (arithmetic mean) of *numeric* across all input values
 | SUM( [ ALL &#124; DISTINCT ] numeric)         | Returns the sum of *numeric* across all input values
 | MAX( [ ALL &#124; DISTINCT ] value)           | Returns the maximum value of *value* across all input values
 | MIN( [ ALL &#124; DISTINCT ] value)           | Returns the minimum value of *value* across all input values
 | ANY_VALUE( [ ALL &#124; DISTINCT ] value)     | Returns one of the values of *value* across all input values; this is NOT specified in the SQL standard
-| SOME(condition)                               | Returns true if any condition is true.
-| EVERY(condition)                              | Returns true if all conditions are true.
-| BIT_AND( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise AND of all non-null input values, or null if none; integer and binary types are supported
-| BIT_OR( [ ALL &#124; DISTINCT ] value)        | Returns the bitwise OR of all non-null input values, or null if none; integer and binary types are supported
-| BIT_XOR( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise XOR of all non-null input values, or null if none; integer and binary types are supported
+| BIT_AND( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise AND of all non-null input values, or null if none
+| BIT_OR( [ ALL &#124; DISTINCT ] value)        | Returns the bitwise OR of all non-null input values, or null if none
+| BIT_XOR( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise XOR of all non-null input values, or null if none
 | STDDEV_POP( [ ALL &#124; DISTINCT ] numeric)  | Returns the population standard deviation of *numeric* across all input values
 | STDDEV_SAMP( [ ALL &#124; DISTINCT ] numeric) | Returns the sample standard deviation of *numeric* across all input values
 | STDDEV( [ ALL &#124; DISTINCT ] numeric)      | Synonym for `STDDEV_SAMP`
@@ -1861,109 +1856,7 @@ Not implemented:
 | GROUP_ID()           | Returns an integer that uniquely identifies the combination of grouping keys
 | GROUPING_ID(expression [, expression ]*) | Synonym for `GROUPING`
 
-### DESCRIPTOR
-| Operator syntax      | Description
-|:-------------------- |:-----------
-| DESCRIPTOR(name [, name ]*) | DESCRIPTOR appears as an argument in a function to indicate a list of names. The interpretation of names is left to the function.
-
-### Table functions
-Table functions occur in the `FROM` clause.
-
-#### TUMBLE
-In streaming queries, TUMBLE assigns a window for each row of a relation based on a timestamp column. An assigned window
-is specified by its beginning and ending. All assigned windows have the same length, and that's why tumbling sometimes
-is named as "fixed windowing".
-
-| Operator syntax      | Description
-|:-------------------- |:-----------
-| TUMBLE(data, DESCRIPTOR(timecol), size [, offset ]) | Indicates a tumbling window of *size* interval for *timecol*, optionally aligned at *offset*.
-
-Here is an example:
-```SQL
-SELECT * FROM TABLE(
-  TUMBLE(
-    TABLE orders,
-    DESCRIPTOR(rowtime),
-    INTERVAL '1' MINUTE));
-
--- or with the named params
--- note: the DATA param must be the first
-SELECT * FROM TABLE(
-  TUMBLE(
-    DATA => TABLE orders,
-    TIMECOL => DESCRIPTOR(rowtime),
-    SIZE => INTERVAL '1' MINUTE));
-```
-will apply tumbling with 1 minute window size on rows from table orders. rowtime is the
-watermarked column of table orders that tells data completeness.
-
-#### HOP
-In streaming queries, HOP assigns windows that cover rows within the interval of *size* and shifting every *slide* based
-on a timestamp column. Windows assigned could have overlapping so hopping sometime is named as "sliding windowing".
-
-
-| Operator syntax      | Description
-|:-------------------- |:-----------
-| HOP(data, DESCRIPTOR(timecol), slide, size [, offset ]) | Indicates a hopping window for *timecol*, covering rows within the interval of *size*, shifting every *slide* and optionally aligned at *offset*.
-
-Here is an example:
-```SQL
-SELECT * FROM TABLE(
-  HOP(
-    TABLE orders,
-    DESCRIPTOR(rowtime),
-    INTERVAL '2' MINUTE,
-    INTERVAL '5' MINUTE));
-
--- or with the named params
--- note: the DATA param must be the first
-SELECT * FROM TABLE(
-  HOP(
-    DATA => TABLE orders,
-    TIMECOL => DESCRIPTOR(rowtime),
-    SLIDE => INTERVAL '2' MINUTE,
-    SIZE => INTERVAL '5' MINUTE));
-```
-will apply hopping with 5-minute interval size on rows from table orders and shifting every 2 minutes. rowtime is the
-watermarked column of table orders that tells data completeness.
-
-#### SESSION
-In streaming queries, SESSION assigns windows that cover rows based on *datetime*. Within a session window, distances
-of rows are less than *interval*. Session window is applied per *key*.
-
-
-| Operator syntax      | Description
-|:-------------------- |:-----------
-| session(data, DESCRIPTOR(timecol), DESCRIPTOR(key), size) | Indicates a session window of *size* interval for *timecol*. Session window is applied per *key*.
-
-Here is an example:
-```SQL
-SELECT * FROM TABLE(
-  SESSION(
-    TABLE orders,
-    DESCRIPTOR(rowtime),
-    DESCRIPTOR(product),
-    INTERVAL '20' MINUTE));
-
--- or with the named params
--- note: the DATA param must be the first
-SELECT * FROM TABLE(
-  SESSION(
-    DATA => TABLE orders,
-    TIMECOL => DESCRIPTOR(rowtime),
-    KEY => DESCRIPTOR(product),
-    SIZE => INTERVAL '20' MINUTE));
-```
-will apply session with 20-minute inactive gap on rows from table orders. rowtime is the
-watermarked column of table orders that tells data completeness. Session is applied per product.
-
-**Note**: The `Tumble`, `Hop` and `Session` window table functions assign
-each row in the original table to a window. The output table has all
-the same columns as the original table plus two additional columns `window_start`
-and `window_end`, which repesent the start and end of the window interval, respectively.
-
 ### Grouped window functions
-**warning**: grouped window functions are deprecated.
 
 Grouped window functions occur in the `GROUP BY` clause and define a key value
 that represents a window containing several rows.
@@ -2013,9 +1906,7 @@ In the "C" (for "compatibility") column, "o" indicates that the function
 implements the OpenGIS Simple Features Implementation Specification for SQL,
 [version 1.2.1](https://www.opengeospatial.org/standards/sfs);
 "p" indicates that the function is a
-[PostGIS](https://www.postgis.net/docs/reference.html) extension to OpenGIS;
-"h" indicates that the function is an
-[H2GIS](http://www.h2gis.org/docs/dev/functions/) extension.
+[PostGIS](https://www.postgis.net/docs/reference.html) extension to OpenGIS.
 
 #### Geometry conversion functions (2D)
 
@@ -2057,9 +1948,6 @@ Not implemented:
 
 | C | Operator syntax      | Description
 |:- |:-------------------- |:-----------
-| p | ST_MakeEnvelope(xMin, yMin, xMax, yMax  [, srid ]) | Creates a rectangular POLYGON
-| h | ST_MakeGrid(geom, deltaX, deltaY) | Calculates a regular grid of POLYGONs based on *geom*
-| h | ST_MakeGridPoints(geom, deltaX, deltaY) | Calculates a regular grid of points based on *geom*
 | o | ST_MakeLine(point1 [, point ]*) | Creates a line-string from the given POINTs (or MULTIPOINTs)
 | p | ST_MakePoint(x, y [, z ]) | Alias for `ST_Point`
 | o | ST_Point(x, y [, z ]) | Constructs a point from two or three coordinates
@@ -2070,6 +1958,9 @@ Not implemented:
 * ST_Expand(geom, distance) Expands *geom*'s envelope
 * ST_Expand(geom, deltaX, deltaY) Expands *geom*'s envelope
 * ST_MakeEllipse(point, width, height) Constructs an ellipse
+* ST_MakeEnvelope(xMin, yMin, xMax, yMax  [, srid ]) Creates a rectangular POLYGON
+* ST_MakeGrid(geom, deltaX, deltaY) Calculates a regular grid of POLYGONs based on *geom*
+* ST_MakeGridPoints(geom, deltaX, deltaY) Calculates a regular grid of points based on *geom*
 * ST_MakePolygon(lineString [, hole ]*) Creates a POLYGON from *lineString* with the given holes (which are required to be closed LINESTRINGs)
 * ST_MinimumDiameter(geom) Returns the minimum diameter of *geom*
 * ST_MinimumRectangle(geom) Returns the minimum rectangle enclosing *geom*
@@ -2393,11 +2284,9 @@ To enable an operator table, set the
 connect string parameter.
 
 The 'C' (compatibility) column contains value
-'b' for BigQuery ('fun=bigquery' in the connect string),
 'm' for MySQL ('fun=mysql' in the connect string),
 'o' for Oracle ('fun=oracle' in the connect string),
 'p' for PostgreSQL ('fun=postgresql' in the connect string).
-'s' for Snowflake ('fun=snowflake' in the connect string).
 
 One operator name may correspond to multiple SQL dialects, but with different
 semantics.
@@ -2405,19 +2294,14 @@ semantics.
 | C | Operator syntax                                | Description
 |:- |:-----------------------------------------------|:-----------
 | p | expr :: type                                   | Casts *expr* to *type*
+| m | BIT_COUNT(integer)                             | Returns the bitwise COUNT of non-null *integer*
 | o | CHR(integer) | Returns the character having the binary equivalent to *integer* as a CHAR value
-| o | COSH(numeric)                                  | Returns the hyperbolic cosine of *numeric*
-| o | CONCAT(string, string)                         | Concatenates two strings
-| m p | CONCAT(string [, string ]*)                  | Concatenates two or more strings
-| m | COMPRESS(string)                               | Compresses a string using zlib compression and returns the result as a binary string.
+| m o p | CONCAT(string [, string ]*)                | Concatenates two or more strings
 | p | CONVERT_TIMEZONE(tz1, tz2, datetime)           | Converts the timezone of *datetime* from *tz1* to *tz2*
 | m | DAYNAME(datetime)                              | Returns the name, in the connection's locale, of the weekday in *datetime*; for example, it returns '星期日' for both DATE '2020-02-10' and TIMESTAMP '2020-02-10 10:10:10'
-| b | DATE(string)                                   | Equivalent to `CAST(string AS DATE)`
-| b | DATE_FROM_UNIX_DATE(integer)                   | Returns the DATE that is *integer* days after 1970-01-01
 | o | DECODE(value, value1, result1 [, valueN, resultN ]* [, default ]) | Compares *value* to each *valueN* value one by one; if *value* is equal to a *valueN*, returns the corresponding *resultN*, else returns *default*, or NULL if *default* is not specified
 | p | DIFFERENCE(string, string)                     | Returns a measure of the similarity of two strings, namely the number of character positions that their `SOUNDEX` values have in common: 4 if the `SOUNDEX` values are same and 0 if the `SOUNDEX` values are totally different
-| o | EXTRACT(xml, xpath, [, namespaces ])           | Returns the xml fragment of the element or elements matched by the XPath expression. The optional namespace value that specifies a default mapping or namespace mapping for prefixes, which is used when evaluating the XPath expression
-| o | EXISTSNODE(xml, xpath, [, namespaces ])        | Determines whether traversal of a XML document using a specified xpath results in any nodes. Returns 0 if no nodes remain after applying the XPath traversal on the document fragment of the element or elements matched by the XPath expression. Returns 1 if any nodes remain. The optional namespace value that specifies a default mapping or namespace mapping for prefixes, which is used when evaluating the XPath expression.
+| o | EXTRACT(xml, xpath, [, namespace ])            | Returns the xml fragment of the element or elements matched by the XPath expression. The optional namespace value that specifies a default mapping or namespace mapping for prefixes, which is used when evaluating the XPath expression
 | m | EXTRACTVALUE(xml, xpathExpr))                  | Returns the text of the first text node which is a child of the element or elements matched by the XPath expression.
 | o | GREATEST(expr [, expr ]*)                      | Returns the greatest of the expressions
 | m | JSON_TYPE(jsonValue)                           | Returns a string value indicating the type of a *jsonValue*
@@ -2441,24 +2325,13 @@ semantics.
 | m p | RIGHT(string, length)                        | Returns the rightmost *length* characters from the *string*
 | o | RTRIM(string)                                  | Returns *string* with all blanks removed from the end
 | m p | SHA1(string)                                 | Calculates a SHA-1 hash value of *string* and returns it as a hex string
-| o | SINH(numeric)                                  | Returns the hyperbolic sine of *numeric*
 | m o p | SOUNDEX(string)                            | Returns the phonetic representation of *string*; throws if *string* is encoded with multi-byte encoding such as UTF-8
 | m | SPACE(integer)                                 | Returns a string of *integer* spaces; returns an empty string if *integer* is less than 1
 | o | SUBSTR(string, position [, substringLength ]) | Returns a portion of *string*, beginning at character *position*, *substringLength* characters long. SUBSTR calculates lengths using characters as defined by the input character set
-| m | STRCMP(string, string)                         | Returns 0 if both of the strings are same and returns -1 when the first argument is smaller than the second and 1 when the second one is smaller than the first one
-| o | TANH(numeric)                                  | Returns the hyperbolic tangent of *numeric*
-| b | TIMESTAMP_MICROS(integer)                      | Returns the TIMESTAMP that is *integer* microseconds after 1970-01-01 00:00:00
-| b | TIMESTAMP_MILLIS(integer)                      | Returns the TIMESTAMP that is *integer* milliseconds after 1970-01-01 00:00:00
-| b | TIMESTAMP_SECONDS(integer)                     | Returns the TIMESTAMP that is *integer* seconds after 1970-01-01 00:00:00
 | o p | TO_DATE(string, format)                      | Converts *string* to a date using the format *format*
 | o p | TO_TIMESTAMP(string, format)                 | Converts *string* to a timestamp using the format *format*
 | o p | TRANSLATE(expr, fromString, toString)        | Returns *expr* with all occurrences of each character in *fromString* replaced by its corresponding character in *toString*. Characters in *expr* that are not in *fromString* are not replaced
-| b | UNIX_MICROS(timestamp)                         | Returns the number of microseconds since 1970-01-01 00:00:00
-| b | UNIX_MILLIS(timestamp)                         | Returns the number of milliseconds since 1970-01-01 00:00:00
-| b | UNIX_SECONDS(timestamp)                        | Returns the number of seconds since 1970-01-01 00:00:00
-| b | UNIX_DATE(date)                                | Returns the number of days since 1970-01-01
-| o | XMLTRANSFORM(xml, xslt)                        | Returns a string after applying xslt to supplied XML
-| s | BITAND(value0, value1)                         | Returns bitwise and of input values
+| o | XMLTRANSFORM(xml, xslt)                        | Returns a string after applying xslt to supplied xml.
 
 Note:
 
@@ -2761,68 +2634,6 @@ Here are some examples:
 * `f(c => 3, d => 1)` is not legal, because you have not specified a value for
   `a` and `a` is not optional.
 
-### SQL Hints
-
-A hint is an instruction to the optimizer. When writing SQL, you may know information about
-the data unknown to the optimizer. Hints enable you to make decisions normally made by the optimizer.
-
-* Planner enforcers: there's no perfect planner, so it makes sense to implement hints to
-allow user better control the execution. For instance: "never merge this subquery with others" (`/*+ no_merge */`);
-“treat those tables as leading ones" (`/*+ leading */`) to affect join ordering, etc;
-* Append meta data/statistics: some statistics like “table index for scan” or “skew info of some shuffle keys”
-are somehow dynamic for the query, it would be very convenient to config them with hints because
-our planning metadata from the planner is very often not very accurate;
-* Operator resource constraints: for many cases, we would give a default resource configuration
-for the execution operators,
-i.e. min parallelism, memory (resource consuming UDF), special resource requirement (GPU or SSD disk) ...
-It would be very flexible to profile the resource with hints per query (not the Job).
-
-#### Syntax
-
-Calcite supports basically two kinds of hints:
-
-* Query Hint: right after the `SELECT` keyword;
-* Table Hint: right after the referenced table name.
-
-{% highlight sql %}
-query :
-      SELECT /*+ hints */
-      ...
-      from
-          tableName /*+ hints */
-          JOIN
-          tableName /*+ hints */
-      ...
-
-hints :
-      hintItem[, hintItem ]*
-
-hintItem :
-      hintName
-  |   hintName(optionKey=optionVal[, optionKey=optionVal ]*)
-  |   hintName(hintOption [, hintOption ]*)
-
-optionKey :
-      simpleIdentifier
-  |   stringLiteral
-
-optionVal :
-      stringLiteral
-
-hintOption :
-      simpleIdentifier
-   |  numericLiteral
-   |  stringLiteral
-{% endhighlight %}
-
-It is experimental in Calcite, and yet not fully implemented, what we have implemented are:
-
-* The parser support for the syntax above;
-* `RelHint` to represent a hint item;
-* Mechanism to propagate the hints, during sql-to-rel conversion and planner planning.
-
-We do not add any builtin hint items yet, would introduce more if we think the hints is stable enough.
-
 ### MATCH_RECOGNIZE
 
 `MATCH_RECOGNIZE` is a SQL extension for recognizing sequences of
@@ -3020,39 +2831,3 @@ generated column, `VIRTUAL` is the default.
 
 In *createFunctionStatement* and *usingFile*, *classNameLiteral*
 and *filePathLiteral* are character literals.
-
-
-#### Declaring Objects For Types Defined In Schema
-After an object type is defined and installed in the schema, you can use it to declare objects in any SQL block. For example, you can use the object type to specify the datatype of an attribute, column, variable, bind variable, record field, table element, formal parameter, or function result. At run time, instances of the object type are created; that is, objects of that type are instantiated. Each object can hold different values.
-
-Example: For declared types `address_typ` and `employee_typ`
-```SQL
-CREATE TYPE address_typ AS OBJECT (
-   street          VARCHAR2(30),
-   city            VARCHAR2(20),
-   state           CHAR(2),
-   postal_code     VARCHAR2(6) );
-
-CREATE TYPE employee_typ AS OBJECT (
-  employee_id       NUMBER(6),
-  first_name        VARCHAR2(20),
-  last_name         VARCHAR2(25),
-  email             VARCHAR2(25),
-  phone_number      VARCHAR2(20),
-  hire_date         DATE,
-  job_id            VARCHAR2(10),
-  salary            NUMBER(8,2),
-  commission_pct    NUMBER(2,2),
-  manager_id        NUMBER(6),
-  department_id     NUMBER(4),
-  address           address_typ
-);
-```
-
-We can declare objects of type `employee_typ` and `address_typ` :
-
-```SQL
-employee_typ(315, 'Francis', 'Logan', 'FLOGAN',
-        '555.777.2222', '01-MAY-04', 'SA_MAN', 11000, .15, 101, 110,
-         address_typ('376 Mission', 'San Francisco', 'CA', '94222'))
-```
