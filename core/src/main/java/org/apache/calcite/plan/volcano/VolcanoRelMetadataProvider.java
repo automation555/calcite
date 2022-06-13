@@ -17,31 +17,29 @@
 package org.apache.calcite.plan.volcano;
 
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.metadata.ChainedRelMetadataProvider;
 import org.apache.calcite.rel.metadata.Metadata;
 import org.apache.calcite.rel.metadata.MetadataDef;
 import org.apache.calcite.rel.metadata.MetadataHandler;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.UnboundMetadata;
 
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.Multimap;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
 /**
  * VolcanoRelMetadataProvider implements the {@link RelMetadataProvider}
  * interface by combining metadata from the rels making up an equivalence class.
  */
-@Deprecated // to be removed before 2.0
 public class VolcanoRelMetadataProvider implements RelMetadataProvider {
   //~ Methods ----------------------------------------------------------------
 
-  @Override public boolean equals(@Nullable Object obj) {
+  @Override public boolean equals(Object obj) {
     return obj instanceof VolcanoRelMetadataProvider;
   }
 
@@ -49,8 +47,7 @@ public class VolcanoRelMetadataProvider implements RelMetadataProvider {
     return 103;
   }
 
-  @Deprecated // to be removed before 2.0
-  @Override public <@Nullable M extends @Nullable Metadata> @Nullable UnboundMetadata<M> apply(
+  public <M extends Metadata> UnboundMetadata<M> apply(
       Class<? extends RelNode> relClass,
       final Class<? extends M> metadataClass) {
     if (relClass != RelSubset.class) {
@@ -60,9 +57,8 @@ public class VolcanoRelMetadataProvider implements RelMetadataProvider {
 
     return (rel, mq) -> {
       final RelSubset subset = (RelSubset) rel;
-      final RelMetadataProvider provider = Objects.requireNonNull(
-          rel.getCluster().getMetadataProvider(),
-          "metadataProvider");
+      final RelMetadataProvider provider =
+          rel.getCluster().getMetadataProvider();
 
       // REVIEW jvs 29-Mar-2006: I'm not sure what the correct precedence
       // should be here.  Letting the current best plan take the first shot is
@@ -73,11 +69,10 @@ public class VolcanoRelMetadataProvider implements RelMetadataProvider {
       // First, try current best implementation.  If it knows how to answer
       // this query, treat it as the most reliable.
       if (subset.best != null) {
-        RelNode best = subset.best;
         final UnboundMetadata<M> function =
-            provider.apply(best.getClass(), metadataClass);
+            provider.apply(subset.best.getClass(), metadataClass);
         if (function != null) {
-          final M metadata = function.bind(best, mq);
+          final M metadata = function.bind(subset.best, mq);
           if (metadata != null) {
             return metadata;
           }
@@ -101,6 +96,7 @@ public class VolcanoRelMetadataProvider implements RelMetadataProvider {
       }
 
       subset.set.inMetadataQuery = true;
+      List<Metadata> metaDataList = new ArrayList<>();
       try {
         for (RelNode relCandidate : subset.set.rels) {
           final UnboundMetadata<M> function =
@@ -108,7 +104,7 @@ public class VolcanoRelMetadataProvider implements RelMetadataProvider {
           if (function != null) {
             final M result = function.bind(relCandidate, mq);
             if (result != null) {
-              return result;
+              metaDataList.add(result);
             }
           }
         }
@@ -116,19 +112,21 @@ public class VolcanoRelMetadataProvider implements RelMetadataProvider {
         subset.set.inMetadataQuery = false;
       }
 
+      if (metaDataList.size() > 0) {
+        return metadataClass.cast(
+                Proxy.newProxyInstance(metadataClass.getClassLoader(),
+                        new Class[]{metadataClass},
+                        ChainedRelMetadataProvider.chainedInvocationHandlerOf(metaDataList)));
+      }
       // Give up.
       return null;
     };
   }
 
-  @Deprecated
-  @Override public <M extends Metadata> Multimap<Method, MetadataHandler<M>> handlers(
+  public <M extends Metadata> Multimap<Method, MetadataHandler<M>> handlers(
       MetadataDef<M> def) {
     return ImmutableMultimap.of();
   }
-
-  @Override public List<MetadataHandler<?>> handlers(
-      Class<? extends MetadataHandler<?>> handlerClass) {
-    return ImmutableList.of();
-  }
 }
+
+// End VolcanoRelMetadataProvider.java

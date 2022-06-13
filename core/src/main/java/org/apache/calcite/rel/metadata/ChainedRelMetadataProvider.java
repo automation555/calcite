@@ -23,8 +23,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.Multimap;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -51,7 +49,6 @@ public class ChainedRelMetadataProvider implements RelMetadataProvider {
   /**
    * Creates a chain.
    */
-  @SuppressWarnings("argument.type.incompatible")
   protected ChainedRelMetadataProvider(
       ImmutableList<RelMetadataProvider> providers) {
     this.providers = providers;
@@ -60,7 +57,7 @@ public class ChainedRelMetadataProvider implements RelMetadataProvider {
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public boolean equals(@Nullable Object obj) {
+  @Override public boolean equals(Object obj) {
     return obj == this
         || obj instanceof ChainedRelMetadataProvider
         && providers.equals(((ChainedRelMetadataProvider) obj).providers);
@@ -70,8 +67,7 @@ public class ChainedRelMetadataProvider implements RelMetadataProvider {
     return providers.hashCode();
   }
 
-  @Deprecated // to be removed before 2.0
-  @Override public <@Nullable M extends @Nullable Metadata> @Nullable UnboundMetadata<M> apply(
+  public <M extends Metadata> UnboundMetadata<M> apply(
       Class<? extends RelNode> relClass,
       final Class<? extends M> metadataClass) {
     final List<UnboundMetadata<M>> functions = new ArrayList<>();
@@ -105,8 +101,7 @@ public class ChainedRelMetadataProvider implements RelMetadataProvider {
     }
   }
 
-  @Deprecated // to be removed before 2.0
-  @Override public <M extends Metadata> Multimap<Method, MetadataHandler<M>> handlers(
+  public <M extends Metadata> Multimap<Method, MetadataHandler<M>> handlers(
       MetadataDef<M> def) {
     final ImmutableMultimap.Builder<Method, MetadataHandler<M>> builder =
         ImmutableMultimap.builder();
@@ -116,19 +111,13 @@ public class ChainedRelMetadataProvider implements RelMetadataProvider {
     return builder.build();
   }
 
-  @Override public List<MetadataHandler<?>> handlers(
-      Class<? extends MetadataHandler<?>> handlerClass) {
-    final ImmutableList.Builder<MetadataHandler<?>> builder =
-        ImmutableList.builder();
-    for (RelMetadataProvider provider : providers) {
-      builder.addAll(provider.handlers(handlerClass));
-    }
-    return builder.build();
-  }
-
   /** Creates a chain. */
   public static RelMetadataProvider of(List<RelMetadataProvider> list) {
     return new ChainedRelMetadataProvider(ImmutableList.copyOf(list));
+  }
+
+  public static InvocationHandler chainedInvocationHandlerOf(List<Metadata> metadataList) {
+    return new ChainedInvocationHandler(metadataList);
   }
 
   /** Invocation handler that calls a list of {@link Metadata} objects,
@@ -140,7 +129,7 @@ public class ChainedRelMetadataProvider implements RelMetadataProvider {
       this.metadataList = ImmutableList.copyOf(metadataList);
     }
 
-    @Override public @Nullable Object invoke(Object proxy, Method method, @Nullable Object[] args)
+    public Object invoke(Object proxy, Method method, Object[] args)
         throws Throwable {
       for (Metadata metadata : metadataList) {
         try {
@@ -149,10 +138,16 @@ public class ChainedRelMetadataProvider implements RelMetadataProvider {
             return o;
           }
         } catch (InvocationTargetException e) {
-          throw Util.throwAsRuntime(Util.causeOrSelf(e));
+          if (e.getCause() instanceof CyclicMetadataException) {
+            continue;
+          }
+          Util.throwIfUnchecked(e.getCause());
+          throw new RuntimeException(e.getCause());
         }
       }
       return null;
     }
   }
 }
+
+// End ChainedRelMetadataProvider.java
