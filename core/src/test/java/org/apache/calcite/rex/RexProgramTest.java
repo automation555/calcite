@@ -64,6 +64,7 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.function.Supplier;
 
+import static org.apache.calcite.rex.RexUtil.EXECUTOR;
 import static org.apache.calcite.test.Matchers.isRangeSet;
 
 import static org.hamcrest.CoreMatchers.equalTo;
@@ -2189,9 +2190,9 @@ class RexProgramTest extends RexProgramTestBase {
     literals.add(rexBuilder.makeLiteral("1969-07-20 12:34:56"));
     literals.add(rexBuilder.makeLiteral("1969-07-20"));
     literals.add(rexBuilder.makeLiteral("12:34:45"));
-    literals.add(
+    literals.add((RexLiteral)
         rexBuilder.makeLiteral(new ByteString(new byte[] {1, 2, -34, 0, -128}),
-            typeFactory.createSqlType(SqlTypeName.BINARY, 5)));
+            typeFactory.createSqlType(SqlTypeName.BINARY, 5), false));
     literals.add(rexBuilder.makeDateLiteral(new DateString(1974, 8, 9)));
     literals.add(rexBuilder.makeTimeLiteral(new TimeString(1, 23, 45), 0));
     literals.add(
@@ -2857,114 +2858,6 @@ class RexProgramTest extends RexProgramTestBase {
         is(2), is("Sarg[[3..8], [10..20]]"));
   }
 
-  private void checkSargNdv(Sarg sarg, RelDataType type, Matcher ndvMatcher) {
-    String message = "Unexpected NDV for " + sarg + ".numDistinctVals(" + type + ")";
-    assertThat(message, sarg.numDistinctVals(type), ndvMatcher);
-  }
-
-  /** Tests {@link Sarg#numDistinctVals(RelDataType)}. */
-  @Test void testSargNdv() {
-    RelDataType nonNullableInt = typeFactory.createSqlType(SqlTypeName.INTEGER);
-    RelDataType nullableInt = typeFactory.createTypeWithNullability(nonNullableInt, true);
-
-    RelDataType nonNullableFloat = typeFactory.createSqlType(SqlTypeName.FLOAT);
-    RelDataType nullableFloat = typeFactory.createTypeWithNullability(nonNullableFloat, true);
-
-    // point: 10 (non-nullable)
-    Sarg sarg = Sarg.of(false,
-        ImmutableRangeSet.of(Range.closed(10, 10)));
-    checkSargNdv(sarg, nonNullableInt, is(1.0));
-    checkSargNdv(sarg, nullableInt, is(1.0));
-    checkSargNdv(sarg, nonNullableFloat, is(1.0));
-    checkSargNdv(sarg, nullableFloat, is(1.0));
-
-    // point: 10 (nullable)
-    sarg = Sarg.of(true,
-        ImmutableRangeSet.of(Range.closed(10, 10)));
-    checkSargNdv(sarg, nonNullableInt, is(1.0));
-    checkSargNdv(sarg, nullableInt, is(2.0));
-    checkSargNdv(sarg, nonNullableFloat, is(1.0));
-    checkSargNdv(sarg, nullableFloat, is(2.0));
-
-    // range: 10 < x <= 15
-    sarg = Sarg.of(false,
-        ImmutableRangeSet.of(Range.openClosed(10, 15)));
-    checkSargNdv(sarg, nonNullableInt, is(5.0));
-    checkSargNdv(sarg, nullableInt, is(5.0));
-    checkSargNdv(sarg, nonNullableFloat, nullValue());
-    checkSargNdv(sarg, nullableFloat, nullValue());
-
-    // range: x > 12
-    sarg = Sarg.of(false,
-        ImmutableRangeSet.of(Range.greaterThan(12)));
-    checkSargNdv(sarg, nonNullableInt, nullValue());
-    checkSargNdv(sarg, nullableInt, nullValue());
-    checkSargNdv(sarg, nonNullableFloat, nullValue());
-    checkSargNdv(sarg, nullableFloat, nullValue());
-
-    // range: empty set with null
-    sarg = Sarg.of(true,
-        ImmutableRangeSet.of(Range.openClosed(12, 12)));
-    checkSargNdv(sarg, nonNullableInt, is(0.0));
-    checkSargNdv(sarg, nullableInt, is(1.0));
-    checkSargNdv(sarg, nonNullableFloat, is(0.0));
-    checkSargNdv(sarg, nullableFloat, is(1.0));
-
-    // range: (10 < x < 15) or (20 <= x < 25)
-    sarg = Sarg.of(true,
-        ImmutableRangeSet.copyOf(
-            Arrays.asList(
-            Range.open(10, 15), Range.closedOpen(20, 25))));
-    checkSargNdv(sarg, nonNullableInt, is(9.0));
-    checkSargNdv(sarg, nullableInt, is(10.0));
-    checkSargNdv(sarg, nonNullableFloat, nullValue());
-    checkSargNdv(sarg, nullableFloat, nullValue());
-  }
-
-  private void checkPredicateNdv(RexNode predicate, ImmutableBitSet cols, Double expectedNdv) {
-    final RexNode simplified = predicate == null ? null
-        : simplify.simplifyUnknownAs(predicate, RexUnknownAs.UNKNOWN);
-    String message = "Unexpected NDV for predicate " + predicate + " with columns " + cols;
-    assertThat(message, RexUtil.estimateColumnsNdv(cols, simplified), is(expectedNdv));
-  }
-
-  @Test void testPredicateNdv() {
-    RelDataType nonNullableInt = typeFactory.createSqlType(SqlTypeName.INTEGER);
-    RexNode x = input(nonNullableInt, 0);
-    RexNode y = input(nonNullableInt, 1);
-    RexNode n1 = literal(1);
-    RexNode n2 = literal(2);
-    RexNode n5 = literal(5);
-
-    ImmutableBitSet colx = ImmutableBitSet.of(0);
-    ImmutableBitSet colxy = ImmutableBitSet.of(0, 1);
-
-    // empty predicate
-    checkPredicateNdv(null, colx, null);
-
-    // predicate isnull(x)
-    checkPredicateNdv(isNull(x), colx, 0.0);
-
-    // predicate: x = 1
-    RexNode predicate = eq(x, n1);
-    checkPredicateNdv(predicate, colx, 1.0);
-
-    // predicate: 1 < x <= 5
-    predicate = and(lt(n1, x), le(x, n5));
-    checkPredicateNdv(predicate, colx, 4.0);
-
-    // predicate: x > 1
-    predicate = lt(n1, x);
-    checkPredicateNdv(predicate, colx, null);
-
-    // predicate: 1 <= x < 5 and 2 < y < 5
-    predicate = and(
-        and(le(n1, x), lt(x, n5)),
-        and(lt(n2, y), lt(y, n5))
-    );
-    checkPredicateNdv(predicate, colxy, 8.0);
-  }
-
   @Test void testInterpreter() {
     assertThat(eval(trueLiteral), is(true));
     assertThat(eval(nullInt), is(NullSentinel.INSTANCE));
@@ -3266,5 +3159,45 @@ class RexProgramTest extends RexProgramTestBase {
 
   @Test void testSimplifyVarbinary() {
     checkSimplifyUnchanged(cast(cast(vInt(), tVarchar(true, 100)), tVarbinary(true)));
+  }
+
+  @Test public void testEliminateCommonExprInCondition() {
+    RexSimplify rexSimplify = new RexSimplify(rexBuilder, RelOptPredicateList.EMPTY, EXECUTOR);
+
+    // (a=b && c=7) || (a=b && c=7 && d=8) => (a=b && c=7)
+    RexNode or1 = or(
+        and(vBool(0), vBool(1)),
+        and(vBool(0), vBool(1), vBool(2))
+    );
+    RexNode orSimplified1 = rexSimplify.eliminateCommonExprInCondition(or1);
+    checkDigest(orSimplified1, "AND(?0.bool0, ?0.bool1)");
+
+    // (a=b && c=7) || (a=b && d=8) || (a=b && d=9) =>
+    // (a=b) && (c=7 || d=8 || d=9)
+    RexNode or2 = or(
+        and(vBool(0), vBool(1)),
+        and(vBool(0), vBool(2)),
+        and(vBool(0), vBool(3))
+    );
+    RexNode orSimplified2 = rexSimplify.eliminateCommonExprInCondition(or2);
+    checkDigest(orSimplified2, "AND(?0.bool0, OR(?0.bool1, ?0.bool2, ?0.bool3))");
+
+    // (a=b || c=7) && (a=b || c=7 || d=8) => (a=b || c=7)
+    RexNode and1 = and(
+        or(vBool(0), vBool(1)),
+        or(vBool(0), vBool(1), vBool(2))
+    );
+    RexNode andSimplified1 = rexSimplify.eliminateCommonExprInCondition(and1);
+    checkDigest(andSimplified1, "OR(?0.bool0, ?0.bool1)");
+
+    // (a=b || c=7 || d=8) && (a=b || c=9 || d=10) =>
+    // (a=b) || ((c=7 || d=8) && (c=9 || d=10))
+    RexNode and2 = and(
+        or(vBool(0), vBool(1), vBool(2)),
+        or(vBool(0), vBool(3), vBool(4))
+    );
+    RexNode andSimplified2 = rexSimplify.eliminateCommonExprInCondition(and2);
+    checkDigest(andSimplified2,
+        "OR(?0.bool0, AND(OR(?0.bool1, ?0.bool2), OR(?0.bool3, ?0.bool4)))");
   }
 }

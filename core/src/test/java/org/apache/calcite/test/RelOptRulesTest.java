@@ -3549,6 +3549,16 @@ class RelOptRulesTest extends RelOptTestBase {
     SqlToRelTestBase.assertValid(output);
   }
 
+  @Test void testJoinEliminateCommonExpr() {
+    final String sql = "select * from sales.emp e\n"
+        + "join sales.dept as d\n"
+        + "on ((e.empno = d.deptno and ename = 'A') "
+        + "or (e.empno = d.deptno and ename = 'B'))";
+    sql(sql).withRule(
+        CoreRules.JOIN_REDUCE_EXPRESSIONS,
+        CoreRules.JOIN_CONDITION_PUSH).check();
+  }
+
   private void basePushAggThroughUnion() {
     sql("${sql}")
         .withRule(CoreRules.PROJECT_SET_OP_TRANSPOSE,
@@ -5619,7 +5629,7 @@ class RelOptRulesTest extends RelOptTestBase {
         + "group by sal, hiredate\n"
         + "having count(*) > 3";
     sql(sql).withRule(CoreRules.AGGREGATE_ANY_PULL_UP_CONSTANTS)
-        .checkUnchanged();
+        .check();
   }
 
   @Test void testReduceExpressionsNot() {

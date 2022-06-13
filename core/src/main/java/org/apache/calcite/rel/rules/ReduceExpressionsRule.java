@@ -63,6 +63,7 @@ import org.apache.calcite.sql.fun.SqlRowOperator;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RelBuilderFactory;
+import org.apache.calcite.util.ImmutableBeans;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
@@ -71,7 +72,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
-import org.immutables.value.Value;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -81,6 +81,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+
+import static org.apache.calcite.rex.RexUtil.EXECUTOR;
 
 /**
  * Collection of planner rules that apply various simplifying transformations on
@@ -116,30 +118,30 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
    * @see CoreRules#FILTER_REDUCE_EXPRESSIONS
    */
   public static class FilterReduceExpressionsRule
-      extends ReduceExpressionsRule<FilterReduceExpressionsRule.FilterReduceExpressionsRuleConfig> {
+      extends ReduceExpressionsRule<FilterReduceExpressionsRule.Config> {
     /** Creates a FilterReduceExpressionsRule. */
-    protected FilterReduceExpressionsRule(FilterReduceExpressionsRuleConfig config) {
+    protected FilterReduceExpressionsRule(Config config) {
       super(config);
     }
 
     @Deprecated // to be removed before 2.0
     public FilterReduceExpressionsRule(Class<? extends Filter> filterClass,
         RelBuilderFactory relBuilderFactory) {
-      this(FilterReduceExpressionsRuleConfig.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-          .as(FilterReduceExpressionsRuleConfig.class)
+      this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
+          .as(Config.class)
           .withOperandFor(filterClass)
           .withMatchNullability(true)
-          .as(FilterReduceExpressionsRuleConfig.class));
+          .as(Config.class));
     }
 
     @Deprecated // to be removed before 2.0
     public FilterReduceExpressionsRule(Class<? extends Filter> filterClass,
         boolean matchNullability, RelBuilderFactory relBuilderFactory) {
-      this(FilterReduceExpressionsRuleConfig.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-          .as(FilterReduceExpressionsRuleConfig.class)
+      this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
+          .as(Config.class)
           .withOperandFor(filterClass)
           .withMatchNullability(matchNullability)
-          .as(FilterReduceExpressionsRuleConfig.class));
+          .as(Config.class));
     }
 
     @Override public void onMatch(RelOptRuleCall call) {
@@ -152,7 +154,7 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
       final RelOptPredicateList predicates =
           mq.getPulledUpPredicates(filter.getInput());
       if (reduceExpressions(filter, expList, predicates, true,
-          config.matchNullability(), config.treatDynamicCallsAsConstant())) {
+          config.matchNullability())) {
         assert expList.size() == 1;
         newConditionExp = expList.get(0);
         reduced = true;
@@ -255,13 +257,12 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
     }
 
     /** Rule configuration. */
-    @Value.Immutable
-    public interface FilterReduceExpressionsRuleConfig extends ReduceExpressionsRule.Config {
-      FilterReduceExpressionsRuleConfig DEFAULT = ImmutableFilterReduceExpressionsRuleConfig.of()
+    public interface Config extends ReduceExpressionsRule.Config {
+      Config DEFAULT = EMPTY.as(Config.class)
           .withMatchNullability(true)
           .withOperandFor(LogicalFilter.class)
           .withDescription("ReduceExpressionsRule(Filter)")
-          .as(FilterReduceExpressionsRuleConfig.class);
+          .as(Config.class);
 
       @Override default FilterReduceExpressionsRule toRule() {
         return new FilterReduceExpressionsRule(this);
@@ -274,30 +275,29 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
    *
    * @see CoreRules#PROJECT_REDUCE_EXPRESSIONS */
   public static class ProjectReduceExpressionsRule
-      extends ReduceExpressionsRule<
-      ProjectReduceExpressionsRule.ProjectReduceExpressionsRuleConfig> {
+      extends ReduceExpressionsRule<ProjectReduceExpressionsRule.Config> {
     /** Creates a ProjectReduceExpressionsRule. */
-    protected ProjectReduceExpressionsRule(ProjectReduceExpressionsRuleConfig config) {
+    protected ProjectReduceExpressionsRule(Config config) {
       super(config);
     }
 
     @Deprecated // to be removed before 2.0
     public ProjectReduceExpressionsRule(Class<? extends Project> projectClass,
         RelBuilderFactory relBuilderFactory) {
-      this(ProjectReduceExpressionsRuleConfig.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-          .as(ProjectReduceExpressionsRuleConfig.class)
+      this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
+          .as(Config.class)
           .withOperandFor(projectClass)
-          .as(ProjectReduceExpressionsRuleConfig.class));
+          .as(Config.class));
     }
 
     @Deprecated // to be removed before 2.0
     public ProjectReduceExpressionsRule(Class<? extends Project> projectClass,
         boolean matchNullability, RelBuilderFactory relBuilderFactory) {
-      this(ProjectReduceExpressionsRuleConfig.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-          .as(ProjectReduceExpressionsRuleConfig.class)
+      this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
+          .as(Config.class)
           .withOperandFor(projectClass)
           .withMatchNullability(matchNullability)
-          .as(ProjectReduceExpressionsRuleConfig.class));
+          .as(Config.class));
     }
 
     @Override public void onMatch(RelOptRuleCall call) {
@@ -308,7 +308,7 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
       final List<RexNode> expList =
           Lists.newArrayList(project.getProjects());
       if (reduceExpressions(project, expList, predicates, false,
-          config.matchNullability(), config.treatDynamicCallsAsConstant())) {
+          config.matchNullability())) {
         assert !project.getProjects().equals(expList)
             : "Reduced expressions should be different from original expressions";
         call.transformTo(
@@ -323,13 +323,12 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
     }
 
     /** Rule configuration. */
-    @Value.Immutable
-    public interface ProjectReduceExpressionsRuleConfig extends ReduceExpressionsRule.Config {
-      ProjectReduceExpressionsRuleConfig DEFAULT = ImmutableProjectReduceExpressionsRuleConfig.of()
+    public interface Config extends ReduceExpressionsRule.Config {
+      Config DEFAULT = EMPTY.as(Config.class)
           .withMatchNullability(true)
           .withOperandFor(LogicalProject.class)
           .withDescription("ReduceExpressionsRule(Project)")
-          .as(ProjectReduceExpressionsRuleConfig.class);
+          .as(Config.class);
 
       @Override default ProjectReduceExpressionsRule toRule() {
         return new ProjectReduceExpressionsRule(this);
@@ -341,47 +340,51 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
    *
    * @see CoreRules#JOIN_REDUCE_EXPRESSIONS */
   public static class JoinReduceExpressionsRule
-      extends ReduceExpressionsRule<JoinReduceExpressionsRule.JoinReduceExpressionsRuleConfig> {
+      extends ReduceExpressionsRule<JoinReduceExpressionsRule.Config> {
     /** Creates a JoinReduceExpressionsRule. */
-    protected JoinReduceExpressionsRule(JoinReduceExpressionsRuleConfig config) {
+    protected JoinReduceExpressionsRule(Config config) {
       super(config);
     }
 
     @Deprecated // to be removed before 2.0
     public JoinReduceExpressionsRule(Class<? extends Join> joinClass,
         RelBuilderFactory relBuilderFactory) {
-      this(JoinReduceExpressionsRuleConfig.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-          .as(JoinReduceExpressionsRuleConfig.class)
+      this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
+          .as(Config.class)
           .withOperandFor(joinClass)
           .withMatchNullability(true)
-          .as(JoinReduceExpressionsRuleConfig.class));
+          .as(Config.class));
     }
 
     @Deprecated // to be removed before 2.0
     public JoinReduceExpressionsRule(Class<? extends Join> joinClass,
         boolean matchNullability, RelBuilderFactory relBuilderFactory) {
-      this(JoinReduceExpressionsRuleConfig.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-          .as(JoinReduceExpressionsRuleConfig.class)
+      this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
+          .as(Config.class)
           .withOperandFor(joinClass)
           .withMatchNullability(matchNullability)
-          .as(JoinReduceExpressionsRuleConfig.class));
+          .as(Config.class));
     }
 
     @Override public void onMatch(RelOptRuleCall call) {
       final Join join = call.rel(0);
-      final List<RexNode> expList = Lists.newArrayList(join.getCondition());
+      final RexBuilder rexBuilder = join.getCluster().getRexBuilder();
+      final RexSimplify rexSimplify =
+          new RexSimplify(rexBuilder, RelOptPredicateList.EMPTY, EXECUTOR);
+      final RexNode condition = rexSimplify.eliminateCommonExprInCondition(join.getCondition());
+
+      final List<RexNode> expList = Lists.newArrayList(condition);
       final int fieldCount = join.getLeft().getRowType().getFieldCount();
       final RelMetadataQuery mq = call.getMetadataQuery();
       final RelOptPredicateList leftPredicates =
           mq.getPulledUpPredicates(join.getLeft());
       final RelOptPredicateList rightPredicates =
           mq.getPulledUpPredicates(join.getRight());
-      final RexBuilder rexBuilder = join.getCluster().getRexBuilder();
       final RelOptPredicateList predicates =
           leftPredicates.union(rexBuilder,
               rightPredicates.shift(rexBuilder, fieldCount));
       if (!reduceExpressions(join, expList, predicates, true,
-          config.matchNullability(), config.treatDynamicCallsAsConstant())) {
+          config.matchNullability())) {
         return;
       }
       call.transformTo(
@@ -398,13 +401,12 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
     }
 
     /** Rule configuration. */
-    @Value.Immutable
-    public interface JoinReduceExpressionsRuleConfig extends ReduceExpressionsRule.Config {
-      JoinReduceExpressionsRuleConfig DEFAULT = ImmutableJoinReduceExpressionsRuleConfig.of()
+    public interface Config extends ReduceExpressionsRule.Config {
+      Config DEFAULT = EMPTY.as(Config.class)
           .withMatchNullability(false)
           .withOperandFor(Join.class)
           .withDescription("ReduceExpressionsRule(Join)")
-          .as(JoinReduceExpressionsRuleConfig.class);
+          .as(Config.class);
 
       @Override default JoinReduceExpressionsRule toRule() {
         return new JoinReduceExpressionsRule(this);
@@ -418,30 +420,30 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
    * @see CoreRules#CALC_REDUCE_EXPRESSIONS
    */
   public static class CalcReduceExpressionsRule
-      extends ReduceExpressionsRule<CalcReduceExpressionsRule.CalcReduceExpressionsRuleConfig> {
+      extends ReduceExpressionsRule<CalcReduceExpressionsRule.Config> {
     /** Creates a CalcReduceExpressionsRule. */
-    protected CalcReduceExpressionsRule(CalcReduceExpressionsRuleConfig config) {
+    protected CalcReduceExpressionsRule(Config config) {
       super(config);
     }
 
     @Deprecated // to be removed before 2.0
     public CalcReduceExpressionsRule(Class<? extends Calc> calcClass,
         RelBuilderFactory relBuilderFactory) {
-      this(CalcReduceExpressionsRuleConfig.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-          .as(CalcReduceExpressionsRuleConfig.class)
+      this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
+          .as(Config.class)
           .withOperandFor(calcClass)
           .withMatchNullability(true)
-          .as(CalcReduceExpressionsRuleConfig.class));
+          .as(Config.class));
     }
 
     @Deprecated // to be removed before 2.0
     public CalcReduceExpressionsRule(Class<? extends Calc> calcClass,
         boolean matchNullability, RelBuilderFactory relBuilderFactory) {
-      this(CalcReduceExpressionsRuleConfig.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-          .as(CalcReduceExpressionsRuleConfig.class)
+      this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
+          .as(Config.class)
           .withOperandFor(calcClass)
           .withMatchNullability(matchNullability)
-          .as(CalcReduceExpressionsRuleConfig.class));
+          .as(Config.class));
     }
 
     @Override public void onMatch(RelOptRuleCall call) {
@@ -462,7 +464,7 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
       }
       final RelOptPredicateList predicates = RelOptPredicateList.EMPTY;
       if (reduceExpressions(calc, expandedExprList, predicates, false,
-          config.matchNullability(), config.treatDynamicCallsAsConstant())) {
+          config.matchNullability())) {
         final RexProgramBuilder builder =
             new RexProgramBuilder(
                 calc.getInput().getRowType(),
@@ -513,7 +515,7 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
      *
      * <p>The default implementation of this method is to call
      * {@link RelBuilder#empty}, which for the static schema will be optimized
-     * to an Immutable.Config.of()
+     * to an empty
      * {@link org.apache.calcite.rel.core.Values}.
      *
      * @param input rel to replace, assumes caller has already determined
@@ -526,13 +528,12 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
     }
 
     /** Rule configuration. */
-    @Value.Immutable
-    public interface CalcReduceExpressionsRuleConfig extends ReduceExpressionsRule.Config {
-      CalcReduceExpressionsRuleConfig DEFAULT = ImmutableCalcReduceExpressionsRuleConfig.of()
+    public interface Config extends ReduceExpressionsRule.Config {
+      Config DEFAULT = EMPTY.as(Config.class)
           .withMatchNullability(true)
           .withOperandFor(LogicalCalc.class)
           .withDescription("ReduceExpressionsRule(Calc)")
-          .as(CalcReduceExpressionsRuleConfig.class);
+          .as(Config.class);
 
       @Override default CalcReduceExpressionsRule toRule() {
         return new CalcReduceExpressionsRule(this);
@@ -544,20 +545,20 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
    *
    * @see CoreRules#WINDOW_REDUCE_EXPRESSIONS */
   public static class WindowReduceExpressionsRule
-      extends ReduceExpressionsRule<WindowReduceExpressionsRule.WindowReduceExpressionsRuleConfig> {
+      extends ReduceExpressionsRule<WindowReduceExpressionsRule.Config> {
     /** Creates a WindowReduceExpressionsRule. */
-    protected WindowReduceExpressionsRule(WindowReduceExpressionsRuleConfig config) {
+    protected WindowReduceExpressionsRule(Config config) {
       super(config);
     }
 
     @Deprecated // to be removed before 2.0
     public WindowReduceExpressionsRule(Class<? extends Window> windowClass,
         boolean matchNullability, RelBuilderFactory relBuilderFactory) {
-      this(WindowReduceExpressionsRuleConfig.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-          .as(WindowReduceExpressionsRuleConfig.class)
+      this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
+          .as(Config.class)
           .withOperandFor(windowClass)
           .withMatchNullability(matchNullability)
-          .as(WindowReduceExpressionsRuleConfig.class));
+          .as(Config.class));
     }
 
     @Override public void onMatch(RelOptRuleCall call) {
@@ -619,13 +620,12 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
     }
 
     /** Rule configuration. */
-    @Value.Immutable
-    public interface WindowReduceExpressionsRuleConfig extends ReduceExpressionsRule.Config {
-      WindowReduceExpressionsRuleConfig DEFAULT = ImmutableWindowReduceExpressionsRuleConfig.of()
+    public interface Config extends ReduceExpressionsRule.Config {
+      Config DEFAULT = EMPTY.as(Config.class)
           .withMatchNullability(true)
           .withOperandFor(LogicalWindow.class)
           .withDescription("ReduceExpressionsRule(Window)")
-          .as(WindowReduceExpressionsRuleConfig.class);
+          .as(Config.class);
 
       @Override default WindowReduceExpressionsRule toRule() {
         return new WindowReduceExpressionsRule(this);
@@ -652,13 +652,13 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
    */
   protected static boolean reduceExpressions(RelNode rel, List<RexNode> expList,
       RelOptPredicateList predicates) {
-    return reduceExpressions(rel, expList, predicates, false, true, false);
+    return reduceExpressions(rel, expList, predicates, false, true);
   }
 
   @Deprecated // to be removed before 2.0
   protected static boolean reduceExpressions(RelNode rel, List<RexNode> expList,
       RelOptPredicateList predicates, boolean unknownAsFalse) {
-    return reduceExpressions(rel, expList, predicates, unknownAsFalse, true, false);
+    return reduceExpressions(rel, expList, predicates, unknownAsFalse, true);
   }
 
   /**
@@ -688,14 +688,12 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
    *                         resulting from simplification and expression if the
    *                         expression had nullable type and the literal is
    *                         NOT NULL
-   * @param treatDynamicCallsAsConstant Whether to treat dynamic functions as
-   *                                    constants
    *
    * @return whether reduction found something to change, and succeeded
    */
   protected static boolean reduceExpressions(RelNode rel, List<RexNode> expList,
       RelOptPredicateList predicates, boolean unknownAsFalse,
-      boolean matchNullability, boolean treatDynamicCallsAsConstant) {
+      boolean matchNullability) {
     final RelOptCluster cluster = rel.getCluster();
     final RexBuilder rexBuilder = cluster.getRexBuilder();
     final List<RexNode> originExpList = Lists.newArrayList(expList);
@@ -707,7 +705,7 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
     // Simplify predicates in place
     final RexUnknownAs unknownAs = RexUnknownAs.falseIf(unknownAsFalse);
     final boolean reduced = reduceExpressionsInternal(rel, simplify, unknownAs,
-        expList, predicates, treatDynamicCallsAsConstant);
+        expList, predicates);
 
     boolean simplified = false;
     for (int i = 0; i < expList.size(); i++) {
@@ -729,7 +727,7 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
 
   protected static boolean reduceExpressionsInternal(RelNode rel,
       RexSimplify simplify, RexUnknownAs unknownAs, List<RexNode> expList,
-      RelOptPredicateList predicates, boolean treatDynamicCallsAsConstant) {
+      RelOptPredicateList predicates) {
     // Replace predicates on CASE to CASE on predicates.
     boolean changed = new CaseShuttle().mutate(expList);
 
@@ -737,7 +735,7 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
     final List<RexNode> constExps = new ArrayList<>();
     List<Boolean> addCasts = new ArrayList<>();
     findReducibleExps(rel.getCluster().getTypeFactory(), expList,
-        predicates.constantMap, constExps, addCasts, treatDynamicCallsAsConstant);
+        predicates.constantMap, constExps, addCasts);
     if (constExps.isEmpty()) {
       return changed;
     }
@@ -803,15 +801,13 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
    * @param addCasts       indicator for each expression that can be constant
    *                       reduced, whether a cast of the resulting reduced
    *                       expression is potentially necessary
-   * @param treatDynamicCallsAsConstant Whether to treat dynamic functions as
-   *                                    constants
    */
   protected static void findReducibleExps(RelDataTypeFactory typeFactory,
       List<RexNode> exps, ImmutableMap<RexNode, RexNode> constants,
-      List<RexNode> constExps, List<Boolean> addCasts, boolean treatDynamicCallsAsConstant) {
+      List<RexNode> constExps, List<Boolean> addCasts) {
     ReducibleExprLocator gardener =
         new ReducibleExprLocator(typeFactory, constants, constExps,
-            addCasts, treatDynamicCallsAsConstant);
+            addCasts);
     for (RexNode exp : exps) {
       gardener.analyze(exp);
     }
@@ -853,7 +849,7 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
     case OR:
       return call; // don't push CASE into CASE!
     case EQUALS: {
-      // checks that the EQUALS operands may be split and
+      // checks that the EQUALS operands may be splitted and
       // doesn't push EQUALS into CASE
       List<RexNode> equalsOperands = call.getOperands();
       ImmutableBitSet left = RelOptUtil.InputFinder.bits(equalsOperands.get(0));
@@ -975,8 +971,6 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
       NON_CONSTANT, REDUCIBLE_CONSTANT, IRREDUCIBLE_CONSTANT
     }
 
-    private final boolean treatDynamicCallsAsConstant;
-
     private final List<Constancy> stack = new ArrayList<>();
 
     private final ImmutableMap<RexNode, RexNode> constants;
@@ -989,13 +983,12 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
 
     ReducibleExprLocator(RelDataTypeFactory typeFactory,
         ImmutableMap<RexNode, RexNode> constants, List<RexNode> constExprs,
-        List<Boolean> addCasts, boolean treatDynamicCallsAsConstant) {
+        List<Boolean> addCasts) {
       // go deep
       super(true);
       this.constants = constants;
       this.constExprs = constExprs;
       this.addCasts = addCasts;
-      this.treatDynamicCallsAsConstant = treatDynamicCallsAsConstant;
     }
 
     public void analyze(RexNode exp) {
@@ -1038,15 +1031,14 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
       //
       // REVIEW zfong 6/13/08 - Are there other expressions where we
       // also need to preserve casts?
-      SqlOperator op = parentCallTypeStack.peek();
-      if (op == null) {
+      if (parentCallTypeStack.isEmpty()) {
         addCasts.add(false);
       } else {
-        addCasts.add(isUdf(op));
+        addCasts.add(isUdf(parentCallTypeStack.peek()));
       }
     }
 
-    private static Boolean isUdf(@SuppressWarnings("unused") SqlOperator operator) {
+    private Boolean isUdf(@SuppressWarnings("unused") @Nullable SqlOperator operator) {
       // return operator instanceof UserDefinedRoutine
       return false;
     }
@@ -1054,7 +1046,7 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
     @Override public Void visitInputRef(RexInputRef inputRef) {
       final RexNode constant = constants.get(inputRef);
       if (constant != null) {
-        if (constant instanceof RexCall || constant instanceof RexDynamicParam) {
+        if (constant instanceof RexCall) {
           constant.accept(this);
         } else {
           stack.add(Constancy.REDUCIBLE_CONSTANT);
@@ -1110,10 +1102,10 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
       // be non-deterministic.
       if (!call.getOperator().isDeterministic()) {
         callConstancy = Constancy.NON_CONSTANT;
-      } else if (!treatDynamicCallsAsConstant
-          && call.getOperator().isDynamicFunction()) {
-        // In some circumstances, we should avoid caching the plan if we have dynamic functions.
-        // If desired, treat this situation the same as a non-deterministic function.
+      } else if (call.getOperator().isDynamicFunction()) {
+        // We can reduce the call to a constant, but we can't
+        // cache the plan if the function is dynamic.
+        // For now, treat it same as non-deterministic.
         callConstancy = Constancy.NON_CONSTANT;
       }
 
@@ -1179,25 +1171,12 @@ public abstract class ReduceExpressionsRule<C extends ReduceExpressionsRule.Conf
 
     /** Whether to add a CAST when a nullable expression
      * reduces to a NOT NULL literal. */
-    @Value.Default default boolean matchNullability() {
-      return false;
-    }
+    @ImmutableBeans.Property
+    @ImmutableBeans.BooleanDefault(false)
+    boolean matchNullability();
 
     /** Sets {@link #matchNullability()}. */
     Config withMatchNullability(boolean matchNullability);
-
-    /** Whether to treat
-     * {@link SqlOperator#isDynamicFunction() dynamic functions} as constants.
-     *
-     * <p>When false (the default), calls to dynamic functions (e.g.
-     * {@code USER}) are not reduced. When true, calls to dynamic functions
-     * are treated as a constant, and reduced. */
-    @Value.Default default boolean treatDynamicCallsAsConstant() {
-      return false;
-    }
-
-    /** Sets {@link #treatDynamicCallsAsConstant()}. */
-    Config withTreatDynamicCallsAsConstant(boolean treatDynamicCallsAsConstant);
 
     /** Defines an operand tree for the given classes. */
     default Config withOperandFor(Class<? extends RelNode> relClass) {
