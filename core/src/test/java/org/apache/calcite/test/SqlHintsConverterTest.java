@@ -25,7 +25,6 @@ import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
-import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.plan.hep.HepPlanner;
 import org.apache.calcite.plan.hep.HepProgram;
@@ -35,25 +34,20 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.RelVisitor;
 import org.apache.calcite.rel.convert.ConverterRule;
-import org.apache.calcite.rel.core.Aggregate;
-import org.apache.calcite.rel.core.Calc;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
+import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rel.core.TableScan;
-import org.apache.calcite.rel.hint.HintPredicate;
-import org.apache.calcite.rel.hint.HintPredicates;
-import org.apache.calcite.rel.hint.HintStrategy;
+import org.apache.calcite.rel.hint.HintStrategies;
 import org.apache.calcite.rel.hint.HintStrategyTable;
 import org.apache.calcite.rel.hint.Hintable;
 import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.rel.logical.LogicalAggregate;
 import org.apache.calcite.rel.logical.LogicalJoin;
 import org.apache.calcite.rel.logical.LogicalProject;
-import org.apache.calcite.rel.rules.AggregateReduceFunctionsRule;
 import org.apache.calcite.rel.rules.FilterMergeRule;
 import org.apache.calcite.rel.rules.FilterProjectTransposeRule;
 import org.apache.calcite.rel.rules.ProjectMergeRule;
-import org.apache.calcite.rel.rules.ProjectToCalcRule;
 import org.apache.calcite.sql.SqlDelete;
 import org.apache.calcite.sql.SqlInsert;
 import org.apache.calcite.sql.SqlMerge;
@@ -66,28 +60,23 @@ import org.apache.calcite.tools.Program;
 import org.apache.calcite.tools.Programs;
 import org.apache.calcite.tools.RuleSet;
 import org.apache.calcite.tools.RuleSets;
-import org.apache.calcite.util.Litmus;
 import org.apache.calcite.util.Util;
 
-import org.apache.log4j.AppenderSkeleton;
-import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
-import org.apache.log4j.spi.LoggingEvent;
-
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.collection.IsIn.in;
 import static org.hamcrest.core.Is.is;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -96,16 +85,15 @@ import static org.junit.jupiter.api.Assertions.fail;
 /**
  * Unit test for {@link org.apache.calcite.rel.hint.RelHint}.
  */
+public class SqlHintsConverterTest extends SqlToRelTestBase {
 
-class SqlHintsConverterTest extends SqlToRelTestBase {
-
-  SqlHintsConverterTest(DiffRepository repository) {
-    super(repository);
+  protected DiffRepository getDiffRepos() {
+    return DiffRepository.lookup(SqlHintsConverterTest.class);
   }
 
   //~ Tests ------------------------------------------------------------------
 
-  @Test void testQueryHint() {
+  @Test public void testQueryHint() {
     final String sql = HintTools.withHint("select /*+ %s */ *\n"
         + "from emp e1\n"
         + "inner join dept d1 on e1.deptno = d1.deptno\n"
@@ -113,40 +101,50 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
     sql(sql).ok();
   }
 
-  @Test void testQueryHintWithLiteralOptions() {
-    final String sql = "select /*+ time_zone(1, 1.23, 'a bc', -1.0) */ *\n"
-        + "from emp";
-    sql(sql).ok();
-  }
-
-  @Test void testNestedQueryHint() {
-    final String sql = "select /*+ resource(parallelism='3'), repartition(10) */ empno\n"
+  @Test public void testNestedQueryHint() {
+    final String sql = "select /*+ resource(parallelism='3') */ empno\n"
         + "from (select /*+ resource(mem='20Mb')*/ empno, ename from emp)";
     sql(sql).ok();
   }
 
-  @Test void testTwoLevelNestedQueryHint() {
+  @Test public void testTwoLevelNestedQueryHint() {
     final String sql = "select /*+ resource(parallelism='3'), no_hash_join */ empno\n"
         + "from (select /*+ resource(mem='20Mb')*/ empno, ename\n"
         + "from emp left join dept on emp.deptno = dept.deptno)";
     sql(sql).ok();
   }
 
-  @Test void testThreeLevelNestedQueryHint() {
+  @Test public void testThreeLevelNestedQueryHint() {
     final String sql = "select /*+ index(idx1), no_hash_join */ * from emp /*+ index(empno) */\n"
         + "e1 join dept/*+ index(deptno) */ d1 on e1.deptno = d1.deptno\n"
         + "join emp e2 on d1.name = e2.job";
     sql(sql).ok();
   }
 
-  @Test void testFourLevelNestedQueryHint() {
+  @Test public void testFourLevelNestedQueryHint() {
     final String sql = "select /*+ index(idx1), no_hash_join */ * from emp /*+ index(empno) */\n"
         + "e1 join dept/*+ index(deptno) */ d1 on e1.deptno = d1.deptno join\n"
         + "(select max(sal) as sal from emp /*+ index(empno) */) e2 on e1.sal = e2.sal";
     sql(sql).ok();
   }
 
-  @Test void testAggregateHints() {
+  @Test public void testSortHints() {
+    final String sql = "select /*+ resource(mem='1024MB')*/"
+        + "ename, sal, deptno from emp order by deptno";
+    final RelNode rel = tester.convertSqlToRel(sql).rel;
+    final RelHint hint = RelHint.of(
+        Collections.emptyList(),
+        "RESOURCE",
+        new HashMap<String, String>() {{ put("MEM", "1024MB"); }});
+    HepProgram program = new HepProgramBuilder()
+        .build();
+    HepPlanner planner = new HepPlanner(program);
+    planner.setRoot(rel);
+    RelNode newRel = planner.findBestExp();
+    new ValidateHintVisitor(hint, Sort.class).go(newRel);
+  }
+
+  @Test public void testAggregateHints() {
     final String sql = "select /*+ AGG_STRATEGY(TWO_PHASE), RESOURCE(mem='1024') */\n"
         + "count(deptno), avg_sal from (\n"
         + "select /*+ AGG_STRATEGY(ONE_PHASE) */ avg(sal) as avg_sal, deptno\n"
@@ -154,7 +152,7 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
     sql(sql).ok();
   }
 
-  @Test void testHintsInSubQueryWithDecorrelation() {
+  @Test public void testHintsInSubQueryWithDecorrelation() {
     final String sql = "select /*+ resource(parallelism='3'), AGG_STRATEGY(TWO_PHASE) */\n"
         + "sum(e1.empno) from emp e1, dept d1\n"
         + "where e1.deptno = d1.deptno\n"
@@ -163,7 +161,7 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
     sql(sql).withTester(t -> t.withDecorrelation(true)).ok();
   }
 
-  @Test void testHintsInSubQueryWithDecorrelation2() {
+  @Test public void testHintsInSubQueryWithDecorrelation2() {
     final String sql = "select /*+ properties(k1='v1', k2='v2'), index(ename), no_hash_join */\n"
         + "sum(e1.empno) from emp e1, dept d1\n"
         + "where e1.deptno = d1.deptno\n"
@@ -175,7 +173,7 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
     sql(sql).withTester(t -> t.withDecorrelation(true)).ok();
   }
 
-  @Test void testHintsInSubQueryWithDecorrelation3() {
+  @Test public void testHintsInSubQueryWithDecorrelation3() {
     final String sql = "select /*+ resource(parallelism='3'), index(ename), no_hash_join */\n"
         + "sum(e1.empno) from emp e1, dept d1\n"
         + "where e1.deptno = d1.deptno\n"
@@ -187,7 +185,7 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
     sql(sql).withTester(t -> t.withDecorrelation(true)).ok();
   }
 
-  @Test void testHintsInSubQueryWithoutDecorrelation() {
+  @Test public void testHintsInSubQueryWithoutDecorrelation() {
     final String sql = "select /*+ resource(parallelism='3') */\n"
         + "sum(e1.empno) from emp e1, dept d1\n"
         + "where e1.deptno = d1.deptno\n"
@@ -196,35 +194,19 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
     sql(sql).ok();
   }
 
-  @Test void testInvalidQueryHint() {
+  @Test public void testInvalidQueryHint() {
     final String sql = "select /*+ weird_hint */ empno\n"
         + "from (select /*+ resource(mem='20Mb')*/ empno, ename\n"
         + "from emp left join dept on emp.deptno = dept.deptno)";
-    sql(sql).warns("Hint: WEIRD_HINT should be registered in the HintStrategyTable");
+    sql(sql).fails("Hint: WEIRD_HINT should be registered in the HintStrategies.");
 
     final String sql1 = "select /*+ resource(mem='20Mb')*/ empno\n"
         + "from (select /*+ weird_kv_hint(k1='v1') */ empno, ename\n"
         + "from emp left join dept on emp.deptno = dept.deptno)";
-    sql(sql1).warns("Hint: WEIRD_KV_HINT should be registered in the HintStrategyTable");
-
-    final String sql2 = "select /*+ AGG_STRATEGY(OPTION1) */\n"
-        + "ename, avg(sal)\n"
-        + "from emp group by ename";
-    final String error2 = "Hint AGG_STRATEGY only allows single option, "
-        + "allowed options: [ONE_PHASE, TWO_PHASE]";
-    sql(sql2).warns(error2);
-    // Change the error handler to validate again.
-    sql(sql2).withTester(
-        tester -> tester.withConfig(
-        SqlToRelConverter.configBuilder()
-            .withHintStrategyTable(
-                HintTools.createHintStrategies(
-                HintStrategyTable.builder().errorHandler(Litmus.THROW)))
-            .build()))
-        .fails(error2);
+    sql(sql1).fails("Hint: WEIRD_KV_HINT should be registered in the HintStrategies.");
   }
 
-  @Test void testTableHintsInJoin() {
+  @Test public void testTableHintsInJoin() {
     final String sql = "select\n"
         + "ename, job, sal, dept.name\n"
         + "from emp /*+ index(idx1, idx2) */\n"
@@ -233,12 +215,12 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
     sql(sql).ok();
   }
 
-  @Test void testTableHintsInSelect() {
+  @Test public void testTableHintsInSelect() {
     final String sql = HintTools.withHint("select * from emp /*+ %s */");
     sql(sql).ok();
   }
 
-  @Test void testSameHintsWithDifferentInheritPath() {
+  @Test public void testSameHintsWithDifferentInheritPath() {
     final String sql = "select /*+ properties(k1='v1', k2='v2') */\n"
         + "ename, job, sal, dept.name\n"
         + "from emp /*+ index(idx1, idx2) */\n"
@@ -247,7 +229,7 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
     sql(sql).ok();
   }
 
-  @Test void testTableHintsInInsert() throws Exception {
+  @Test public void testTableHintsInInsert() throws Exception {
     final String sql = HintTools.withHint("insert into dept /*+ %s */ (deptno, name) "
         + "select deptno, name from dept");
     final SqlInsert insert = (SqlInsert) tester.parseQuery(sql);
@@ -263,7 +245,7 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
         hints);
   }
 
-  @Test void testTableHintsInUpdate() throws Exception {
+  @Test public void testTableHintsInUpdate() throws Exception {
     final String sql = HintTools.withHint("update emp /*+ %s */ "
         + "set name = 'test' where deptno = 1");
     final SqlUpdate sqlUpdate = (SqlUpdate) tester.parseQuery(sql);
@@ -279,7 +261,7 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
         hints);
   }
 
-  @Test void testTableHintsInDelete() throws Exception {
+  @Test public void testTableHintsInDelete() throws Exception {
     final String sql = HintTools.withHint("delete from emp /*+ %s */ where deptno = 1");
     final SqlDelete sqlDelete = (SqlDelete) tester.parseQuery(sql);
     assert sqlDelete.getTargetTable() instanceof SqlTableRef;
@@ -294,7 +276,7 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
         hints);
   }
 
-  @Test void testTableHintsInMerge() throws Exception {
+  @Test public void testTableHintsInMerge() throws Exception {
     final String sql = "merge into emps\n"
         + "/*+ %s */ e\n"
         + "using tempemps as t\n"
@@ -318,23 +300,23 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
         hints);
   }
 
-  @Test void testInvalidTableHints() {
+  @Test public void testInvalidTableHints() {
     final String sql = "select\n"
         + "ename, job, sal, dept.name\n"
         + "from emp /*+ weird_hint(idx1, idx2) */\n"
         + "join dept /*+ properties(k1='v1', k2='v2') */\n"
         + "on emp.deptno = dept.deptno";
-    sql(sql).warns("Hint: WEIRD_HINT should be registered in the HintStrategyTable");
+    sql(sql).fails("Hint: WEIRD_HINT should be registered in the HintStrategies.");
 
     final String sql1 = "select\n"
         + "ename, job, sal, dept.name\n"
         + "from emp /*+ index(idx1, idx2) */\n"
         + "join dept /*+ weird_kv_hint(k1='v1', k2='v2') */\n"
         + "on emp.deptno = dept.deptno";
-    sql(sql1).warns("Hint: WEIRD_KV_HINT should be registered in the HintStrategyTable");
+    sql(sql1).fails("Hint: WEIRD_KV_HINT should be registered in the HintStrategies.");
   }
 
-  @Test void testJoinHintRequiresSpecificInputs() {
+  @Test public void testJoinHintRequiresSpecificInputs() {
     final String sql = "select /*+ use_hash_join(r, s), use_hash_join(emp, dept) */\n"
         + "ename, job, sal, dept.name\n"
         + "from emp join dept on emp.deptno = dept.deptno";
@@ -342,32 +324,15 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
     sql(sql).ok();
   }
 
-  @Test void testHintsForCalc() {
-    final String sql = "select /*+ resource(mem='1024MB')*/ ename, sal, deptno from emp";
-    final RelNode rel = tester.convertSqlToRel(sql).rel;
-    final RelHint hint = RelHint.builder("RESOURCE")
-        .hintOption("MEM", "1024MB")
-        .build();
-    // planner rule to convert Project to Calc.
-    HepProgram program = new HepProgramBuilder()
-        .addRuleInstance(ProjectToCalcRule.INSTANCE)
-        .build();
-    HepPlanner planner = new HepPlanner(program);
-    planner.setRoot(rel);
-    RelNode newRel = planner.findBestExp();
-    new ValidateHintVisitor(hint, Calc.class).go(newRel);
-  }
-
-  @Test void testHintsPropagationInHepPlannerRules() {
+  @Test public void testHintsPropagationInHepPlannerRules() {
     final String sql = "select /*+ use_hash_join(r, s), use_hash_join(emp, dept) */\n"
         + "ename, job, sal, dept.name\n"
         + "from emp join dept on emp.deptno = dept.deptno";
     final RelNode rel = tester.convertSqlToRel(sql).rel;
-    final RelHint hint = RelHint.builder("USE_HASH_JOIN")
-        .inheritPath(0)
-        .hintOption("EMP")
-        .hintOption("DEPT")
-        .build();
+    final RelHint hint = RelHint.of(
+        Collections.singletonList(0),
+        "USE_HASH_JOIN",
+        Arrays.asList("EMP", "DEPT"));
     // Validate Hep planner.
     HepProgram program = new HepProgramBuilder()
         .addRuleInstance(MockJoinRule.INSTANCE)
@@ -378,7 +343,7 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
     new ValidateHintVisitor(hint, Join.class).go(newRel);
   }
 
-  @Test void testHintsPropagationInVolcanoPlannerRules() {
+  @Test public void testHintsPropagationInVolcanoPlannerRules() {
     final String sql = "select /*+ use_hash_join(r, s), use_hash_join(emp, dept) */\n"
         + "ename, job, sal, dept.name\n"
         + "from emp join dept on emp.deptno = dept.deptno";
@@ -388,11 +353,10 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
         .withClusterFactory(
           relOptCluster -> RelOptCluster.create(planner, relOptCluster.getRexBuilder()));
     final RelNode rel = tester1.convertSqlToRel(sql).rel;
-    final RelHint hint = RelHint.builder("USE_HASH_JOIN")
-        .inheritPath(0)
-        .hintOption("EMP")
-        .hintOption("DEPT")
-        .build();
+    final RelHint hint = RelHint.of(
+        Collections.singletonList(0),
+        "USE_HASH_JOIN",
+        Arrays.asList("EMP", "DEPT"));
     // Validate Volcano planner.
     RuleSet ruleSet = RuleSets.ofList(
         new MockEnumerableJoinRule(hint), // Rule to validate the hint.
@@ -413,54 +377,6 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
 
     program.run(planner, rel, toTraits,
         Collections.emptyList(), Collections.emptyList());
-  }
-
-  @Test void testHintsPropagateWithDifferentKindOfRels() {
-    final String sql = "select /*+ AGG_STRATEGY(TWO_PHASE) */\n"
-        + "ename, avg(sal)\n"
-        + "from emp group by ename";
-    final RelNode rel = tester.convertSqlToRel(sql).rel;
-    final RelHint hint = RelHint.builder("AGG_STRATEGY")
-        .inheritPath(0)
-        .hintOption("TWO_PHASE")
-        .build();
-    // AggregateReduceFunctionsRule does the transformation:
-    // AGG -> PROJECT + AGG
-    HepProgram program = new HepProgramBuilder()
-        .addRuleInstance(AggregateReduceFunctionsRule.INSTANCE)
-        .build();
-    HepPlanner planner = new HepPlanner(program);
-    planner.setRoot(rel);
-    RelNode newRel = planner.findBestExp();
-    new ValidateHintVisitor(hint, Aggregate.class).go(newRel);
-  }
-
-  @Test void testUseMergeJoin() {
-    final String sql = "select /*+ use_merge_join(emp, dept) */\n"
-        + "ename, job, sal, dept.name\n"
-        + "from emp join dept on emp.deptno = dept.deptno";
-    RelOptPlanner planner = new VolcanoPlanner();
-    planner.addRelTraitDef(ConventionTraitDef.INSTANCE);
-    Tester tester1 = tester.withDecorrelation(true)
-        .withClusterFactory(
-            relOptCluster -> RelOptCluster.create(planner, relOptCluster.getRexBuilder()));
-    final RelNode rel = tester1.convertSqlToRel(sql).rel;
-    RuleSet ruleSet = RuleSets.ofList(
-        EnumerableRules.ENUMERABLE_MERGE_JOIN_RULE,
-        EnumerableRules.ENUMERABLE_JOIN_RULE,
-        EnumerableRules.ENUMERABLE_PROJECT_RULE,
-        EnumerableRules.ENUMERABLE_TABLE_SCAN_RULE);
-    Program program = Programs.of(ruleSet);
-    RelTraitSet toTraits = rel
-        .getCluster()
-        .traitSet()
-        .replace(EnumerableConvention.INSTANCE);
-
-    RelNode relAfter = program.run(planner, rel, toTraits,
-        Collections.emptyList(), Collections.emptyList());
-
-    String planAfter = NL + RelOptUtil.toString(relAfter);
-    getDiffRepos().assertEquals("planAfter", "${planAfter}", planAfter);
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -504,16 +420,15 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
       super(operand(LogicalJoin.class, any()), "MockJoinRule");
     }
 
-    @Override public void onMatch(RelOptRuleCall call) {
+    public void onMatch(RelOptRuleCall call) {
       LogicalJoin join = call.rel(0);
       assertThat(1, is(join.getHints().size()));
       call.transformTo(
           LogicalJoin.create(join.getLeft(),
-              join.getRight(),
-              ImmutableList.of(),
-              join.getCondition(),
-              join.getVariablesSet(),
-              join.getJoinType()));
+            join.getRight(),
+            join.getCondition(),
+            join.getVariablesSet(),
+            join.getJoinType()));
     }
   }
 
@@ -559,7 +474,7 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
     }
   }
 
-  /** A visitor to validate a hintable node has specific hint. **/
+  /** A visitor to validate the join node has specific hint. **/
   private static class ValidateHintVisitor extends RelVisitor {
     private RelHint expectedHint;
     private Class<?> clazz;
@@ -633,25 +548,9 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
       try {
         tester.convertSqlToRel(sql);
         fail("Unexpected exception");
-      } catch (AssertionError e) {
+      } catch (RuntimeException e) {
         assertThat(e.getMessage(), is(failedMsg));
       }
-    }
-
-    void warns(String expectWarning) {
-      MockAppender appender = new MockAppender();
-      Logger logger = Logger.getRootLogger();
-      logger.addAppender(appender);
-      try {
-        tester.convertSqlToRel(sql);
-      } finally {
-        logger.removeAppender(appender);
-      }
-      List<String> warnings = appender.loggingEvents.stream()
-          .filter(e -> e.getLevel() == Level.WARN)
-          .map(LoggingEvent::getRenderedMessage)
-          .collect(Collectors.toList());
-      assertThat(expectWarning, is(in(warnings)));
     }
 
     /** A shuttle to collect all the hints within the relational expression into a collection. */
@@ -692,39 +591,20 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
     }
   }
 
-  /** Mock appender to collect the logging events. */
-  private static class MockAppender extends AppenderSkeleton {
-    public final List<LoggingEvent> loggingEvents = new ArrayList<>();
-
-    @Override protected void append(org.apache.log4j.spi.LoggingEvent event) {
-      loggingEvents.add(event);
-    }
-
-    @Override public void close() {
-      // no-op
-    }
-
-    @Override public boolean requiresLayout() {
-      return false;
-    }
-  }
-
   /** Define some tool members and methods for hints test. */
   private static class HintTools {
     //~ Static fields/initializers ---------------------------------------------
 
     static final String HINT = "properties(k1='v1', k2='v2'), index(ename), no_hash_join";
 
-    static final RelHint PROPS_HINT = RelHint.builder("PROPERTIES")
-        .hintOption("K1", "v1")
-        .hintOption("K2", "v2")
-        .build();
+    static final RelHint PROPS_HINT = RelHint.of(new ArrayList<>(),
+        "PROPERTIES",
+        ImmutableMap.of("K1", "v1", "K2", "v2"));
 
-    static final RelHint IDX_HINT = RelHint.builder("INDEX")
-        .hintOption("ENAME")
-        .build();
+    static final RelHint IDX_HINT = RelHint.of(new ArrayList<>(), "INDEX",
+        ImmutableList.of("ENAME"));
 
-    static final RelHint JOIN_HINT = RelHint.builder("NO_HASH_JOIN").build();
+    static final RelHint JOIN_HINT = RelHint.of(new ArrayList<>(), "NO_HASH_JOIN");
 
     static final HintStrategyTable HINT_STRATEGY_TABLE = createHintStrategies();
 
@@ -736,57 +616,31 @@ class SqlHintsConverterTest extends SqlToRelTestBase {
      * @return HintStrategyTable instance
      */
     private static HintStrategyTable createHintStrategies() {
-      return createHintStrategies(HintStrategyTable.builder());
-    }
-
-    /**
-     * Creates mock hint strategies with given builder.
-     *
-     * @return HintStrategyTable instance
-     */
-    static HintStrategyTable createHintStrategies(HintStrategyTable.Builder builder) {
-      return builder
-        .hintStrategy("no_hash_join", HintPredicates.JOIN)
-        .hintStrategy("time_zone", HintPredicates.SET_VAR)
-        .hintStrategy("REPARTITION", HintPredicates.SET_VAR)
-        .hintStrategy("index", HintPredicates.TABLE_SCAN)
-        .hintStrategy("properties", HintPredicates.TABLE_SCAN)
-        .hintStrategy(
-            "resource", HintPredicates.or(
-            HintPredicates.PROJECT, HintPredicates.AGGREGATE, HintPredicates.CALC))
-        .hintStrategy("AGG_STRATEGY",
-            HintStrategy.builder(HintPredicates.AGGREGATE)
-                .optionChecker(
-                    (hint, errorHandler) -> errorHandler.check(
-                    hint.listOptions.size() == 1
-                        && (hint.listOptions.get(0).equalsIgnoreCase("ONE_PHASE")
-                        || hint.listOptions.get(0).equalsIgnoreCase("TWO_PHASE")),
-                    "Hint {} only allows single option, "
-                        + "allowed options: [ONE_PHASE, TWO_PHASE]",
-                    hint.hintName)).build())
-        .hintStrategy("use_hash_join",
-          HintPredicates.and(HintPredicates.JOIN, joinWithFixedTableName()))
-        .hintStrategy("use_merge_join",
-            HintStrategy.builder(
-                HintPredicates.and(HintPredicates.JOIN, joinWithFixedTableName()))
-                .excludedRules(EnumerableRules.ENUMERABLE_JOIN_RULE).build())
+      return HintStrategyTable.builder()
+        .addHintStrategy("no_hash_join", HintStrategies.JOIN)
+        .addHintStrategy("time_zone", HintStrategies.SET_VAR)
+        .addHintStrategy("index", HintStrategies.TABLE_SCAN)
+        .addHintStrategy("properties", HintStrategies.TABLE_SCAN)
+        .addHintStrategy(
+            "resource", HintStrategies.or(
+            HintStrategies.PROJECT, HintStrategies.AGGREGATE,
+                HintStrategies.SORT))
+        .addHintStrategy("AGG_STRATEGY", HintStrategies.AGGREGATE)
+        .addHintStrategy("use_hash_join",
+          HintStrategies.and(HintStrategies.JOIN,
+            HintStrategies.explicit((hint, rel) -> {
+              if (!(rel instanceof LogicalJoin)) {
+                return false;
+              }
+              LogicalJoin join = (LogicalJoin) rel;
+              final List<String> tableNames = hint.listOptions;
+              final List<String> inputTables = join.getInputs().stream()
+                  .filter(input -> input instanceof TableScan)
+                  .map(scan -> Util.last(scan.getTable().getQualifiedName()))
+                  .collect(Collectors.toList());
+              return equalsStringList(tableNames, inputTables);
+            })))
         .build();
-    }
-
-    /** Returns a {@link HintPredicate} for join with specified table references. */
-    private static HintPredicate joinWithFixedTableName() {
-      return (hint, rel) -> {
-        if (!(rel instanceof LogicalJoin)) {
-          return false;
-        }
-        LogicalJoin join = (LogicalJoin) rel;
-        final List<String> tableNames = hint.listOptions;
-        final List<String> inputTables = join.getInputs().stream()
-            .filter(input -> input instanceof TableScan)
-            .map(scan -> Util.last(scan.getTable().getQualifiedName()))
-            .collect(Collectors.toList());
-        return equalsStringList(tableNames, inputTables);
-      };
     }
 
     /** Format the query with hint {@link #HINT}. */
