@@ -107,11 +107,11 @@ public class RedshiftSqlDialect extends SqlDialect {
         SqlParserPos.ZERO);
   }
 
-  @Override public boolean supportsGroupByLiteral() {
+  @Override public boolean supportsAggregateFunctionFilter() {
     return false;
   }
 
-  @Override public boolean supportsAliasedValues() {
+  @Override public boolean supportsIsTrueInsideCaseWhen() {
     return false;
   }
 }
