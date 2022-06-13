@@ -17,10 +17,13 @@
 package org.apache.calcite.rex;
 
 import org.apache.calcite.DataContext;
-import org.apache.calcite.DataContexts;
+import org.apache.calcite.adapter.java.JavaTypeFactory;
 import org.apache.calcite.avatica.util.ByteString;
+import org.apache.calcite.linq4j.QueryProvider;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
+import org.apache.calcite.schema.SchemaPlus;
+import org.apache.calcite.schema.Schemas;
 import org.apache.calcite.sql.SqlBinaryOperator;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
@@ -39,6 +42,7 @@ import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
 
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.hamcrest.Matcher;
 import org.junit.jupiter.api.Test;
 
@@ -61,11 +65,11 @@ import static java.nio.charset.StandardCharsets.UTF_8;
  * Unit test for {@link org.apache.calcite.rex.RexExecutorImpl}.
  */
 class RexExecutorTest {
-  protected void check(final Action action) {
+  protected void check(final Action action) throws Exception {
     Frameworks.withPrepare((cluster, relOptSchema, rootSchema, statement) -> {
       final RexBuilder rexBuilder = cluster.getRexBuilder();
       DataContext dataContext =
-          DataContexts.of(statement.getConnection(), rootSchema);
+          Schemas.createDataContext(statement.getConnection(), rootSchema);
       final RexExecutorImpl executor = new RexExecutorImpl(dataContext);
       action.check(rexBuilder, executor);
       return null;
@@ -74,12 +78,10 @@ class RexExecutorTest {
 
   /** Tests an executor that uses variables stored in a {@link DataContext}.
    * Can change the value of the variable and execute again. */
-  @Test void testVariableExecution() {
+  @Test void testVariableExecution() throws Exception {
     check((rexBuilder, executor) -> {
       Object[] values = new Object[1];
-      final DataContext testContext =
-          DataContexts.of(name ->
-              name.equals("inputRecord") ? values : fail("unknown: " + name));
+      final DataContext testContext = new TestDataContext(values);
       final RelDataTypeFactory typeFactory = rexBuilder.getTypeFactory();
       final RelDataType varchar =
           typeFactory.createSqlType(SqlTypeName.VARCHAR);
@@ -112,7 +114,7 @@ class RexExecutorTest {
     });
   }
 
-  @Test void testConstant() {
+  @Test void testConstant() throws Exception {
     check((rexBuilder, executor) -> {
       final List<RexNode> reducedValues = new ArrayList<>();
       final RexLiteral ten = rexBuilder.makeExactLiteral(BigDecimal.TEN);
@@ -126,7 +128,7 @@ class RexExecutorTest {
   }
 
   /** Reduces several expressions to constants. */
-  @Test void testConstant2() {
+  @Test void testConstant2() throws Exception {
     // Same as testConstant; 10 -> 10
     checkConstant(10L,
         rexBuilder -> rexBuilder.makeExactLiteral(BigDecimal.TEN));
@@ -154,7 +156,7 @@ class RexExecutorTest {
   }
 
   private void checkConstant(final Object operand,
-      final Function<RexBuilder, RexNode> function) {
+      final Function<RexBuilder, RexNode> function) throws Exception {
     check((rexBuilder, executor) -> {
       final List<RexNode> reducedValues = new ArrayList<>();
       final RexNode expression = function.apply(rexBuilder);
@@ -176,17 +178,17 @@ class RexExecutorTest {
     });
   }
 
-  @Test void testUserFromContext() {
+  @Test void testUserFromContext() throws Exception {
     testContextLiteral(SqlStdOperatorTable.USER,
         DataContext.Variable.USER, "happyCalciteUser");
   }
 
-  @Test void testSystemUserFromContext() {
+  @Test void testSystemUserFromContext() throws Exception {
     testContextLiteral(SqlStdOperatorTable.SYSTEM_USER,
         DataContext.Variable.SYSTEM_USER, "");
   }
 
-  @Test void testTimestampFromContext() {
+  @Test void testTimestampFromContext() throws Exception {
     // CURRENT_TIMESTAMP actually rounds the value to nearest second
     // and that's why we do currentTimeInMillis / 1000 * 1000
     long val = System.currentTimeMillis() / 1000 * 1000;
@@ -210,9 +212,7 @@ class RexExecutorTest {
       final RexBuilder rexBuilder = cluster.getRexBuilder();
       final RexExecutorImpl executor =
           new RexExecutorImpl(
-              DataContexts.of(name ->
-                  name.equals(variable.camelName) ? value
-                      : fail("unknown: " + name)));
+              new SingleValueDataContext(variable.camelName, value));
       try {
         checkConstant(value, builder -> {
           final List<RexNode> output = new ArrayList<>();
@@ -227,7 +227,7 @@ class RexExecutorTest {
     });
   }
 
-  @Test void testSubstring() {
+  @Test void testSubstring() throws Exception {
     check((rexBuilder, executor) -> {
       final List<RexNode> reducedValues = new ArrayList<>();
       final RexLiteral hello =
@@ -253,7 +253,7 @@ class RexExecutorTest {
     });
   }
 
-  @Test void testBinarySubstring() {
+  @Test void testBinarySubstring() throws Exception {
     check((rexBuilder, executor) -> {
       final List<RexNode> reducedValues = new ArrayList<>();
       // hello world! -> 48656c6c6f20776f726c6421
@@ -280,7 +280,7 @@ class RexExecutorTest {
     });
   }
 
-  @Test void testDeterministic1() {
+  @Test void testDeterministic1() throws Exception {
     check((rexBuilder, executor) -> {
       final RexNode plus =
           rexBuilder.makeCall(SqlStdOperatorTable.PLUS,
@@ -290,7 +290,7 @@ class RexExecutorTest {
     });
   }
 
-  @Test void testDeterministic2() {
+  @Test void testDeterministic2() throws Exception {
     check((rexBuilder, executor) -> {
       final RexNode plus =
           rexBuilder.makeCall(PLUS_RANDOM,
@@ -300,7 +300,7 @@ class RexExecutorTest {
     });
   }
 
-  @Test void testDeterministic3() {
+  @Test void testDeterministic3() throws Exception {
     check((rexBuilder, executor) -> {
       final RexNode plus =
           rexBuilder.makeCall(SqlStdOperatorTable.PLUS,
@@ -309,6 +309,30 @@ class RexExecutorTest {
                   rexBuilder.makeExactLiteral(BigDecimal.ONE)),
               rexBuilder.makeExactLiteral(BigDecimal.ONE));
       assertThat(RexUtil.isDeterministic(plus), equalTo(false));
+    });
+  }
+
+  @Test void testNonDeterministicFunc() throws Exception {
+    check((rexBuilder, executor) -> {
+      // SqlRandFunction
+      final RexNode rand = rexBuilder.makeCall(SqlStdOperatorTable.RAND);
+      assertThat(RexUtil.isDeterministic(rand), equalTo(false));
+
+      // SqlRandIntegerFunction
+      final RexNode randInteger = rexBuilder.makeCall(SqlStdOperatorTable.RAND_INTEGER);
+      assertThat(RexUtil.isDeterministic(randInteger), equalTo(false));
+
+      // SqlCurrentDateFunction
+      final RexNode currentDate = rexBuilder.makeCall(SqlStdOperatorTable.CURRENT_DATE);
+      assertThat(RexUtil.isDeterministic(currentDate), equalTo(false));
+
+      // SqlBaseContextVariable
+      final RexNode user = rexBuilder.makeCall(SqlStdOperatorTable.USER);
+      assertThat(RexUtil.isDeterministic(user), equalTo(false));
+
+      // SqlAbstractTimeFunction
+      final RexNode localtime = rexBuilder.makeCall(SqlStdOperatorTable.LOCALTIME);
+      assertThat(RexUtil.isDeterministic(localtime), equalTo(false));
     });
   }
 
@@ -376,5 +400,48 @@ class RexExecutorTest {
    * a list, then check that the results are as expected. */
   interface Action {
     void check(RexBuilder rexBuilder, RexExecutorImpl executor);
+  }
+
+  /**
+   * ArrayList-based DataContext to check Rex execution.
+   */
+  public static class TestDataContext extends SingleValueDataContext {
+    private TestDataContext(Object[] values) {
+      super("inputRecord", values);
+    }
+  }
+
+  /**
+   * Context that holds a value for a particular context name.
+   */
+  static class SingleValueDataContext implements DataContext {
+    private final String name;
+    private final Object value;
+
+    SingleValueDataContext(String name, Object value) {
+      this.name = name;
+      this.value = value;
+    }
+
+    public SchemaPlus getRootSchema() {
+      throw new RuntimeException("Unsupported");
+    }
+
+    public @Nullable JavaTypeFactory getTypeFactory() {
+      throw new RuntimeException("Unsupported");
+    }
+
+    public @Nullable QueryProvider getQueryProvider() {
+      throw new RuntimeException("Unsupported");
+    }
+
+    public @Nullable Object get(String name) {
+      if (this.name.equals(name)) {
+        return value;
+      } else {
+        fail("Wrong DataContext access");
+        return null;
+      }
+    }
   }
 }
