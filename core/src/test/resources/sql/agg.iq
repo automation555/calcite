@@ -581,75 +581,6 @@ select distinct count(*) from emp group by cube(deptno, gender);
 
 !ok
 
-# CUBE and ROLLUP cartesian product over same columns
-select deptno, gender, count(*) from emp where deptno = 20 group by cube(deptno, gender), rollup(deptno, gender);
-+--------+--------+--------+
-| DEPTNO | GENDER | EXPR$2 |
-+--------+--------+--------+
-|     20 | M      |      1 |
-|     20 | M      |      1 |
-|     20 | M      |      1 |
-|     20 | M      |      1 |
-|     20 | M      |      1 |
-|     20 | M      |      1 |
-|     20 | M      |      1 |
-|     20 |        |      1 |
-|     20 |        |      1 |
-|     20 |        |      1 |
-|        | M      |      1 |
-|        |        |      1 |
-+--------+--------+--------+
-(12 rows)
-
-!ok
-
-# GROUP BY DISTINCT CUBE and ROLLUP cartesian product over same columns
-select deptno, gender, count(*) from emp where deptno = 20 group by distinct cube(deptno, gender), rollup(deptno, gender);
-+--------+--------+--------+
-| DEPTNO | GENDER | EXPR$2 |
-+--------+--------+--------+
-|     20 | M      |      1 |
-|     20 |        |      1 |
-|        | M      |      1 |
-|        |        |      1 |
-+--------+--------+--------+
-(4 rows)
-
-!ok
-
-# GROUP BY over empty columns
-select count(*) from emp where deptno = 20 group by ();
-+--------+
-| EXPR$0 |
-+--------+
-|      1 |
-+--------+
-(1 row)
-
-!ok
-
-# GROUP BY DISTINCT over empty columns
-select count(*) from emp where deptno = 20 group by distinct ();
-+--------+
-| EXPR$0 |
-+--------+
-|      1 |
-+--------+
-(1 row)
-
-!ok
-
-# GROUP BY DISTINCT x + y
-select deptno + 1, count(*) from emp where deptno = 20 group by distinct deptno + 1;
-+--------+--------+
-| EXPR$0 | EXPR$1 |
-+--------+--------+
-|     21 |      1 |
-+--------+--------+
-(1 row)
-
-!ok
-
 # CUBE and JOIN
 select e.deptno, e.gender, min(e.ename) as min_name
 from emp as e join dept as d using (deptno)
@@ -3017,33 +2948,7 @@ select gender, json_arrayagg(json_object('ename': ename, 'deptno': deptno) forma
 
 !ok
 
-select gender, json_arrayagg(json_object('ename': ename, 'deptno': deptno)) from emp group by gender;
-+--------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-| GENDER | EXPR$1                                                                                                                                                                               |
-+--------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-| F      | [{"ename":"Jane","deptno":10},{"ename":"Susan","deptno":30},{"ename":"Alice","deptno":30},{"ename":"Eve","deptno":50},{"ename":"Grace","deptno":60},{"ename":"Wilma","deptno":null}] |
-| M      | [{"ename":"Bob","deptno":10},{"ename":"Eric","deptno":20},{"ename":"Adam","deptno":50}]                                                                                              |
-+--------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-(2 rows)
-
-!ok
-
 select json_object('deptno': deptno, 'employees': json_arrayagg(json_object('ename': ename, 'gender': gender) format json) format json) from emp group by deptno;
-+-------------------------------------------------------------------------------------------+
-| EXPR$0                                                                                    |
-+-------------------------------------------------------------------------------------------+
-| {"employees":[{"ename":"Adam","gender":"M"},{"ename":"Eve","gender":"F"}],"deptno":50}    |
-| {"employees":[{"ename":"Eric","gender":"M"}],"deptno":20}                                 |
-| {"employees":[{"ename":"Grace","gender":"F"}],"deptno":60}                                |
-| {"employees":[{"ename":"Jane","gender":"F"},{"ename":"Bob","gender":"M"}],"deptno":10}    |
-| {"employees":[{"ename":"Susan","gender":"F"},{"ename":"Alice","gender":"F"}],"deptno":30} |
-| {"employees":[{"ename":"Wilma","gender":"F"}],"deptno":null}                              |
-+-------------------------------------------------------------------------------------------+
-(6 rows)
-
-!ok
-
-select json_object('deptno': deptno, 'employees': json_arrayagg(json_object('ename': ename, 'gender': gender))) from emp group by deptno;
 +-------------------------------------------------------------------------------------------+
 | EXPR$0                                                                                    |
 +-------------------------------------------------------------------------------------------+
@@ -3441,6 +3346,110 @@ order by ename, deptno;
 |       |     50 |   1 |   0 |
 +-------+--------+-----+-----+
 (9 rows)
+
+!ok
+
+!use scott
+
+# [CALCITE-4763] Add EXISTS_AGG aggregate function
+# EXISTS_AGG that returns whether count is greater than zero
+
+# EXISTS_AGG includes partially null rows
+select EXISTS_AGG(comm) as e
+from "scott".emp;
++------+
+| E    |
++------+
+| true |
++------+
+(1 row)
+
+!ok
+
+# EXISTS_AGG includes fully null rows
+select EXISTS_AGG(comm) as e
+from "scott".emp where deptno <> 30;
++-------+
+| E     |
++-------+
+| false |
++-------+
+(1 row)
+
+!ok
+
+# EXISTS_AGG aggregation star includes fully null rows
+select EXISTS_AGG(*) as e
+from "scott".emp where deptno <> 30;
++------+
+| E    |
++------+
+| true |
++------+
+(1 row)
+
+!ok
+
+# EXISTS_AGG with GROUP BY includes partially null rows
+select comm, EXISTS_AGG(comm) as e
+from "scott".emp
+group by comm;
++---------+-------+
+| COMM    | E     |
++---------+-------+
+|    0.00 | true  |
+| 1400.00 | true  |
+|  300.00 | true  |
+|  500.00 | true  |
+|         | false |
++---------+-------+
+(5 rows)
+
+!ok
+
+# composite EXISTS_AGG
+select exists_agg(deptno, ename, deptno) as e from "scott".emp;
++------+
+| E    |
++------+
+| true |
++------+
+(1 row)
+
+!ok
+
+# composite EXISTS_AGG includes all null columns
+select exists_agg(mgr, comm) as e from "scott".emp where sal = 5000;
++-------+
+| E     |
++-------+
+| false |
++-------+
+(1 row)
+
+!ok
+
+# EXISTS_AGG with DISTINCT and GROUP BY
+select distinct deptno, exists_agg(*) as e from "scott".emp group by deptno;
++--------+------+
+| DEPTNO | E    |
++--------+------+
+|     10 | true |
+|     20 | true |
+|     30 | true |
++--------+------+
+(3 rows)
+
+!ok
+
+# EXISTS_AGG with DISTINCT and GROUP BY
+select distinct exists_agg(*) as e from "scott".emp group by deptno;
++------+
+| E    |
++------+
+| true |
++------+
+(1 row)
 
 !ok
 

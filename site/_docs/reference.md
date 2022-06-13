@@ -362,12 +362,12 @@ A scalar sub-query is a sub-query used as an expression.
 If the sub-query returns no rows, the value is NULL; if it
 returns more than one row, it is an error.
 
-IN, EXISTS, UNIQUE and scalar sub-queries can occur
+IN, EXISTS and scalar sub-queries can occur
 in any place where an expression can occur (such as the SELECT clause,
 WHERE clause, ON clause of a JOIN, or as an argument to an aggregate
 function).
 
-An IN, EXISTS, UNIQUE or scalar sub-query may be correlated; that is, it
+An IN, EXISTS or scalar sub-query may be correlated; that is, it
 may refer to tables in the FROM clause of an enclosing query.
 
 *selectWithoutFrom* is equivalent to VALUES,
@@ -1241,7 +1241,6 @@ completeness.
 | value comparison ANY (sub-query)                  | Synonym for `SOME`
 | value comparison ALL (sub-query)                  | Whether *value* *comparison* every row returned by *sub-query*
 | EXISTS (sub-query)                                | Whether *sub-query* returns at least one row
-| UNIQUE (sub-query)                                | Whether the rows returned by *sub-query* are unique (ignoring null values)
 
 {% highlight sql %}
 comp:
@@ -1510,9 +1509,9 @@ these details follow the table.
 | SMALLINT            | x    | e       | i       | i        | i   | i      | i       | i             | i      | e        | x    | x    | e         | i               | x
 | INT                 | x    | e       | i       | i        | i   | i      | i       | i             | i      | e        | x    | x    | e         | i               | x
 | BIGINT              | x    | e       | i       | i        | i   | i      | i       | i             | i      | e        | x    | x    | e         | i               | x
-| DECIMAL             | x    | x       | i       | i        | i   | i      | i       | i             | i      | e        | x    | x    | e         | i               | x
-| FLOAT/REAL          | x    | x       | i       | i        | i   | i      | i       | i             | i      | x        | x    | x    | e         | i               | x
-| DOUBLE              | x    | x       | i       | i        | i   | i      | i       | i             | i      | x        | x    | x    | e         | i               | x
+| DECIMAL             | x    | e       | i       | i        | i   | i      | i       | i             | i      | e        | x    | x    | e         | i               | x
+| FLOAT/REAL          | x    | e       | i       | i        | i   | i      | i       | i             | i      | x        | x    | x    | e         | i               | x
+| DOUBLE              | x    | e       | i       | i        | i   | i      | i       | i             | i      | x        | x    | x    | e         | i               | x
 | INTERVAL            | x    | x       | e       | e        | e   | e      | e       | x             | x      | i        | x    | x    | x         | e               | x
 | DATE                | x    | x       | x       | x        | x   | x      | x       | x             | x      | x        | i    | x    | i         | i               | x
 | TIME                | x    | x       | x       | x        | x   | x      | x       | x             | x      | x        | x    | i    | e         | i               | x
@@ -1837,6 +1836,8 @@ and `LISTAGG`).
 | COVAR_POP(numeric1, numeric2)                 | Returns the population covariance of the pair (*numeric1*, *numeric2*) across all input values
 | COVAR_SAMP(numeric1, numeric2)                | Returns the sample covariance of the pair (*numeric1*, *numeric2*) across all input values
 | EVERY(condition)                              | Returns TRUE if all of the values of *condition* are TRUE
+| EXISTS_AGG(*)                                 | Returns whether count of input rows is greater than zero
+| EXISTS_AGG( [ ALL &#124; DISTINCT ] value [, value ]*) | Returns whether count of input rows is greater than zero for which *value* is not null (wholly not null if *value* is composite)
 | FUSION(multiset)                              | Returns the multiset union of *multiset* across all input values
 | INTERSECTION(multiset)                        | Returns the multiset intersection of *multiset* across all input values
 | LISTAGG( [ ALL &#124; DISTINCT ] value [, separator]) | Returns values concatenated into a string, delimited by separator (default ',')

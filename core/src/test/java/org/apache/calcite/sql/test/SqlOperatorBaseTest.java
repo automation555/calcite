@@ -202,9 +202,6 @@ public abstract class SqlOperatorBaseTest {
   public static final String INVALID_ARGUMENTS_NUMBER =
       "Invalid number of arguments to function .* Was expecting .* arguments";
 
-  public static final String INVALID_CAST_CONVERSION_ERROR =
-      "Cast function cannot convert value of type .* to type .*";
-
   public static final boolean TODO = false;
 
   /**
@@ -1598,29 +1595,6 @@ public abstract class SqlOperatorBaseTest {
     tester.checkFails(
         "cast(cast('blah' as varchar(10)) as boolean)", INVALID_CHAR_MESSAGE,
         true);
-
-    tester.checkBoolean("cast(0 as boolean)", Boolean.FALSE);
-    tester.checkBoolean("cast(cast(0 as tinyint) as boolean)", Boolean.FALSE);
-    tester.checkBoolean("cast(cast(0 as smallint) as boolean)", Boolean.FALSE);
-    tester.checkBoolean("cast(cast(0 as bigint) as boolean)", Boolean.FALSE);
-
-    //invalid cast conversion
-    //convert from decimal, double, float, real to boolean
-    tester.checkFails(
-        "^cast(0.10915913549909961 as boolean)^", INVALID_CAST_CONVERSION_ERROR,
-        false);
-    tester.checkFails(
-        "^cast(0.2 as boolean)^", INVALID_CAST_CONVERSION_ERROR,
-        false);
-    tester.checkFails(
-        "^cast(cast(0.0 as double) as boolean)^", INVALID_CAST_CONVERSION_ERROR,
-        false);
-    tester.checkFails(
-        "^cast(cast(0.0 as float) as boolean)^", INVALID_CAST_CONVERSION_ERROR,
-        false);
-    tester.checkFails(
-        "^cast(cast(0.0 as real) as boolean)^", INVALID_CAST_CONVERSION_ERROR,
-        false);
   }
 
   @Test void testCase() {
@@ -5660,6 +5634,28 @@ public abstract class SqlOperatorBaseTest {
         0.0001);
     tester.checkNull("exp(cast(null as integer))");
     tester.checkNull("exp(cast(null as double))");
+  }
+
+  @Test void testExistsAggFunc() {
+    tester.setFor(SqlStdOperatorTable.COUNT, VM_EXPAND);
+    tester.checkType("exists_agg(*)", "BOOLEAN NOT NULL");
+    tester.checkType("exists_agg('name')", "BOOLEAN NOT NULL");
+    tester.checkType("exists_agg(1)", "BOOLEAN NOT NULL");
+    tester.checkType("exists_agg(null)", "BOOLEAN NOT NULL");
+    tester.checkType("EXISTS_AGG(DISTINCT 'x')", "BOOLEAN NOT NULL");
+    tester.checkFails(
+        "^EXISTS_AGG()^",
+        "Invalid number of arguments to function 'EXISTS_AGG'. Was expecting 1 arguments",
+        false);
+    tester.checkType("exists_agg(1, 2)", "BOOLEAN NOT NULL");
+    tester.checkType("exists_agg(1, 2, 'x', 'y')", "BOOLEAN NOT NULL");
+
+    final String[] values = {"0", "CAST(null AS INTEGER)"};
+    tester.checkAgg("EXISTS_AGG(*)", values, true, 0d);
+    tester.checkAgg("EXISTS_AGG(x)", values, true, 0d);
+    tester.checkAgg("EXISTS_AGG(CASE x WHEN 0 THEN NULL ELSE -1 END)", values, true, 0d);
+    tester.checkAgg("EXISTS_AGG(CASE x WHEN 0 THEN NULL ELSE NULL END)", values, false, 0d);
+    tester.checkAgg("EXISTS_AGG(DISTINCT x)", values, true, 0d);
   }
 
   @Test void testModFunc() {
