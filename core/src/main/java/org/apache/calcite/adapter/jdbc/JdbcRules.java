@@ -24,9 +24,8 @@ import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelOptRule;
-import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptTable;
-import org.apache.calcite.plan.RelRule;
+import org.apache.calcite.plan.RelTrait;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.prepare.Prepare;
 import org.apache.calcite.rel.InvalidRelException;
@@ -37,6 +36,7 @@ import org.apache.calcite.rel.SingleRel;
 import org.apache.calcite.rel.convert.ConverterRule;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
+import org.apache.calcite.rel.core.Calc;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Intersect;
@@ -56,11 +56,13 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
+import org.apache.calcite.rex.RexMultisetUtil;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexProgram;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.rex.RexVisitorImpl;
 import org.apache.calcite.schema.ModifiableTable;
+import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlFunction;
 import org.apache.calcite.sql.SqlOperator;
@@ -127,7 +129,7 @@ public class JdbcRules {
       };
 
   static final RelFactories.CorrelateFactory CORRELATE_FACTORY =
-      (left, right, hints, correlationId, requiredColumns, joinType) -> {
+      (left, right, correlationId, requiredColumns, joinType) -> {
         throw new UnsupportedOperationException("JdbcCorrelate");
       };
 
@@ -219,6 +221,7 @@ public class JdbcRules {
   /** Creates a list of rules with the given JDBC convention instance. */
   public static List<RelOptRule> rules(JdbcConvention out) {
     final ImmutableList.Builder<RelOptRule> b = ImmutableList.builder();
+    b.add(JdbcToEnumerableConverterRule.create(out));
     foreachRule(out, b::add);
     return b.build();
   }
@@ -228,15 +231,29 @@ public class JdbcRules {
   public static List<RelOptRule> rules(JdbcConvention out,
       RelBuilderFactory relBuilderFactory) {
     final ImmutableList.Builder<RelOptRule> b = ImmutableList.builder();
+    b.add(JdbcToEnumerableConverterRule.create(out)
+        .config.withRelBuilderFactory(relBuilderFactory).toRule());
     foreachRule(out, r ->
         b.add(r.config.withRelBuilderFactory(relBuilderFactory).toRule()));
     return b.build();
   }
 
+  /** Creates a list of rules with the given JDBC convention instance
+   * and builder factory. */
+  public static List<RelOptRule> rules(RelTrait in, JdbcConvention out,
+      RelBuilderFactory relBuilderFactory) {
+    final ImmutableList.Builder<RelOptRule> b = ImmutableList.builder();
+    b.add(JdbcToEnumerableConverterRule.create(out)
+        .config.withRelBuilderFactory(relBuilderFactory).toRule());
+    foreachRule(out, r ->
+        b.add(r.config.withInTrait(in).withRelBuilderFactory(relBuilderFactory).toRule()));
+    return b.build();
+  }
+
   private static void foreachRule(JdbcConvention out,
-      Consumer<RelRule<?>> consumer) {
-    consumer.accept(JdbcToEnumerableConverterRule.create(out));
+      Consumer<ConverterRule> consumer) {
     consumer.accept(JdbcJoinRule.create(out));
+    consumer.accept(JdbcCalcRule.create(out));
     consumer.accept(JdbcProjectRule.create(out));
     consumer.accept(JdbcFilterRule.create(out));
     consumer.accept(JdbcAggregateRule.create(out));
@@ -328,12 +345,9 @@ public class JdbcRules {
      * @param node Condition
      * @return Whether condition is supported
      */
-    private static boolean canJoinOnCondition(RexNode node) {
+    private boolean canJoinOnCondition(RexNode node) {
       final List<RexNode> operands;
       switch (node.getKind()) {
-      case LITERAL:
-        // literal on a join condition would be TRUE or FALSE
-        return true;
       case AND:
       case OR:
         operands = ((RexCall) node).getOperands();
@@ -361,12 +375,6 @@ public class JdbcRules {
       default:
         return false;
       }
-    }
-
-    @Override public boolean matches(RelOptRuleCall call) {
-      Join join = call.rel(0);
-      JoinRelType joinType = join.getJoinType();
-      return ((JdbcConvention) getOutConvention()).dialect.supportsJoinType(joinType);
     }
   }
 
@@ -426,11 +434,42 @@ public class JdbcRules {
     }
   }
 
+  /**
+   * Rule to convert a {@link org.apache.calcite.rel.core.Calc} to an
+   * {@link org.apache.calcite.adapter.jdbc.JdbcRules.JdbcCalc}.
+   */
+  private static class JdbcCalcRule extends JdbcConverterRule {
+    /** Creates a JdbcCalcRule. */
+    public static JdbcCalcRule create(JdbcConvention out) {
+      return Config.INSTANCE
+          .withConversion(Calc.class, Convention.NONE, out, "JdbcCalcRule")
+          .withRuleFactory(JdbcCalcRule::new)
+          .toRule(JdbcCalcRule.class);
+    }
+
+    /** Called from the Config. */
+    protected JdbcCalcRule(Config config) {
+      super(config);
+    }
+
+    @Override public @Nullable RelNode convert(RelNode rel) {
+      final Calc calc = (Calc) rel;
+
+      // If there's a multiset, let FarragoMultisetSplitter work on it
+      // first.
+      if (RexMultisetUtil.containsMultiset(calc.getProgram())) {
+        return null;
+      }
+
+      return new JdbcCalc(rel.getCluster(), rel.getTraitSet().replace(out),
+          convert(calc.getInput(), calc.getTraitSet().replace(out)),
+          calc.getProgram());
+    }
+  }
+
   /** Calc operator implemented in JDBC convention.
    *
-   * @see org.apache.calcite.rel.core.Calc
-   * */
-  @Deprecated // to be removed before 2.0
+   * @see org.apache.calcite.rel.core.Calc */
   public static class JdbcCalc extends SingleRel implements JdbcRel {
     private final RexProgram program;
 
@@ -665,11 +704,8 @@ public class JdbcRules {
 
   /** Returns whether this JDBC data source can implement a given aggregate
    * function. */
-  private static boolean canImplement(AggregateCall aggregateCall,
-      SqlDialect sqlDialect) {
-    return sqlDialect.supportsAggregateFunction(
-        aggregateCall.getAggregation().getKind())
-        && aggregateCall.distinctKeys == null;
+  private static boolean canImplement(SqlAggFunction aggregation, SqlDialect sqlDialect) {
+    return sqlDialect.supportsAggregateFunction(aggregation.getKind());
   }
 
   /** Aggregate operator implemented in JDBC convention. */
@@ -687,9 +723,9 @@ public class JdbcRules {
       assert this.groupSets.size() == 1 : "Grouping sets not supported";
       final SqlDialect dialect = ((JdbcConvention) getConvention()).dialect;
       for (AggregateCall aggCall : aggCalls) {
-        if (!canImplement(aggCall, dialect)) {
+        if (!canImplement(aggCall.getAggregation(), dialect)) {
           throw new InvalidRelException("cannot implement aggregate function "
-              + aggCall);
+              + aggCall.getAggregation());
         }
         if (aggCall.hasFilter() && !dialect.supportsAggregateFunctionFilter()) {
           throw new InvalidRelException("dialect does not support aggregate "
