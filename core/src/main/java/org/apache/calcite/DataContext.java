@@ -25,8 +25,6 @@ import org.apache.calcite.sql.advise.SqlAdvisor;
 
 import com.google.common.base.CaseFormat;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Modifier;
@@ -36,8 +34,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Runtime context allowing access to the tables in a database.
- *
- * @see DataContexts
  */
 public interface DataContext {
   ParameterExpression ROOT =
@@ -46,7 +42,7 @@ public interface DataContext {
   /**
    * Returns a sub-schema with a given name, or null.
    */
-  @Nullable SchemaPlus getRootSchema();
+  SchemaPlus getRootSchema();
 
   /**
    * Returns the type factory.
@@ -66,7 +62,7 @@ public interface DataContext {
    *
    * @param name Name of variable
    */
-  @Nullable Object get(String name);
+  Object get(String name);
 
   /** Variable that may be asked for in a call to {@link DataContext#get}. */
   enum Variable {
@@ -126,7 +122,13 @@ public interface DataContext {
      *
      * <p>Default value is "user.name" from
      * {@link System#getProperty(String)}. */
-    SYSTEM_USER("systemUser", String.class);
+    SYSTEM_USER("systemUser", String.class),
+
+    /** The sql mode.
+     *
+     * <p>Default value is "" from
+     * {@link System#getProperty(String)}. */
+    SQL_MODE("sqlMode", String.class);
 
     public final String camelName;
     public final Class clazz;
@@ -145,3 +147,5 @@ public interface DataContext {
     }
   }
 }
+
+// End DataContext.java
