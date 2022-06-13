@@ -2770,6 +2770,18 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
     sql(sql).ok();
   }
 
+  @Test void testUpdateSubQueryWithCorrelated1() {
+    final String sql = "update emp a set ename = "
+        + "(select ename from empdefaults b where a.empno = b.empno)";
+    sql(sql).ok();
+  }
+
+  @Test void testUpdateSubQueryWithCorrelated2() {
+    final String sql = "update emp a set deptno = "
+        + "(select deptno + 1 from empdefaults b where a.empno = b.empno)";
+    sql(sql).ok();
+  }
+
   /**
    * Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-3229">[CALCITE-3229]
@@ -3527,7 +3539,7 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
   @Test void testDynamicSchemaUnnest() {
     final String sql = "select t1.c_nationkey, t3.fake_col3\n"
         + "from SALES.CUSTOMER as t1,\n"
-        + "lateral (select t2 as fake_col3\n"
+        + "lateral (select t2.\"$unnest\" as fake_col3\n"
         + "         from unnest(t1.fake_col) as t2) as t3";
     sql(sql).withDynamicTable().ok();
   }
@@ -3535,7 +3547,7 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
   @Test void testStarDynamicSchemaUnnest() {
     final String sql = "select *\n"
         + "from SALES.CUSTOMER as t1,\n"
-        + "lateral (select t2 as fake_col3\n"
+        + "lateral (select t2.\"$unnest\" as fake_col3\n"
         + "         from unnest(t1.fake_col) as t2) as t3";
     sql(sql).withDynamicTable().ok();
   }
@@ -4419,15 +4431,6 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
     sql(sql).withTrim(true).ok();
   }
 
-  @Test void testJoinWithOnConditionQuery() {
-    String sql = ""
-        + "SELECT emp.deptno, emp.sal\n"
-        + "FROM dept\n"
-        + "JOIN emp\n"
-        + "ON (SELECT AVG(emp.sal) > 0 FROM emp)";
-    sql(sql).ok();
-  }
-
   @Test void testJoinExpandAndDecorrelation() {
     String sql = ""
         + "SELECT emp.deptno, emp.sal\n"
@@ -4492,29 +4495,5 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
                 config.withIdentifierExpansion(false)))
         .withTrim(false)
         .ok();
-  }
-
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-5089">[CALCITE-5089]
-   * Allow GROUP BY ALL or DISTINCT set quantifier on GROUPING SETS</a>. */
-  @Test void testGroupByDistinct() {
-    final String sql = "SELECT deptno, job, count(*)\n"
-        + "FROM emp\n"
-        + "GROUP BY DISTINCT\n"
-        + "CUBE (deptno, job),\n"
-        + "ROLLUP (deptno, job)";
-    sql(sql).ok();
-  }
-
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-5089">[CALCITE-5089]
-   * Allow GROUP BY ALL or DISTINCT set quantifier on GROUPING SETS</a>. */
-  @Test void testGroupByAll() {
-    final String sql = "SELECT deptno, job, count(*)\n"
-        + "FROM emp\n"
-        + "GROUP BY ALL\n"
-        + "CUBE (deptno, job),\n"
-        + "ROLLUP (deptno, job)";
-    sql(sql).ok();
   }
 }
