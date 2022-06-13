@@ -19,38 +19,26 @@ pluginManagement {
         fun String.v() = extra["$this.version"].toString()
         fun PluginDependenciesSpec.idv(id: String, key: String = id) = id(id) version key.v()
 
-        idv("com.autonomousapps.dependency-analysis")
-        idv("org.checkerframework")
         idv("com.github.autostyle")
-        idv("com.github.burrunan.s3-build-cache")
         idv("com.github.johnrengelman.shadow")
         idv("com.github.spotbugs")
         idv("com.github.vlsi.crlf", "com.github.vlsi.vlsi-release-plugins")
         idv("com.github.vlsi.gradle-extensions", "com.github.vlsi.vlsi-release-plugins")
         idv("com.github.vlsi.ide", "com.github.vlsi.vlsi-release-plugins")
-        idv("com.github.vlsi.jandex", "com.github.vlsi.vlsi-release-plugins")
         idv("com.github.vlsi.license-gather", "com.github.vlsi.vlsi-release-plugins")
         idv("com.github.vlsi.stage-vote-release", "com.github.vlsi.vlsi-release-plugins")
         idv("com.google.protobuf")
         idv("de.thetaphi.forbiddenapis")
         idv("me.champeau.gradle.jmh")
-        idv("net.ltgt.errorprone")
         idv("org.jetbrains.gradle.plugin.idea-ext")
         idv("org.nosphere.apache.rat")
         idv("org.owasp.dependencycheck")
         kotlin("jvm") version "kotlin".v()
     }
-    if (extra.has("enableMavenLocal") && extra["enableMavenLocal"].toString().ifBlank { "true" }.toBoolean()) {
-        repositories {
-            mavenLocal()
-            gradlePluginPortal()
-        }
-    }
 }
 
 plugins {
     `gradle-enterprise`
-    id("com.github.burrunan.s3-build-cache")
 }
 
 // This is the name of a current project
@@ -60,6 +48,7 @@ rootProject.name = "calcite"
 include(
     "bom",
     "release",
+    "arrow",
     "babel",
     "cassandra",
     "core",
@@ -69,7 +58,6 @@ include(
     "example:function",
     "file",
     "geode",
-    "innodb",
     "kafka",
     "linq4j",
     "mongodb",
@@ -80,7 +68,6 @@ include(
     "server",
     "spark",
     "splunk",
-    "testkit",
     "ubenchmark"
 )
 
@@ -109,22 +96,9 @@ if (isCiServer) {
 }
 
 // Cache build artifacts, so expensive operations do not need to be re-computed
-// The logic is as follows:
-//  1. Cache is populated only in CI that has S3_BUILD_CACHE_ACCESS_KEY_ID and
-//     S3_BUILD_CACHE_SECRET_KEY (GitHub Actions in main branch)
-//  2. Otherwise the cache is read-only (e.g. everyday builds and PR builds)
 buildCache {
     local {
         isEnabled = !isCiServer
-    }
-    if (property("s3.build.cache")?.ifBlank { "true" }?.toBoolean() == true) {
-        val pushAllowed = property("s3.build.cache.push")?.ifBlank { "true" }?.toBoolean() ?: true
-        remote<com.github.burrunan.s3cache.AwsS3BuildCache> {
-            region = "us-east-2"
-            bucket = "calcite-gradle-cache"
-            endpoint = "s3.us-east-2.wasabisys.com"
-            isPush = isCiServer && pushAllowed && !awsAccessKeyId.isNullOrBlank()
-        }
     }
 }
 
