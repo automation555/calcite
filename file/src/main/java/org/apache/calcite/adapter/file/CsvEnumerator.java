@@ -17,6 +17,7 @@
 package org.apache.calcite.adapter.file;
 
 import org.apache.calcite.adapter.java.JavaTypeFactory;
+import org.apache.calcite.avatica.util.DateTimeUtils;
 import org.apache.calcite.linq4j.Enumerator;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -25,6 +26,8 @@ import org.apache.calcite.util.ImmutableNullableList;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Source;
 import org.apache.calcite.util.trace.CalciteLogger;
+
+import org.apache.commons.lang3.time.FastDateFormat;
 
 import au.com.bytecode.opencsv.CSVReader;
 
@@ -36,16 +39,13 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
+import java.text.ParseException;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -54,7 +54,6 @@ import static com.google.common.base.Preconditions.checkArgument;
 
 import static org.apache.calcite.linq4j.Nullness.castNonNull;
 
-import static java.time.temporal.ChronoField.MILLI_OF_DAY;
 /** Enumerator that reads from a CSV file.
  *
  * @param <E> Row type
@@ -69,16 +68,18 @@ public class CsvEnumerator<E> implements Enumerator<E> {
   private final RowConverter<E> rowConverter;
   private @Nullable E current;
 
-  private static final DateTimeFormatter TIME_FORMAT_DATE;
-  private static final DateTimeFormatter TIME_FORMAT_TIME;
-  private static final DateTimeFormatter TIME_FORMAT_TIMESTAMP;
+  private static final FastDateFormat TIME_FORMAT_DATE;
+  private static final FastDateFormat TIME_FORMAT_TIME;
+  private static final FastDateFormat TIME_FORMAT_TIMESTAMP;
   private static final Pattern DECIMAL_TYPE_PATTERN = Pattern
       .compile("\"decimal\\(([0-9]+),([0-9]+)\\)");
 
   static {
-    TIME_FORMAT_DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.ROOT);
-    TIME_FORMAT_TIME = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ROOT);
-    TIME_FORMAT_TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.ROOT);
+    final TimeZone gmt = TimeZone.getTimeZone("GMT");
+    TIME_FORMAT_DATE = FastDateFormat.getInstance("yyyy-MM-dd", gmt);
+    TIME_FORMAT_TIME = FastDateFormat.getInstance("HH:mm:ss", gmt);
+    TIME_FORMAT_TIMESTAMP =
+        FastDateFormat.getInstance("yyyy-MM-dd HH:mm:ss", gmt);
   }
 
   public CsvEnumerator(Source source, AtomicBoolean cancelFlag,
@@ -292,7 +293,7 @@ public class CsvEnumerator<E> implements Enumerator<E> {
   /** Row converter.
    *
    * @param <E> element type */
-  abstract static class RowConverter<E> {
+  public abstract static class RowConverter<E> {
     abstract E convertRow(@Nullable String[] rows);
 
     @SuppressWarnings("JavaUtilDate")
@@ -346,9 +347,9 @@ public class CsvEnumerator<E> implements Enumerator<E> {
           return null;
         }
         try {
-          LocalDate date = TIME_FORMAT_DATE.parse(string, LocalDate::from);
-          return (int) date.toEpochDay();
-        } catch (DateTimeParseException e) {
+          Date date = TIME_FORMAT_DATE.parse(string);
+          return (int) (date.getTime() / DateTimeUtils.MILLIS_PER_DAY);
+        } catch (ParseException e) {
           return null;
         }
       case TIME:
@@ -356,9 +357,9 @@ public class CsvEnumerator<E> implements Enumerator<E> {
           return null;
         }
         try {
-          LocalTime time = TIME_FORMAT_TIME.parse(string, LocalTime::from);
-          return time.get(MILLI_OF_DAY);
-        } catch (DateTimeParseException e) {
+          Date date = TIME_FORMAT_TIME.parse(string);
+          return (int) date.getTime();
+        } catch (ParseException e) {
           return null;
         }
       case TIMESTAMP:
@@ -366,9 +367,9 @@ public class CsvEnumerator<E> implements Enumerator<E> {
           return null;
         }
         try {
-          LocalDateTime date = TIME_FORMAT_TIMESTAMP.parse(string, LocalDateTime::from);
-          return date.atZone(ZoneOffset.UTC).toInstant().toEpochMilli();
-        } catch (DateTimeParseException e) {
+          Date date = TIME_FORMAT_TIMESTAMP.parse(string);
+          return date.getTime();
+        } catch (ParseException e) {
           return null;
         }
       case VARCHAR:
