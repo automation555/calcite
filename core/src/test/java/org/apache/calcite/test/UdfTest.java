@@ -48,7 +48,6 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.hamcrest.CoreMatchers.is;
@@ -89,6 +88,30 @@ public class UdfTest {
         + "           name: 'MY_DET_PLUS',\n"
         + "           className: '"
         + Smalls.MyDeterministicPlusFunction.class.getName()
+        + "'\n"
+        + "         },\n"
+        + "         {\n"
+        + "           name: 'VAR_ARGS',\n"
+        + "           className: '"
+        + Smalls.VarArgsFunction.class.getName()
+        + "'\n"
+        + "         },\n"
+        + "         {\n"
+        + "           name: 'VAR_ARGS',\n"
+        + "           className: '"
+        + Smalls.VarArgs1Function.class.getName()
+        + "'\n"
+        + "         },\n"
+        + "         {\n"
+        + "           name: 'VAR_ARGS',\n"
+        + "           className: '"
+        + Smalls.VarArgs2Function.class.getName()
+        + "'\n"
+        + "         },\n"
+        + "         {\n"
+        + "           name: 'CONCAT_VAR_ARGS',\n"
+        + "           className: '"
+        + Smalls.VarArgs3Function.class.getName()
         + "'\n"
         + "         },\n"
         + "         {\n"
@@ -183,11 +206,79 @@ public class UdfTest {
     return CalciteAssert.model(model);
   }
 
+
+  /** Tests a variable arguments user-defined function that is defined in terms of a class with
+   * non-static methods. */
+  @Test public void testVarArgsUserDefinedFunction() throws Exception {
+    final String sql = "select \"adhoc\".var_args(\"deptno\", 100, 20.0) as p\n"
+        + "from \"adhoc\".EMPLOYEES";
+    final AtomicInteger c = Smalls.VarArgs2Function.INSTANCE_COUNT;
+    final int before = c.get();
+    withUdf().query(sql).returnsUnordered("P=130.0",
+        "P=140.0",
+        "P=130.0",
+        "P=130.0");
+    final int after = c.get();
+    assertThat(after, is(before + 4));
+  }
+
+  @Test public void testVarArgsUserDefinedFunctionWithoutVarArgInputs() throws Exception {
+    final String sql = "select \"adhoc\".var_args(\"deptno\") as p\n"
+        + "from \"adhoc\".EMPLOYEES";
+    final AtomicInteger c = Smalls.VarArgsFunction.INSTANCE_COUNT;
+    final int before = c.get();
+    withUdf().query(sql).returnsUnordered("P=10",
+        "P=10",
+        "P=10",
+        "P=20");
+    final int after = c.get();
+    assertThat(after, is(before + 4));
+  }
+
+  @Test public void testVarArgsUserDefinedFunctionWithNameParameters() throws Exception {
+    final String sql = "select \"adhoc\".var_args(y=>20, y_1=>100, x=>\"deptno\") as p\n"
+        + "from \"adhoc\".EMPLOYEES";
+    final AtomicInteger c = Smalls.VarArgsFunction.INSTANCE_COUNT;
+    final int before = c.get();
+    withUdf().query(sql).returnsUnordered("P=130",
+        "P=140",
+        "P=130",
+        "P=130");
+    final int after = c.get();
+    assertThat(after, is(before + 4));
+  }
+
+  @Test public void testVarArgsUserDefinedFunctionWithCoercion() throws Exception {
+    final String sql = "select \"adhoc\".concat_var_args(x_2=>20, x_1=>100, x=>\"deptno\") as p\n"
+        + "from \"adhoc\".EMPLOYEES";
+    final AtomicInteger c = Smalls.VarArgs3Function.INSTANCE_COUNT;
+    final int before = c.get();
+    withUdf().query(sql).returnsUnordered("P=2010010",
+        "P=2010010",
+        "P=2010010",
+        "P=2010020");
+    final int after = c.get();
+    assertThat(after, is(before + 4));
+  }
+
   /** Tests a user-defined function that is defined in terms of a class with
    * non-static methods. */
   @Disabled("[CALCITE-1561] Intermittent test failures")
   @Test public void testUserDefinedFunction() throws Exception {
     final String sql = "select \"adhoc\".my_plus(\"deptno\", 100) as p\n"
+        + "from \"adhoc\".EMPLOYEES";
+    final AtomicInteger c = Smalls.MyPlusFunction.INSTANCE_COUNT.get();
+    final int before = c.get();
+    withUdf().query(sql).returnsUnordered("P=110",
+        "P=120",
+        "P=110",
+        "P=110");
+    final int after = c.get();
+    assertThat(after, is(before + 4));
+  }
+
+  @Test public void testUserDefinedFunctionWithArgumentAssignment() throws Exception {
+    final String sql = "select \"adhoc\".my_plus(x=>\"deptno\", y=>100) as p\n"
         + "from \"adhoc\".EMPLOYEES";
     final AtomicInteger c = Smalls.MyPlusFunction.INSTANCE_COUNT.get();
     final int before = c.get();
@@ -886,20 +977,6 @@ public class UdfTest {
   }
 
   /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-3597">[CALCITE-3597]
-   * User-defined function with Timestamp parameters and returns TIMESTAMP value</a>. */
-  @Test public void testTimestampReturnTimestamp() {
-    TimeZone tz = TimeZone.getDefault();
-    TimeZone.setDefault(TimeZone.getTimeZone("Asia/Shanghai"));
-
-    final CalciteAssert.AssertThat with = withUdf();
-    with.query("values \"adhoc\".\"timestampFunReturnsTimestamp\"(TIMESTAMP '1900-01-01 00:00:00')")
-      .returnsValue("1900-01-01 00:00:00");
-
-    TimeZone.setDefault(tz);
-  }
-
-  /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-1041">[CALCITE-1041]
    * User-defined function returns DATE or TIMESTAMP value</a>. */
   @Test public void testReturnDate() {
@@ -1054,6 +1131,10 @@ public class UdfTest {
               }
 
               public boolean isOptional() {
+                return false;
+              }
+
+              public boolean isVarArgs() {
                 return false;
               }
             });

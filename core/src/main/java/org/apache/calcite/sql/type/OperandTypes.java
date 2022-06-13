@@ -74,6 +74,15 @@ public abstract class OperandTypes {
 
   /**
    * Creates a checker that passes if each operand is a member of a
+   * corresponding family, and allows specified parameters to be optional.
+   */
+  public static FamilyOperandTypeChecker family(List<SqlTypeFamily> families,
+      Predicate<Integer> optional, Predicate<Integer> varArg) {
+    return new FamilyOperandTypeChecker(families, optional, varArg);
+  }
+
+  /**
+   * Creates a checker that passes if each operand is a member of a
    * corresponding family.
    */
   public static FamilyOperandTypeChecker family(List<SqlTypeFamily> families) {
@@ -412,11 +421,6 @@ public abstract class OperandTypes {
   public static final SqlSingleOperandTypeChecker STRING_STRING_INTEGER_INTEGER =
       family(SqlTypeFamily.STRING, SqlTypeFamily.STRING,
           SqlTypeFamily.INTEGER, SqlTypeFamily.INTEGER);
-
-  public static final SqlSingleOperandTypeChecker STRING_STRING_INTEGER_INTEGER_STRING =
-      family(SqlTypeFamily.STRING, SqlTypeFamily.STRING,
-          SqlTypeFamily.INTEGER, SqlTypeFamily.INTEGER,
-          SqlTypeFamily.STRING);
 
   public static final SqlSingleOperandTypeChecker STRING_INTEGER =
       family(SqlTypeFamily.STRING, SqlTypeFamily.INTEGER);

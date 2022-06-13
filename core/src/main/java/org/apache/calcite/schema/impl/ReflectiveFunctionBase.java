@@ -16,9 +16,6 @@
  */
 package org.apache.calcite.schema.impl;
 
-import org.apache.calcite.adapter.enumerable.NullPolicy;
-import org.apache.calcite.linq4j.function.SemiStrict;
-import org.apache.calcite.linq4j.function.Strict;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.schema.Function;
@@ -92,20 +89,6 @@ public abstract class ReflectiveFunctionBase implements Function {
     return null;
   }
 
-  static NullPolicy getNullPolicy(Method m) {
-    if (m.getAnnotation(Strict.class) != null) {
-      return NullPolicy.STRICT;
-    } else if (m.getAnnotation(SemiStrict.class) != null) {
-      return NullPolicy.SEMI_STRICT;
-    } else if (m.getDeclaringClass().getAnnotation(Strict.class) != null) {
-      return NullPolicy.STRICT;
-    } else if (m.getDeclaringClass().getAnnotation(SemiStrict.class) != null) {
-      return NullPolicy.SEMI_STRICT;
-    } else {
-      return NullPolicy.NONE;
-    }
-  }
-
   /** Creates a ParameterListBuilder. */
   public static ParameterListBuilder builder() {
     return new ParameterListBuilder();
@@ -121,11 +104,11 @@ public abstract class ReflectiveFunctionBase implements Function {
     }
 
     public ParameterListBuilder add(final Class<?> type, final String name) {
-      return add(type, name, false);
+      return add(type, name, false, false);
     }
 
     public ParameterListBuilder add(final Class<?> type, final String name,
-        final boolean optional) {
+        final boolean optional, final boolean varArgs) {
       final int ordinal = builder.size();
       builder.add(
           new FunctionParameter() {
@@ -138,11 +121,16 @@ public abstract class ReflectiveFunctionBase implements Function {
             }
 
             public RelDataType getType(RelDataTypeFactory typeFactory) {
-              return typeFactory.createJavaType(type);
+              final Class paramType = varArgs ? type.getComponentType() : type;
+              return typeFactory.createJavaType(paramType);
             }
 
             public boolean isOptional() {
               return optional;
+            }
+
+            public boolean isVarArgs() {
+              return varArgs;
             }
           });
       return this;
@@ -152,11 +140,10 @@ public abstract class ReflectiveFunctionBase implements Function {
       final Class<?>[] types = method.getParameterTypes();
       for (int i = 0; i < types.length; i++) {
         add(types[i], ReflectUtil.getParameterName(method, i),
-            ReflectUtil.isParameterOptional(method, i));
+            ReflectUtil.isParameterOptional(method, i),
+              ReflectUtil.isParameterVarArgs(method, i));
       }
       return this;
     }
   }
 }
-
-// End ReflectiveFunctionBase.java
