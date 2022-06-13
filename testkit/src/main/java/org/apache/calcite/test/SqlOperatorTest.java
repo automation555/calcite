@@ -2641,7 +2641,7 @@ public class SqlOperatorTest {
     checkNullOperand(f1, "<>");
   }
 
-  private static void checkNullOperand(SqlOperatorFixture f, String op) {
+  private void checkNullOperand(SqlOperatorFixture f, String op) {
     f.checkBoolean("1 " + op + " null", null);
     f.checkBoolean("null " + op + " -3", null);
     f.checkBoolean("null " + op + " null", null);
@@ -6664,6 +6664,14 @@ public class SqlOperatorTest {
     }
   }
 
+  @Test void testDay() {
+    final SqlOperatorFixture f = fixture();
+    f.setFor(SqlStdOperatorTable.DAYOFMONTH, VM_FENNEL, VM_JAVA);
+    f.checkScalar("day(date '2008-1-23')", "23",
+        "BIGINT NOT NULL");
+    f.checkNull("day(cast(null as date))");
+  }
+
   @Test void testDayOfYear() {
     final SqlOperatorFixture f = fixture();
     f.setFor(SqlStdOperatorTable.DAYOFYEAR, VM_FENNEL, VM_JAVA);
@@ -7254,9 +7262,9 @@ public class SqlOperatorTest {
     f.checkFails("^floor('abcde' to minute)^",
         "(?s)Cannot apply 'FLOOR' to arguments .*", false);
     f.checkFails("floor(timestamp '2015-02-19 12:34:56.78' to ^microsecond^)",
-        "'MICROSECOND' is not a valid datetime format", false);
+        "(?s)Encountered \"microsecond\" at .*", false);
     f.checkFails("floor(timestamp '2015-02-19 12:34:56.78' to ^nanosecond^)",
-        "'NANOSECOND' is not a valid datetime format", false);
+        "(?s)Encountered \"nanosecond\" at .*", false);
     f.checkScalar("floor(time '12:34:56' to minute)",
         "12:34:00", "TIME(0) NOT NULL");
     f.checkScalar("floor(timestamp '2015-02-19 12:34:56.78' to second)",
@@ -7295,9 +7303,9 @@ public class SqlOperatorTest {
     f.checkFails("^ceil('abcde' to minute)^",
         "(?s)Cannot apply 'CEIL' to arguments .*", false);
     f.checkFails("ceil(timestamp '2015-02-19 12:34:56.78' to ^microsecond^)",
-        "'MICROSECOND' is not a valid datetime format", false);
+        "(?s)Encountered \"microsecond\" at .*", false);
     f.checkFails("ceil(timestamp '2015-02-19 12:34:56.78' to ^nanosecond^)",
-        "'NANOSECOND' is not a valid datetime format", false);
+        "(?s)Encountered \"nanosecond\" at .*", false);
     f.checkScalar("ceil(time '12:34:56' to minute)",
         "12:35:00", "TIME(0) NOT NULL");
     f.checkScalar("ceil(time '12:59:56' to minute)",
