@@ -27,6 +27,7 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelVisitor;
 import org.apache.calcite.rel.core.Collect;
 import org.apache.calcite.rel.core.CorrelationId;
+import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.core.Sample;
 import org.apache.calcite.rel.core.Sort;
@@ -272,7 +273,6 @@ public class RelStructuredTypeFlattener implements ReflectiveVisitor {
   }
 
   protected void setNewForOldRel(RelNode oldRel, RelNode newRel) {
-    newRel = RelOptUtil.copyRelHints(oldRel, newRel);
     oldToNewRelMap.put(oldRel, newRel);
   }
 
@@ -535,10 +535,21 @@ public class RelStructuredTypeFlattener implements ReflectiveVisitor {
     RelNode newInput = getNewForOldRel(rel.getInput());
     List<RexNode> newProjects = Pair.left(flattenedExpList);
     List<String> newNames = Pair.right(flattenedExpList);
-    final RelNode newRel = relBuilder.push(newInput)
+    RelNode renamedProject =  relBuilder.push(newInput)
         .projectNamed(newProjects, newNames, true)
         .hints(rel.getHints())
         .build();
+
+    final RelNode newRel;
+    // we need to check if builder returns an instance of project
+    // because in some case a Values relation could be returned instead
+    if (!rel.getVariablesSet().isEmpty() && renamedProject instanceof Project) {
+      Project p = (Project) renamedProject;
+      newRel = p.copy(p.getTraitSet(), p.getInput(), p.getProjects(),
+          p.getRowType(), rel.getVariablesSet());
+    } else {
+      newRel = renamedProject;
+    }
     setNewForOldRel(rel, newRel);
   }
 
@@ -758,6 +769,8 @@ public class RelStructuredTypeFlattener implements ReflectiveVisitor {
     RelNode newRel = rel.getTable().toRel(toRelContext);
     if (!SqlTypeUtil.isFlat(rel.getRowType())) {
       newRel = coverNewRelByFlatteningProjection(rel, newRel);
+    } else {
+      newRel = RelOptUtil.copyRelHints(rel, newRel);
     }
     setNewForOldRel(rel, newRel);
   }
@@ -773,6 +786,7 @@ public class RelStructuredTypeFlattener implements ReflectiveVisitor {
     newRel = relBuilder.push(newRel)
         .projectNamed(projects, fieldNames, true)
         .build();
+    newRel = RelOptUtil.copyRelHints(rel, newRel);
     return newRel;
   }
 

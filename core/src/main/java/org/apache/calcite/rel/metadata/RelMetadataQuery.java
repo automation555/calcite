@@ -19,7 +19,6 @@ package org.apache.calcite.rel.metadata;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptPredicateList;
 import org.apache.calcite.plan.RelOptTable;
-import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelDistribution;
 import org.apache.calcite.rel.RelDistributions;
@@ -29,8 +28,6 @@ import org.apache.calcite.rex.RexTableInputRef.RelTableRef;
 import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.util.ImmutableBitSet;
 
-import com.google.common.base.Supplier;
-import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
@@ -42,6 +39,8 @@ import java.util.List;
 import java.util.Set;
 
 import static org.apache.calcite.linq4j.Nullness.castNonNull;
+
+import static java.util.Objects.requireNonNull;
 
 /**
  * RelMetadataQuery provides a strongly-typed facade on top of
@@ -79,9 +78,7 @@ import static org.apache.calcite.linq4j.Nullness.castNonNull;
  * plugin mechanism.
  */
 public class RelMetadataQuery extends RelMetadataQueryBase {
-  // An empty prototype. Only initialize on first use.
-  private static final Supplier<RelMetadataQuery> EMPTY =
-      Suppliers.memoize(() -> new RelMetadataQuery(false));
+  private static final RelMetadataQuery EMPTY = new RelMetadataQuery(false);
 
   private BuiltInMetadata.Collation.Handler collationHandler;
   private BuiltInMetadata.ColumnOrigin.Handler columnOriginHandler;
@@ -106,55 +103,17 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
   private BuiltInMetadata.Selectivity.Handler selectivityHandler;
   private BuiltInMetadata.Size.Handler sizeHandler;
   private BuiltInMetadata.UniqueKeys.Handler uniqueKeysHandler;
-  private BuiltInMetadata.LowerBoundCost.Handler lowerBoundCostHandler;
 
   /**
    * Creates the instance with {@link JaninoRelMetadataProvider} instance
    * from {@link #THREAD_PROVIDERS} and {@link #EMPTY} as a prototype.
    */
   protected RelMetadataQuery() {
-    this(castNonNull(THREAD_PROVIDERS.get()), EMPTY.get());
-  }
-
-  /**
-   * Create a RelMetadataQuery with a given {@link MetadataHandlerProvider}.
-   * @param provider The provider to use for construction.
-   */
-  public RelMetadataQuery(MetadataHandlerProvider provider) {
-    super(provider);
-    this.collationHandler = provider.handler(BuiltInMetadata.Collation.Handler.class);
-    this.columnOriginHandler = provider.handler(BuiltInMetadata.ColumnOrigin.Handler.class);
-    this.expressionLineageHandler =
-        provider.handler(BuiltInMetadata.ExpressionLineage.Handler.class);
-    this.tableReferencesHandler = provider.handler(BuiltInMetadata.TableReferences.Handler.class);
-    this.columnUniquenessHandler = provider.handler(BuiltInMetadata.ColumnUniqueness.Handler.class);
-    this.cumulativeCostHandler = provider.handler(BuiltInMetadata.CumulativeCost.Handler.class);
-    this.distinctRowCountHandler = provider.handler(BuiltInMetadata.DistinctRowCount.Handler.class);
-    this.distributionHandler = provider.handler(BuiltInMetadata.Distribution.Handler.class);
-    this.explainVisibilityHandler =
-        provider.handler(BuiltInMetadata.ExplainVisibility.Handler.class);
-    this.maxRowCountHandler = provider.handler(BuiltInMetadata.MaxRowCount.Handler.class);
-    this.minRowCountHandler = provider.handler(BuiltInMetadata.MinRowCount.Handler.class);
-    this.memoryHandler = provider.handler(BuiltInMetadata.Memory.Handler.class);
-    this.nonCumulativeCostHandler =
-        provider.handler(BuiltInMetadata.NonCumulativeCost.Handler.class);
-    this.parallelismHandler = provider.handler(BuiltInMetadata.Parallelism.Handler.class);
-    this.percentageOriginalRowsHandler =
-        provider.handler(BuiltInMetadata.PercentageOriginalRows.Handler.class);
-    this.populationSizeHandler = provider.handler(BuiltInMetadata.PopulationSize.Handler.class);
-    this.predicatesHandler = provider.handler(BuiltInMetadata.Predicates.Handler.class);
-    this.allPredicatesHandler = provider.handler(BuiltInMetadata.AllPredicates.Handler.class);
-    this.nodeTypesHandler = provider.handler(BuiltInMetadata.NodeTypes.Handler.class);
-    this.rowCountHandler = provider.handler(BuiltInMetadata.RowCount.Handler.class);
-    this.selectivityHandler = provider.handler(BuiltInMetadata.Selectivity.Handler.class);
-    this.sizeHandler = provider.handler(BuiltInMetadata.Size.Handler.class);
-    this.uniqueKeysHandler = provider.handler(BuiltInMetadata.UniqueKeys.Handler.class);
-    this.lowerBoundCostHandler = provider.handler(BuiltInMetadata.LowerBoundCost.Handler.class);
+    this(castNonNull(THREAD_PROVIDERS.get()), EMPTY);
   }
 
   /** Creates and initializes the instance that will serve as a prototype for
-   * all other instances in the Janino case. */
-  @SuppressWarnings("deprecation")
+   * all other instances. */
   private RelMetadataQuery(@SuppressWarnings("unused") boolean dummy) {
     super(null);
     this.collationHandler = initialHandler(BuiltInMetadata.Collation.Handler.class);
@@ -181,13 +140,11 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     this.selectivityHandler = initialHandler(BuiltInMetadata.Selectivity.Handler.class);
     this.sizeHandler = initialHandler(BuiltInMetadata.Size.Handler.class);
     this.uniqueKeysHandler = initialHandler(BuiltInMetadata.UniqueKeys.Handler.class);
-    this.lowerBoundCostHandler = initialHandler(BuiltInMetadata.LowerBoundCost.Handler.class);
   }
 
-  private RelMetadataQuery(
-      MetadataHandlerProvider metadataHandlerProvider,
+  private RelMetadataQuery(JaninoRelMetadataProvider metadataProvider,
       RelMetadataQuery prototype) {
-    super(metadataHandlerProvider);
+    super(requireNonNull(metadataProvider, "metadataProvider"));
     this.collationHandler = prototype.collationHandler;
     this.columnOriginHandler = prototype.columnOriginHandler;
     this.expressionLineageHandler = prototype.expressionLineageHandler;
@@ -211,7 +168,6 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     this.selectivityHandler = prototype.selectivityHandler;
     this.sizeHandler = prototype.sizeHandler;
     this.uniqueKeysHandler = prototype.uniqueKeysHandler;
-    this.lowerBoundCostHandler = prototype.lowerBoundCostHandler;
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -235,7 +191,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return nodeTypesHandler.getNodeTypes(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         nodeTypesHandler = revise(BuiltInMetadata.NodeTypes.Handler.class);
       } catch (CyclicMetadataException e) {
         return null;
@@ -257,7 +213,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
       try {
         Double result = rowCountHandler.getRowCount(rel, this);
         return RelMdUtil.validateResult(castNonNull(result));
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         rowCountHandler = revise(BuiltInMetadata.RowCount.Handler.class);
       }
     }
@@ -275,7 +231,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return maxRowCountHandler.getMaxRowCount(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         maxRowCountHandler = revise(BuiltInMetadata.MaxRowCount.Handler.class);
       }
     }
@@ -293,7 +249,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return minRowCountHandler.getMinRowCount(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         minRowCountHandler = revise(BuiltInMetadata.MinRowCount.Handler.class);
       }
     }
@@ -311,7 +267,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return cumulativeCostHandler.getCumulativeCost(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         cumulativeCostHandler = revise(BuiltInMetadata.CumulativeCost.Handler.class);
       }
     }
@@ -329,7 +285,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return nonCumulativeCostHandler.getNonCumulativeCost(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         nonCumulativeCostHandler = revise(BuiltInMetadata.NonCumulativeCost.Handler.class);
       }
     }
@@ -350,7 +306,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
         Double result =
             percentageOriginalRowsHandler.getPercentageOriginalRows(rel, this);
         return RelMdUtil.validatePercentage(result);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         percentageOriginalRowsHandler =
             revise(BuiltInMetadata.PercentageOriginalRows.Handler.class);
       }
@@ -365,15 +321,16 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
    * @param rel           the relational expression
    * @param column 0-based ordinal for output column of interest
    * @return set of origin columns, or null if this information cannot be
-   * determined (whereas empty set indicates Handler.classinitely no origin columns at
+   * determined (whereas empty set indicates definitely no origin columns at
    * all)
    */
   public @Nullable Set<RelColumnOrigin> getColumnOrigins(RelNode rel, int column) {
     for (;;) {
       try {
         return columnOriginHandler.getColumnOrigins(rel, this, column);
-      } catch (MetadataHandlerProvider.NoHandler e) {
-        columnOriginHandler = revise(BuiltInMetadata.ColumnOrigin.Handler.class);
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
+        columnOriginHandler =
+            revise(BuiltInMetadata.ColumnOrigin.Handler.class);
       }
     }
   }
@@ -405,8 +362,9 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return expressionLineageHandler.getExpressionLineage(rel, this, expression);
-      } catch (MetadataHandlerProvider.NoHandler e) {
-        expressionLineageHandler = revise(BuiltInMetadata.ExpressionLineage.Handler.class);
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
+        expressionLineageHandler =
+            revise(BuiltInMetadata.ExpressionLineage.Handler.class);
       }
     }
   }
@@ -418,8 +376,9 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return tableReferencesHandler.getTableReferences(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
-        tableReferencesHandler = revise(BuiltInMetadata.TableReferences.Handler.class);
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
+        tableReferencesHandler =
+            revise(BuiltInMetadata.TableReferences.Handler.class);
       }
     }
   }
@@ -462,8 +421,9 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
       try {
         Double result = selectivityHandler.getSelectivity(rel, this, predicate);
         return RelMdUtil.validatePercentage(result);
-      } catch (MetadataHandlerProvider.NoHandler e) {
-        selectivityHandler = revise(BuiltInMetadata.Selectivity.Handler.class);
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
+        selectivityHandler =
+            revise(BuiltInMetadata.Selectivity.Handler.class);
       }
     }
   }
@@ -475,7 +435,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
    *
    * @param rel the relational expression
    * @return set of keys, or null if this information cannot be determined
-   * (whereas empty set indicates Handler.classinitely no keys at all)
+   * (whereas empty set indicates definitely no keys at all)
    */
   public @Nullable Set<ImmutableBitSet> getUniqueKeys(RelNode rel) {
     return getUniqueKeys(rel, false);
@@ -498,8 +458,9 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return uniqueKeysHandler.getUniqueKeys(rel, this, ignoreNulls);
-      } catch (MetadataHandlerProvider.NoHandler e) {
-        uniqueKeysHandler = revise(BuiltInMetadata.UniqueKeys.Handler.class);
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
+        uniqueKeysHandler =
+            revise(BuiltInMetadata.UniqueKeys.Handler.class);
       }
     }
   }
@@ -581,8 +542,9 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
       try {
         return columnUniquenessHandler.areColumnsUnique(rel, this, columns,
             ignoreNulls);
-      } catch (MetadataHandlerProvider.NoHandler e) {
-        columnUniquenessHandler = revise(BuiltInMetadata.ColumnUniqueness.Handler.class);
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
+        columnUniquenessHandler =
+            revise(BuiltInMetadata.ColumnUniqueness.Handler.class);
       }
     }
   }
@@ -600,7 +562,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return collationHandler.collations(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         collationHandler = revise(BuiltInMetadata.Collation.Handler.class);
       }
     }
@@ -624,8 +586,9 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
           return RelDistributions.ANY;
         }
         return distribution;
-      } catch (MetadataHandlerProvider.NoHandler e) {
-        distributionHandler = revise(BuiltInMetadata.Distribution.Handler.class);
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
+        distributionHandler =
+            revise(BuiltInMetadata.Distribution.Handler.class);
       }
     }
   }
@@ -649,8 +612,9 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
         Double result =
             populationSizeHandler.getPopulationSize(rel, this, groupKey);
         return RelMdUtil.validateResult(result);
-      } catch (MetadataHandlerProvider.NoHandler e) {
-        populationSizeHandler = revise(BuiltInMetadata.PopulationSize.Handler.class);
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
+        populationSizeHandler =
+            revise(BuiltInMetadata.PopulationSize.Handler.class);
       }
     }
   }
@@ -667,7 +631,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return sizeHandler.averageRowSize(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         sizeHandler = revise(BuiltInMetadata.Size.Handler.class);
       }
     }
@@ -687,7 +651,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return sizeHandler.averageColumnSizes(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         sizeHandler = revise(BuiltInMetadata.Size.Handler.class);
       }
     }
@@ -716,8 +680,9 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return parallelismHandler.isPhaseTransition(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
-        parallelismHandler = revise(BuiltInMetadata.Parallelism.Handler.class);
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
+        parallelismHandler =
+            revise(BuiltInMetadata.Parallelism.Handler.class);
       }
     }
   }
@@ -734,8 +699,9 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return parallelismHandler.splitCount(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
-        parallelismHandler = revise(BuiltInMetadata.Parallelism.Handler.class);
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
+        parallelismHandler =
+            revise(BuiltInMetadata.Parallelism.Handler.class);
       }
     }
   }
@@ -754,7 +720,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return memoryHandler.memory(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         memoryHandler = revise(BuiltInMetadata.Memory.Handler.class);
       }
     }
@@ -774,7 +740,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return memoryHandler.cumulativeMemoryWithinPhase(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         memoryHandler = revise(BuiltInMetadata.Memory.Handler.class);
       }
     }
@@ -794,7 +760,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return memoryHandler.cumulativeMemoryWithinPhaseSplit(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         memoryHandler = revise(BuiltInMetadata.Memory.Handler.class);
       }
     }
@@ -821,8 +787,9 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
             distinctRowCountHandler.getDistinctRowCount(rel, this, groupKey,
                 predicate);
         return RelMdUtil.validateResult(result);
-      } catch (MetadataHandlerProvider.NoHandler e) {
-        distinctRowCountHandler = revise(BuiltInMetadata.DistinctRowCount.Handler.class);
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
+        distinctRowCountHandler =
+            revise(BuiltInMetadata.DistinctRowCount.Handler.class);
       }
     }
   }
@@ -840,7 +807,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
       try {
         RelOptPredicateList result = predicatesHandler.getPredicates(rel, this);
         return result != null ? result : RelOptPredicateList.EMPTY;
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         predicatesHandler = revise(BuiltInMetadata.Predicates.Handler.class);
       }
     }
@@ -858,7 +825,7 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return allPredicatesHandler.getAllPredicates(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         allPredicatesHandler = revise(BuiltInMetadata.AllPredicates.Handler.class);
       }
     }
@@ -881,8 +848,9 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
         Boolean b = explainVisibilityHandler.isVisibleInExplain(rel, this,
             explainLevel);
         return b == null || b;
-      } catch (MetadataHandlerProvider.NoHandler e) {
-        explainVisibilityHandler = revise(BuiltInMetadata.ExplainVisibility.Handler.class);
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
+        explainVisibilityHandler =
+            revise(BuiltInMetadata.ExplainVisibility.Handler.class);
       }
     }
   }
@@ -901,21 +869,8 @@ public class RelMetadataQuery extends RelMetadataQueryBase {
     for (;;) {
       try {
         return distributionHandler.distribution(rel, this);
-      } catch (MetadataHandlerProvider.NoHandler e) {
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
         distributionHandler = revise(BuiltInMetadata.Distribution.Handler.class);
-      }
-    }
-  }
-
-  /**
-   * Returns the lower bound cost of a RelNode.
-   */
-  public @Nullable RelOptCost getLowerBoundCost(RelNode rel, VolcanoPlanner planner) {
-    for (;;) {
-      try {
-        return lowerBoundCostHandler.getLowerBoundCost(rel, this, planner);
-      } catch (MetadataHandlerProvider.NoHandler e) {
-        lowerBoundCostHandler = revise(BuiltInMetadata.LowerBoundCost.Handler.class);
       }
     }
   }

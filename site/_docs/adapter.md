@@ -33,7 +33,7 @@ presenting the data as tables within a schema.
 * [Elasticsearch adapter](elasticsearch_adapter.html)
   (<a href="{{ site.apiRoot }}/org/apache/calcite/adapter/elasticsearch/package-summary.html">calcite-elasticsearch</a>)
 * [File adapter](file_adapter.html) (<a href="{{ site.apiRoot }}/org/apache/calcite/adapter/file/package-summary.html">calcite-file</a>)
-* [Geode adapter](geode_adapter.html) (<a href="{{ site.apiRoot }}/org/apache/calcite/adapter/geode/rel/package-summary.html">calcite-geode</a>)
+* [Geode adapter](geode_adapter.html) (<a href="{{ site.apiRoot }}/org/apache/calcite/adapter/geode/package-summary.html">calcite-geode</a>)
 * [InnoDB adapter](innodb_adapter.html) (<a href="{{ site.apiRoot }}/org/apache/calcite/adapter/innodb/package-summary.html">calcite-innodb</a>)
 * JDBC adapter (part of <a href="{{ site.apiRoot }}/org/apache/calcite/adapter/jdbc/package-summary.html">calcite-core</a>)
 * MongoDB adapter (<a href="{{ site.apiRoot }}/org/apache/calcite/adapter/mongodb/package-summary.html">calcite-mongodb</a>)
@@ -93,7 +93,7 @@ as implemented by Avatica's
 | <a href="{{ site.apiRoot }}/org/apache/calcite/config/CalciteConnectionProperty.html#FUN">fun</a> | Collection of built-in functions and operators. Valid values are "standard" (the default), "oracle", "spatial", and may be combined using commas, for example "oracle,spatial".
 | <a href="{{ site.apiRoot }}/org/apache/calcite/config/CalciteConnectionProperty.html#LEX">lex</a> | Lexical policy. Values are BIG_QUERY, JAVA, MYSQL, MYSQL_ANSI, ORACLE (default), SQL_SERVER.
 | <a href="{{ site.apiRoot }}/org/apache/calcite/config/CalciteConnectionProperty.html#MATERIALIZATIONS_ENABLED">materializationsEnabled</a> | Whether Calcite should use materializations. Default false.
-| <a href="{{ site.apiRoot }}/org/apache/calcite/config/CalciteConnectionProperty.html#MODEL">model</a> | URI of the JSON/YAML model file or inline like `inline:{...}` for JSON and `inline:...` for YAML.
+| <a href="{{ site.apiRoot }}/org/apache/calcite/config/CalciteConnectionProperty.html#MODEL">model</a> | The JSON/YAML model file path like `src/test/resources/model.yaml`, the classpath JSON/YAML resource path like `classpath:/com/example/calcite/model.yaml` or inline like `inline:{...}` for JSON and `inline:...` for YAML.
 | <a href="{{ site.apiRoot }}/org/apache/calcite/config/CalciteConnectionProperty.html#PARSER_FACTORY">parserFactory</a> | Parser factory. The name of a class that implements [<code>interface SqlParserImplFactory</code>]({{ site.apiRoot }}/org/apache/calcite/sql/parser/SqlParserImplFactory.html) and has a public default constructor or an `INSTANCE` constant.
 | <a href="{{ site.apiRoot }}/org/apache/calcite/config/CalciteConnectionProperty.html#QUOTING">quoting</a> | How identifiers are quoted. Values are DOUBLE_QUOTE, BACK_TICK, BACK_TICK_BACKSLASH, BRACKET. If not specified, value from `lex` is used.
 | <a href="{{ site.apiRoot }}/org/apache/calcite/config/CalciteConnectionProperty.html#QUOTED_CASING">quotedCasing</a> | How identifiers are stored if they are quoted. Values are UNCHANGED, TO_UPPER, TO_LOWER. If not specified, value from `lex` is used.
@@ -109,18 +109,14 @@ as implemented by Avatica's
 To make a connection to a single schema based on a built-in schema type, you don't need to specify
 a model. For example,
 
-{% highlight text %}
-jdbc:calcite:schemaType=JDBC; schema.jdbcUser=SCOTT; schema.jdbcPassword=TIGER; schema.jdbcUrl=jdbc:hsqldb:res:foodmart
-{% endhighlight %}
+  `jdbc:calcite:schemaType=JDBC; schema.jdbcUser=SCOTT; schema.jdbcPassword=TIGER; schema.jdbcUrl=jdbc:hsqldb:res:foodmart`
 
 creates a connection with a schema mapped via the JDBC schema adapter to the foodmart database.
 
 Similarly, you can connect to a single schema based on a user-defined schema adapter.
 For example,
 
-{% highlight text %}
-jdbc:calcite:schemaFactory=org.apache.calcite.adapter.cassandra.CassandraSchemaFactory; schema.host=localhost; schema.keyspace=twissandra
-{% endhighlight %}
+  `jdbc:calcite:schemaFactory=org.apache.calcite.adapter.cassandra.CassandraSchemaFactory; schema.host=localhost; schema.keyspace=twissandra`
 
 makes a connection to the Cassandra adapter, equivalent to writing the following model file:
 

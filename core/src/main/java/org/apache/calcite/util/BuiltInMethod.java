@@ -106,7 +106,6 @@ import org.apache.calcite.schema.ScannableTable;
 import org.apache.calcite.schema.Schema;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.schema.Schemas;
-import org.apache.calcite.schema.Table;
 import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.SqlJsonConstructorNullClause;
 import org.apache.calcite.sql.SqlJsonQueryEmptyOrErrorBehavior;
@@ -121,6 +120,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.Time;
 import java.sql.Timestamp;
@@ -157,8 +157,6 @@ public enum BuiltInMethod {
   REMOVE_ALL(ExtendedEnumerable.class, "removeAll", Collection.class),
   SCHEMA_GET_SUB_SCHEMA(Schema.class, "getSubSchema", String.class),
   SCHEMA_GET_TABLE(Schema.class, "getTable", String.class),
-  SCHEMA_PLUS_ADD_TABLE(SchemaPlus.class, "add", String.class, Table.class),
-  SCHEMA_PLUS_REMOVE_TABLE(SchemaPlus.class, "removeTable", String.class),
   SCHEMA_PLUS_UNWRAP(SchemaPlus.class, "unwrap", Class.class),
   SCHEMAS_ENUMERABLE_SCANNABLE(Schemas.class, "enumerable",
       ScannableTable.class, DataContext.class),
@@ -243,7 +241,7 @@ public enum BuiltInMethod {
   UNION(ExtendedEnumerable.class, "union", Enumerable.class),
   CONCAT(ExtendedEnumerable.class, "concat", Enumerable.class),
   REPEAT_UNION(EnumerableDefaults.class, "repeatUnion", Enumerable.class,
-      Enumerable.class, int.class, boolean.class, EqualityComparer.class, Function0.class),
+      Enumerable.class, int.class, boolean.class, EqualityComparer.class),
   MERGE_UNION(EnumerableDefaults.class, "mergeUnion", List.class, Function1.class,
       Comparator.class, boolean.class, EqualityComparer.class),
   LAZY_COLLECTION_SPOOL(EnumerableDefaults.class, "lazyCollectionSpool", Collection.class,
@@ -453,6 +451,9 @@ public enum BuiltInMethod {
       "getModifiableCollection"),
   SCANNABLE_TABLE_SCAN(ScannableTable.class, "scan", DataContext.class),
   STRING_TO_BOOLEAN(SqlFunctions.class, "toBoolean", String.class),
+  STRING_TO_DECIMAL(SqlFunctions.class, "toBigDecimal", String.class),
+  STRING_TRIM(String.class, "trim"),
+  STRING_VALUEOF(String.class, "valueOf", Object.class),
   INTERNAL_TO_DATE(SqlFunctions.class, "internalToDate", int.class),
   INTERNAL_TO_TIME(SqlFunctions.class, "internalToTime", int.class),
   INTERNAL_TO_TIMESTAMP(SqlFunctions.class, "internalToTimestamp", long.class),
@@ -639,6 +640,9 @@ public enum BuiltInMethod {
       long.class),
   BIG_DECIMAL_ADD(BigDecimal.class, "add", BigDecimal.class),
   BIG_DECIMAL_NEGATE(BigDecimal.class, "negate"),
+  BIG_DECIMAL_SET_SCALE(BigDecimal.class, "setScale", int.class, RoundingMode.class),
+  BIG_DECIMAL_GET_SCALE(BigDecimal.class, "scale"),
+  BIG_DECIMAL_GET_PRECISION(BigDecimal.class, "precision"),
   COMPARE_TO(Comparable.class, "compareTo", Object.class);
 
   @SuppressWarnings("ImmutableEnumChecker")

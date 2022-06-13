@@ -92,6 +92,7 @@ import java.util.List;
 import java.util.Objects;
 
 import static org.apache.calcite.sql.type.NonNullableAccessors.getComponentTypeOrThrow;
+import static org.apache.calcite.util.Static.RESOURCE;
 
 import static java.util.Objects.requireNonNull;
 
@@ -117,7 +118,6 @@ public class StandardConvertletTable extends ReflectiveConvertletTable {
         SqlStdOperatorTable.IS_NULL);
     addAlias(SqlStdOperatorTable.IS_NOT_UNKNOWN,
         SqlStdOperatorTable.IS_NOT_NULL);
-    addAlias(SqlLibraryOperators.NULL_SAFE_EQUAL, SqlStdOperatorTable.IS_NOT_DISTINCT_FROM);
     addAlias(SqlStdOperatorTable.PERCENT_REMAINDER, SqlStdOperatorTable.MOD);
 
     // Register convertlets for specific objects.
@@ -595,6 +595,18 @@ public class StandardConvertletTable extends ReflectiveConvertletTable {
     if (type == null) {
       type = cx.getValidator().getValidatedNodeType(dataType.getTypeName());
     }
+
+    if (type.getSqlTypeName() == SqlTypeName.DECIMAL) {
+      int prescision = type.getPrecision();
+      int scale = type.getScale();
+      if (prescision <= 0 || prescision > 1000) {
+        throw RESOURCE.invalidPrescisionForDecimalType(prescision).ex();
+      }
+      if (scale > prescision) {
+        throw RESOURCE.invalidScaleForDecimalType(scale, prescision).ex();
+      }
+    }
+
     RexNode arg = cx.convertExpression(left);
     if (arg.getType().isNullable()) {
       type = typeFactory.createTypeWithNullability(type, true);
@@ -1144,7 +1156,7 @@ public class StandardConvertletTable extends ReflectiveConvertletTable {
       SqlSubstringFunction op,
       SqlCall call) {
     final SqlLibrary library =
-        cx.getValidator().config().conformance().semantics();
+        cx.getValidator().config().sqlConformance().semantics();
     final SqlBasicCall basicCall = (SqlBasicCall) call;
     switch (library) {
     case BIG_QUERY:

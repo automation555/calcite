@@ -268,7 +268,9 @@ val javaccGeneratedPatterns = arrayOf(
     "**/parser/**/Token.*",
     "**/parser/**/TokenMgrError.*",
     "**/org/apache/calcite/runtime/Resources.java",
-    "**/parser/**/*ParserTokenManager.*"
+    "**/parser/**/*ParserTokenManager.*",
+    "generated_tests/org/apache/calcite/**/*",
+    "generated/org/apache/calcite/**/*"
 )
 
 fun PatternFilterable.excludeJavaCcGenerated() {
@@ -437,8 +439,8 @@ allprojects {
                 docEncoding = "UTF-8"
                 charSet = "UTF-8"
                 encoding = "UTF-8"
-                docTitle = "Apache Calcite API"
-                windowTitle = "Apache Calcite API"
+                docTitle = "Apache Calcite ${project.name} API"
+                windowTitle = "Apache Calcite ${project.name} API"
                 header = "<b>Apache Calcite</b>"
                 bottom =
                     "Copyright &copy; 2012-$lastEditYear Apache Software Foundation. All Rights Reserved."

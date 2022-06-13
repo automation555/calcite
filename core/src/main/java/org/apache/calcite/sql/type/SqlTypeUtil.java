@@ -295,34 +295,6 @@ public abstract class SqlTypeUtil {
   }
 
   /**
-   * Creates a RelDataType having the same type of the sourceRelDataType,
-   * and the same nullability as the targetRelDataType.
-   */
-  public static RelDataType keepSourceTypeAndTargetNullability(RelDataType sourceRelDataType,
-                                             RelDataType targetRelDataType,
-                                             RelDataTypeFactory typeFactory) {
-    if (!targetRelDataType.isStruct()) {
-      return typeFactory.createTypeWithNullability(
-              sourceRelDataType, targetRelDataType.isNullable());
-    }
-    List<RelDataTypeField> targetFields = targetRelDataType.getFieldList();
-    List<RelDataTypeField> sourceFields = sourceRelDataType.getFieldList();
-    ImmutableList.Builder<RelDataTypeField> newTargetField = ImmutableList.builder();
-    for (int i = 0; i < targetRelDataType.getFieldCount(); i++) {
-      RelDataTypeField targetField = targetFields.get(i);
-      RelDataTypeField sourceField = sourceFields.get(i);
-      newTargetField.add(
-          new RelDataTypeFieldImpl(
-              sourceField.getName(),
-              sourceField.getIndex(),
-                  keepSourceTypeAndTargetNullability(
-                          sourceField.getType(), targetField.getType(), typeFactory)));
-    }
-    RelDataType relDataType = typeFactory.createStructType(newTargetField.build());
-    return typeFactory.createTypeWithNullability(relDataType, targetRelDataType.isNullable());
-  }
-
-  /**
    * Returns typeName.equals(type.getSqlTypeName()). If
    * typeName.equals(SqlTypeName.Any) true is always returned.
    */
@@ -852,9 +824,6 @@ public abstract class SqlTypeUtil {
 
     final SqlTypeName fromTypeName = fromType.getSqlTypeName();
     final SqlTypeName toTypeName = toType.getSqlTypeName();
-    if (toTypeName == SqlTypeName.UNKNOWN) {
-      return true;
-    }
     if (toType.isStruct() || fromType.isStruct()) {
       if (toTypeName == SqlTypeName.DISTINCT) {
         if (fromTypeName == SqlTypeName.DISTINCT) {
@@ -1064,7 +1033,7 @@ public abstract class SqlTypeUtil {
     assert typeName != null;
 
     final SqlTypeNameSpec typeNameSpec;
-    if (isAtomic(type) || isNull(type) || type.getSqlTypeName() == SqlTypeName.UNKNOWN) {
+    if (isAtomic(type) || isNull(type)) {
       int precision = typeName.allowsPrec() ? type.getPrecision() : -1;
       // fix up the precision.
       if (maxPrecision > 0 && precision > maxPrecision) {
@@ -1145,17 +1114,6 @@ public abstract class SqlTypeUtil {
       boolean nullable) {
     RelDataType ret = typeFactory.createMapType(keyType, valueType);
     return typeFactory.createTypeWithNullability(ret, nullable);
-  }
-
-  /** Creates a MAP type from a record type. The record type must have exactly
-   * two fields. */
-  public static RelDataType createMapTypeFromRecord(
-      RelDataTypeFactory typeFactory, RelDataType type) {
-    Preconditions.checkArgument(type.getFieldCount() == 2,
-        "MAP requires exactly two fields, got %s; row type %s",
-        type.getFieldCount(), type);
-    return createMapType(typeFactory, type.getFieldList().get(0).getType(),
-        type.getFieldList().get(1).getType(), false);
   }
 
   /**
@@ -1786,7 +1744,7 @@ public abstract class SqlTypeUtil {
     case DECIMAL:
       final int intDigits = value.precision() - value.scale();
       final int maxIntDigits = toType.getPrecision() - toType.getScale();
-      return intDigits <= maxIntDigits;
+      return intDigits <= maxIntDigits && value.scale() == toType.getScale();
     default:
       return true;
     }

@@ -45,6 +45,7 @@ import org.apache.calcite.util.mapping.MappingType;
 import org.apache.calcite.util.mapping.Mappings;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 
 import org.apiguardian.api.API;
 import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
@@ -53,6 +54,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 import static java.util.Objects.requireNonNull;
@@ -70,6 +72,14 @@ public abstract class Project extends SingleRel implements Hintable {
 
   protected final ImmutableList<RelHint> hints;
 
+  /**
+   * Correlation variables set by this relational expression to be used by
+   * nested expressions. It's expected to be used in the following way:
+   * first read the row from input, set it to the appropriate correlation
+   * variables in the context, then execute the Rex expressions.
+   */
+  protected final ImmutableSet<CorrelationId> variablesSet;
+
   //~ Constructors -----------------------------------------------------------
 
   /**
@@ -81,6 +91,8 @@ public abstract class Project extends SingleRel implements Hintable {
    * @param input    Input relational expression
    * @param projects List of expressions for the input columns
    * @param rowType  Output row type
+   * @param variablesSet Correlation variables set by this relational expression
+   *                    to be used by nested expressions
    */
   @SuppressWarnings("method.invocation.invalid")
   protected Project(
@@ -89,25 +101,34 @@ public abstract class Project extends SingleRel implements Hintable {
       List<RelHint> hints,
       RelNode input,
       List<? extends RexNode> projects,
-      RelDataType rowType) {
+      RelDataType rowType,
+      Set<CorrelationId> variablesSet) {
     super(cluster, traits, input);
     assert rowType != null;
     this.exps = ImmutableList.copyOf(projects);
     this.hints = ImmutableList.copyOf(hints);
     this.rowType = rowType;
+    this.variablesSet = ImmutableSet.copyOf(
+        Objects.requireNonNull(variablesSet, "variablesSet"));
     assert isValid(Litmus.THROW, null);
+  }
+
+  @Deprecated // to be removed before 2.0
+  protected Project(RelOptCluster cluster, RelTraitSet traits, List<RelHint> hints,
+      RelNode input, List<? extends RexNode> projects, RelDataType rowType) {
+    this(cluster, traits, hints, input, projects, rowType, ImmutableSet.of());
   }
 
   @Deprecated // to be removed before 2.0
   protected Project(RelOptCluster cluster, RelTraitSet traits,
       RelNode input, List<? extends RexNode> projects, RelDataType rowType) {
-    this(cluster, traits, ImmutableList.of(), input, projects, rowType);
+    this(cluster, traits, ImmutableList.of(), input, projects, rowType, ImmutableSet.of());
   }
 
   @Deprecated // to be removed before 2.0
   protected Project(RelOptCluster cluster, RelTraitSet traitSet, RelNode input,
       List<? extends RexNode> projects, RelDataType rowType, int flags) {
-    this(cluster, traitSet, ImmutableList.of(), input, projects, rowType);
+    this(cluster, traitSet, ImmutableList.of(), input, projects, rowType, ImmutableSet.of());
     Util.discard(flags);
   }
 
@@ -120,14 +141,21 @@ public abstract class Project extends SingleRel implements Hintable {
         ImmutableList.of(),
         input.getInput(),
         requireNonNull(input.getExpressionList("exprs"), "exprs"),
-        input.getRowType("exprs", "fields"));
+        input.getRowType("exprs", "fields"),
+        ImmutableSet.copyOf(
+            Util.transform(
+                Optional.ofNullable(input.getIntegerList("correlation"))
+                    .orElse(ImmutableList.of()),
+                id -> new CorrelationId(id)
+            )
+        ));
   }
 
   //~ Methods ----------------------------------------------------------------
 
   @Override public final RelNode copy(RelTraitSet traitSet,
       List<RelNode> inputs) {
-    return copy(traitSet, sole(inputs), exps, getRowType());
+    return copy(traitSet, sole(inputs), exps, getRowType(), variablesSet);
   }
 
   /**
@@ -137,6 +165,7 @@ public abstract class Project extends SingleRel implements Hintable {
    * @param input Input
    * @param projects Project expressions
    * @param rowType Output row type
+   * @param variablesSet Correlation variables
    * @return New {@code Project} if any parameter differs from the value of this
    *   {@code Project}, or just {@code this} if all the parameters are
    *   the same
@@ -144,7 +173,13 @@ public abstract class Project extends SingleRel implements Hintable {
    * @see #copy(RelTraitSet, List)
    */
   public abstract Project copy(RelTraitSet traitSet, RelNode input,
-      List<RexNode> projects, RelDataType rowType);
+      List<RexNode> projects, RelDataType rowType, Set<CorrelationId> variablesSet);
+
+  @Deprecated // to be removed before 2.0
+  public Project copy(RelTraitSet traitSet, RelNode input,
+      List<RexNode> projects, RelDataType rowType) {
+    return copy(traitSet, input, projects, rowType, ImmutableSet.of());
+  }
 
   @Deprecated // to be removed before 2.0
   public Project copy(RelTraitSet traitSet, RelNode input,
@@ -169,7 +204,7 @@ public abstract class Project extends SingleRel implements Hintable {
             exps,
             getRowType().getFieldNames(),
             null);
-    return copy(traitSet, getInput(), exps, rowType);
+    return copy(traitSet, getInput(), exps, rowType, variablesSet);
   }
 
   /**
@@ -265,7 +300,9 @@ public abstract class Project extends SingleRel implements Hintable {
   }
 
   @Override public RelWriter explainTerms(RelWriter pw) {
-    super.explainTerms(pw);
+    super.explainTerms(pw)
+      .itemIf("correlation", variablesSet, !variablesSet.isEmpty());
+
     // Skip writing field names so the optimizer can reuse the projects that differ in
     // field names only
     if (pw.getDetailLevel() == SqlExplainLevel.DIGEST_ATTRIBUTES) {
@@ -297,6 +334,10 @@ public abstract class Project extends SingleRel implements Hintable {
     return pw;
   }
 
+  @Override public Set<CorrelationId> getVariablesSet() {
+    return variablesSet;
+  }
+
   @API(since = "1.24", status = API.Status.INTERNAL)
   @EnsuresNonNullIf(expression = "#1", result = true)
   protected boolean deepEquals0(@Nullable Object obj) {
@@ -311,12 +352,13 @@ public abstract class Project extends SingleRel implements Hintable {
         && input.deepEquals(o.input)
         && exps.equals(o.exps)
         && hints.equals(o.hints)
-        && getRowType().equalsSansFieldNames(o.getRowType());
+        && getRowType().equalsSansFieldNames(o.getRowType())
+        && variablesSet.equals(o.variablesSet);
   }
 
   @API(since = "1.24", status = API.Status.INTERNAL)
   protected int deepHashCode0() {
-    return Objects.hash(traitSet, input.deepHashCode(), exps, hints);
+    return Objects.hash(traitSet, input.deepHashCode(), exps, hints, variablesSet);
   }
 
   /**

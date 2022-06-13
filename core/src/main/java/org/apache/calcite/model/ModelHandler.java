@@ -55,6 +55,7 @@ import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URL;
 import java.sql.SQLException;
 import java.util.ArrayDeque;
 import java.util.Collections;
@@ -101,7 +102,16 @@ public class ModelHandler {
       root = mapper.readValue(inline, JsonRoot.class);
     } else {
       mapper = uri.endsWith(".yaml") || uri.endsWith(".yml") ? YAML_MAPPER : JSON_MAPPER;
-      root = mapper.readValue(new File(uri), JsonRoot.class);
+      if (uri.startsWith("classpath:")) {
+        final URL resourceURL =
+            ModelHandler.class.getResource(uri.substring("classpath:".length()).trim());
+        if (resourceURL == null) {
+          throw new IOException("Classpath resource not found by '" + uri + "'");
+        }
+        root = mapper.readValue(resourceURL, JsonRoot.class);
+      } else {
+        root = mapper.readValue(new File(uri), JsonRoot.class);
+      }
     }
     visit(root);
   }
