@@ -29,6 +29,7 @@ import org.apache.calcite.linq4j.Queryable;
 import org.apache.calcite.linq4j.function.Deterministic;
 import org.apache.calcite.linq4j.function.Parameter;
 import org.apache.calcite.linq4j.function.SemiStrict;
+import org.apache.calcite.linq4j.function.Strict;
 import org.apache.calcite.linq4j.tree.Types;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
@@ -60,11 +61,10 @@ import java.util.AbstractList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.Assert.assertThat;
 
 /**
  * Holder for various classes and functions used in tests as user-defined
@@ -75,8 +75,6 @@ public class Smalls {
       Types.lookupMethod(Smalls.class, "generateStrings", Integer.class);
   public static final Method GENERATE_STRINGS_OF_INPUT_SIZE_METHOD =
       Types.lookupMethod(Smalls.class, "generateStringsOfInputSize", List.class);
-  public static final Method GENERATE_STRINGS_OF_INPUT_MAP_SIZE_METHOD =
-      Types.lookupMethod(Smalls.class, "generateStringsOfInputMapSize", Map.class);
   public static final Method MAZE_METHOD =
       Types.lookupMethod(MazeTable.class, "generate", int.class, int.class,
           int.class);
@@ -105,6 +103,9 @@ public class Smalls {
   public static final Method PROCESS_CURSORS_METHOD =
       Types.lookupMethod(Smalls.class, "processCursors",
           int.class, Enumerable.class, Enumerable.class);
+  public static final Method NULL_PRODUCED_METHOD =
+      Types.lookupMethod(NullContentTable.class, "generate",
+          Integer.class, Integer.class);
 
   private Smalls() {}
 
@@ -189,9 +190,6 @@ public class Smalls {
 
   public static QueryableTable generateStringsOfInputSize(final List<Integer> list) {
     return generateStrings(list.size());
-  }
-  public static QueryableTable generateStringsOfInputMapSize(final Map<Integer, Integer> map) {
-    return generateStrings(map.size());
   }
 
   /** A function that generates multiplication table of {@code ncol} columns x
@@ -641,9 +639,6 @@ public class Smalls {
       return time == null ? 0 : SqlFunctions.toLong(time);
     }
 
-    public static Timestamp timestampFunReturnsTimestamp(Timestamp timestamp) {
-      return timestamp;
-    }
   }
 
   /** Example of a user-defined aggregate function (UDAF). */
@@ -912,6 +907,41 @@ public class Smalls {
     }
   }
 
+  /** This is table that may produce null content. */
+  public static class NullContentTable extends AbstractTable
+      implements ScannableTable {
+
+    private final Integer x;
+    private final Integer y;
+
+    private NullContentTable(Integer x, Integer y) {
+      this.x = x;
+      this.y = y;
+    }
+
+    @Strict public static ScannableTable generate(Integer x, Integer y) {
+      return new NullContentTable(x, y);
+    }
+
+    public RelDataType getRowType(RelDataTypeFactory typeFactory) {
+      RelDataType recordType = typeFactory.builder()
+          .add("S", SqlTypeName.VARCHAR, 12)
+          .nullable(true)
+          .build();
+      return typeFactory.createTypeWithNullability(recordType, true);
+    }
+
+    public Enumerable<Object[]> scan(DataContext root) {
+      String content = null;
+      if (x.intValue() != y.intValue()) {
+        content = String.format(
+            Locale.ROOT, "generate(x=%d, y=%d)", x, y);
+      }
+      Object[][] rows = {{"abcde"}, {"xyz"}, {content}};
+      return Linq4j.asEnumerable(rows);
+    }
+  }
+
   /** Schema containing a {@code prod} table with a lot of columns. */
   public static class WideSaleSchema {
     @Override public String toString() {
@@ -1135,3 +1165,5 @@ public class Smalls {
     }
   }
 }
+
+// End Smalls.java

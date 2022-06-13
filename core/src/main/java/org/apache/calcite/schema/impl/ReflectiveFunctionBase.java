@@ -16,16 +16,16 @@
  */
 package org.apache.calcite.schema.impl;
 
+import org.apache.calcite.adapter.enumerable.NullPolicy;
+import org.apache.calcite.linq4j.function.SemiStrict;
+import org.apache.calcite.linq4j.function.Strict;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.schema.Function;
-import org.apache.calcite.schema.FunctionContext;
 import org.apache.calcite.schema.FunctionParameter;
 import org.apache.calcite.util.ReflectUtil;
 
 import com.google.common.collect.ImmutableList;
-
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
@@ -45,11 +45,10 @@ public abstract class ReflectiveFunctionBase implements Function {
   public final List<FunctionParameter> parameters;
 
   /**
-   * Creates a ReflectiveFunctionBase.
-   *
-   * @param method Method that is used to get type information from
+   * {@code ReflectiveFunctionBase} constructor
+   * @param method method that is used to get type information from
    */
-  protected ReflectiveFunctionBase(Method method) {
+  public ReflectiveFunctionBase(Method method) {
     this.method = method;
     this.parameters = builder().addMethodParameters(method).build();
   }
@@ -59,38 +58,18 @@ public abstract class ReflectiveFunctionBase implements Function {
    *
    * @return Parameters; never null
    */
-  @Override public List<FunctionParameter> getParameters() {
+  public List<FunctionParameter> getParameters() {
     return parameters;
   }
 
   /**
-   * Returns whether a class has a public constructor with zero arguments.
-   *
-   * @param clazz Class to verify
-   * @return whether class has a public constructor with zero arguments
+   * Verifies if given class has public constructor with zero arguments.
+   * @param clazz class to verify
+   * @return true if given class has public constructor with zero arguments
    */
   static boolean classHasPublicZeroArgsConstructor(Class<?> clazz) {
     for (Constructor<?> constructor : clazz.getConstructors()) {
       if (constructor.getParameterTypes().length == 0
-          && Modifier.isPublic(constructor.getModifiers())) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
-   * Returns whether a class has a public constructor with one argument
-   * of type {@link FunctionContext}.
-   *
-   * @param clazz Class to verify
-   * @return whether class has a public constructor with one FunctionContext
-   * argument
-   */
-  static boolean classHasPublicFunctionContextConstructor(Class<?> clazz) {
-    for (Constructor<?> constructor : clazz.getConstructors()) {
-      if (constructor.getParameterTypes().length == 1
-          && constructor.getParameterTypes()[0] == FunctionContext.class
           && Modifier.isPublic(constructor.getModifiers())) {
         return true;
       }
@@ -104,13 +83,27 @@ public abstract class ReflectiveFunctionBase implements Function {
    * @param name name of the method to find
    * @return the first method with matching name or null when no method found
    */
-  static @Nullable Method findMethod(Class<?> clazz, String name) {
+  static Method findMethod(Class<?> clazz, String name) {
     for (Method method : clazz.getMethods()) {
       if (method.getName().equals(name) && !method.isBridge()) {
         return method;
       }
     }
     return null;
+  }
+
+  static NullPolicy getNullPolicy(Method m) {
+    if (m.getAnnotation(Strict.class) != null) {
+      return NullPolicy.STRICT;
+    } else if (m.getAnnotation(SemiStrict.class) != null) {
+      return NullPolicy.SEMI_STRICT;
+    } else if (m.getDeclaringClass().getAnnotation(Strict.class) != null) {
+      return NullPolicy.STRICT;
+    } else if (m.getDeclaringClass().getAnnotation(SemiStrict.class) != null) {
+      return NullPolicy.SEMI_STRICT;
+    } else {
+      return NullPolicy.NONE;
+    }
   }
 
   /** Creates a ParameterListBuilder. */
@@ -136,24 +129,19 @@ public abstract class ReflectiveFunctionBase implements Function {
       final int ordinal = builder.size();
       builder.add(
           new FunctionParameter() {
-            @Override public String toString() {
-              return ordinal + ": " + name + " " + type.getSimpleName()
-                  + (optional ? "?" : "");
-            }
-
-            @Override public int getOrdinal() {
+            public int getOrdinal() {
               return ordinal;
             }
 
-            @Override public String getName() {
+            public String getName() {
               return name;
             }
 
-            @Override public RelDataType getType(RelDataTypeFactory typeFactory) {
+            public RelDataType getType(RelDataTypeFactory typeFactory) {
               return typeFactory.createJavaType(type);
             }
 
-            @Override public boolean isOptional() {
+            public boolean isOptional() {
               return optional;
             }
           });
@@ -170,3 +158,5 @@ public abstract class ReflectiveFunctionBase implements Function {
     }
   }
 }
+
+// End ReflectiveFunctionBase.java

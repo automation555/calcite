@@ -16,8 +16,8 @@
  */
 package org.apache.calcite.schema.impl;
 
+import org.apache.calcite.DataContext;
 import org.apache.calcite.adapter.enumerable.CallImplementor;
-import org.apache.calcite.adapter.enumerable.NullPolicy;
 import org.apache.calcite.adapter.enumerable.ReflectiveCallNotNullImplementor;
 import org.apache.calcite.adapter.enumerable.RexImpTable;
 import org.apache.calcite.adapter.enumerable.RexToLixTranslator;
@@ -34,8 +34,6 @@ import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.TableFunction;
 import org.apache.calcite.util.BuiltInMethod;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -46,14 +44,12 @@ import java.util.List;
 
 import static org.apache.calcite.util.Static.RESOURCE;
 
-import static java.util.Objects.requireNonNull;
-
 /**
  * Implementation of {@link org.apache.calcite.schema.TableFunction} based on a
  * method.
 */
-public class TableFunctionImpl extends ReflectiveFunctionBase
-    implements TableFunction, ImplementableFunction {
+public class TableFunctionImpl extends ReflectiveFunctionBase implements
+    TableFunction, ImplementableFunction {
   private final CallImplementor implementor;
 
   /** Private constructor; use {@link #create}. */
@@ -64,13 +60,13 @@ public class TableFunctionImpl extends ReflectiveFunctionBase
 
   /** Creates a {@link TableFunctionImpl} from a class, looking for an "eval"
    * method. Returns null if there is no such method. */
-  public static @Nullable TableFunction create(Class<?> clazz) {
+  public static TableFunction create(Class<?> clazz) {
     return create(clazz, "eval");
   }
 
   /** Creates a {@link TableFunctionImpl} from a class, looking for a method
    * with a given name. Returns null if there is no such method. */
-  public static @Nullable TableFunction create(Class<?> clazz, String methodName) {
+  public static TableFunction create(Class<?> clazz, String methodName) {
     final Method method = findMethod(clazz, methodName);
     if (method == null) {
       return null;
@@ -79,7 +75,7 @@ public class TableFunctionImpl extends ReflectiveFunctionBase
   }
 
   /** Creates a {@link TableFunctionImpl} from a method. */
-  public static @Nullable TableFunction create(final Method method) {
+  public static TableFunction create(final Method method) {
     if (!Modifier.isStatic(method.getModifiers())) {
       Class clazz = method.getDeclaringClass();
       if (!classHasPublicZeroArgsConstructor(clazz)) {
@@ -95,12 +91,12 @@ public class TableFunctionImpl extends ReflectiveFunctionBase
     return new TableFunctionImpl(method, implementor);
   }
 
-  @Override public RelDataType getRowType(RelDataTypeFactory typeFactory,
-      List<? extends @Nullable Object> arguments) {
+  public RelDataType getRowType(RelDataTypeFactory typeFactory,
+      List<Object> arguments) {
     return apply(arguments).getRowType(typeFactory);
   }
 
-  @Override public Type getElementType(List<? extends @Nullable Object> arguments) {
+  public Type getElementType(List<Object> arguments) {
     final Table table = apply(arguments);
     if (table instanceof QueryableTable) {
       QueryableTable queryableTable = (QueryableTable) table;
@@ -112,14 +108,14 @@ public class TableFunctionImpl extends ReflectiveFunctionBase
         + table.getClass());
   }
 
-  @Override public CallImplementor getImplementor() {
+  public CallImplementor getImplementor() {
     return implementor;
   }
 
   private static CallImplementor createImplementor(final Method method) {
     return RexImpTable.createImplementor(
         new ReflectiveCallNotNullImplementor(method) {
-          @Override public Expression implement(RexToLixTranslator translator,
+          public Expression implement(RexToLixTranslator translator,
               RexCall call, List<Expression> translatedOperands) {
             Expression expr = super.implement(translator, call,
                 translatedOperands);
@@ -128,7 +124,7 @@ public class TableFunctionImpl extends ReflectiveFunctionBase
               Expression queryable = Expressions.call(
                   Expressions.convert_(expr, QueryableTable.class),
                   BuiltInMethod.QUERYABLE_TABLE_AS_QUERYABLE.method,
-                  Expressions.call(translator.getRoot(),
+                  Expressions.call(DataContext.ROOT,
                       BuiltInMethod.DATA_CONTEXT_GET_QUERY_PROVIDER.method),
                   Expressions.constant(null, SchemaPlus.class),
                   Expressions.constant(call.getOperator().getName(), String.class));
@@ -136,15 +132,14 @@ public class TableFunctionImpl extends ReflectiveFunctionBase
                   BuiltInMethod.QUERYABLE_AS_ENUMERABLE.method);
             } else {
               expr = Expressions.call(expr,
-                  BuiltInMethod.SCANNABLE_TABLE_SCAN.method,
-                  translator.getRoot());
+                  BuiltInMethod.SCANNABLE_TABLE_SCAN.method, DataContext.ROOT);
             }
             return expr;
           }
-        }, NullPolicy.NONE, false);
+        }, getNullPolicy(method), false);
   }
 
-  private Table apply(List<? extends @Nullable Object> arguments) {
+  private Table apply(List<Object> arguments) {
     try {
       Object o = null;
       if (!Modifier.isStatic(method.getModifiers())) {
@@ -152,9 +147,9 @@ public class TableFunctionImpl extends ReflectiveFunctionBase
             method.getDeclaringClass().getConstructor();
         o = constructor.newInstance();
       }
+      //noinspection unchecked
       final Object table = method.invoke(o, arguments.toArray());
-      return (Table) requireNonNull(table,
-          () -> "got null from " + method + " with arguments " + arguments);
+      return (Table) table;
     } catch (IllegalArgumentException e) {
       throw RESOURCE.illegalArgumentForTableFunctionCall(
           method.toString(),
@@ -166,3 +161,5 @@ public class TableFunctionImpl extends ReflectiveFunctionBase
     }
   }
 }
+
+// End TableFunctionImpl.java
