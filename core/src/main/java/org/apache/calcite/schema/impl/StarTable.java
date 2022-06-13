@@ -36,14 +36,9 @@ import org.apache.calcite.util.Pair;
 
 import com.google.common.collect.ImmutableList;
 
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-
-import static org.apache.calcite.linq4j.Nullness.castNonNull;
 
 /**
  * Virtual table that is composed of two or more tables joined together.
@@ -64,11 +59,11 @@ public class StarTable extends AbstractTable implements TranslatableTable {
   public final ImmutableList<Table> tables;
 
   /** Number of fields in each table's row type. */
-  public @MonotonicNonNull ImmutableIntList fieldCounts;
+  public ImmutableIntList fieldCounts;
 
   /** Creates a StarTable. */
   private StarTable(Lattice lattice, ImmutableList<Table> tables) {
-    this.lattice = Objects.requireNonNull(lattice, "lattice");
+    this.lattice = Objects.requireNonNull(lattice);
     this.tables = tables;
   }
 
@@ -81,7 +76,7 @@ public class StarTable extends AbstractTable implements TranslatableTable {
     return Schema.TableType.STAR;
   }
 
-  @Override public RelDataType getRowType(RelDataTypeFactory typeFactory) {
+  public RelDataType getRowType(RelDataTypeFactory typeFactory) {
     final List<RelDataType> typeList = new ArrayList<>();
     final List<Integer> fieldCounts = new ArrayList<>();
     for (Table table : tables) {
@@ -97,7 +92,7 @@ public class StarTable extends AbstractTable implements TranslatableTable {
     return typeFactory.createStructType(typeList, lattice.uniqueColumnNames());
   }
 
-  @Override public RelNode toRel(RelOptTable.ToRelContext context, RelOptTable table) {
+  public RelNode toRel(RelOptTable.ToRelContext context, RelOptTable table) {
     // Create a table scan of infinite cost.
     return new StarTableScan(context.getCluster(), table);
   }
@@ -116,8 +111,8 @@ public class StarTable extends AbstractTable implements TranslatableTable {
    */
   public int columnOffset(Table table) {
     int n = 0;
-    for (Pair<Table, Integer> pair : Pair.zip(tables, castNonNull(fieldCounts))) {
-      if (pair.left == table) {
+    for (Pair<Table, Integer> pair : Pair.zip(tables, fieldCounts)) {
+      if (pair.left.equals(table)) {
         return n;
       }
       n += pair.right;
@@ -132,12 +127,14 @@ public class StarTable extends AbstractTable implements TranslatableTable {
    */
   public static class StarTableScan extends TableScan {
     public StarTableScan(RelOptCluster cluster, RelOptTable relOptTable) {
-      super(cluster, cluster.traitSetOf(Convention.NONE), ImmutableList.of(), relOptTable);
+      super(cluster, cluster.traitSetOf(Convention.NONE), relOptTable);
     }
 
-    @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
+    @Override public RelOptCost computeSelfCost(RelOptPlanner planner,
         RelMetadataQuery mq) {
       return planner.getCostFactory().makeInfiniteCost();
     }
   }
 }
+
+// End StarTable.java
