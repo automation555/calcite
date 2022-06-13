@@ -40,8 +40,6 @@ import org.apache.calcite.sql.type.SqlTypeName;
 
 import com.google.common.collect.ImmutableList;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.util.List;
 
 /**
@@ -54,10 +52,31 @@ public class OracleSqlDialect extends SqlDialect {
         @Override public int getMaxPrecision(SqlTypeName typeName) {
           switch (typeName) {
           case VARCHAR:
-            // Maximum size of 4000 bytes for varchar2.
+            // The standard maximum size of 4000 bytes for varchar2.
+            // Since Oracle Database 12c, you can uses the MAX_STRING_SIZE parameter for controlling
+            // the maximum size. If you specify the maximum size of 32767 for the
+            // VARCHAR2 data type. you can create a new oracle type system to override the
+            // maximum size.
             return 4000;
+          case CHAR:
+            return 2000;
           default:
             return super.getMaxPrecision(typeName);
+          }
+        }
+        @Override public int getDefaultPrecision(SqlTypeName typeName) {
+          switch (typeName) {
+          case VARCHAR:
+            // The standard maximum size of 4000 bytes for varchar2.
+            // Since Oracle Database 12c, you can uses the MAX_STRING_SIZE parameter for controlling
+            // the maximum size. If you specify the maximum size of 32767 for the
+            // VARCHAR2 data type. you can create a new oracle type system to override the
+            // maximum size.
+            // Because Oracle does not allow VARCHAR with unspecified precision, set the maximum
+            // precision as the default precision of VARCHAR.
+            return 4000;
+          default:
+            return super.getDefaultPrecision(typeName);
           }
         }
       };
@@ -74,10 +93,6 @@ public class OracleSqlDialect extends SqlDialect {
     super(context);
   }
 
-  @Override public boolean supportsApproxCountDistinct() {
-    return true;
-  }
-
   @Override public boolean supportsCharSet() {
     return false;
   }
@@ -91,7 +106,20 @@ public class OracleSqlDialect extends SqlDialect {
     }
   }
 
-  @Override public @Nullable SqlNode getCastSpec(RelDataType type) {
+  /**
+   * Oracle does not allow the type VARCHAR with unspecified precision. When use cast(node as
+   * varchar), we should specify the precision of VARCHAR. For example, cast(node as varchar(256)).
+   */
+  @Override public boolean allowsTypeWithUnspecifiedPrecision(RelDataType type) {
+    switch (type.getSqlTypeName()) {
+    case VARCHAR:
+      return false;
+    default:
+      return true;
+    }
+  }
+
+  @Override public SqlNode getCastSpec(RelDataType type) {
     String castSpec;
     switch (type.getSqlTypeName()) {
     case SMALLINT:
@@ -146,8 +174,7 @@ public class OracleSqlDialect extends SqlDialect {
   @Override public void unparseCall(SqlWriter writer, SqlCall call,
       int leftPrec, int rightPrec) {
     if (call.getOperator() == SqlStdOperatorTable.SUBSTRING) {
-      SqlUtil.unparseFunctionSyntax(SqlLibraryOperators.SUBSTR_ORACLE, writer,
-          call, false);
+      SqlUtil.unparseFunctionSyntax(SqlLibraryOperators.SUBSTR, writer, call);
     } else {
       switch (call.getKind()) {
       case FLOOR:
