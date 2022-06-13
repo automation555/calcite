@@ -47,14 +47,10 @@ import org.apache.calcite.util.Pair;
 
 import com.google.common.collect.Iterables;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.apache.calcite.util.Static.RESOURCE;
-
-import static java.util.Objects.requireNonNull;
 
 /**
  * An operator describing a <code>CASE</code>, <code>NULLIF</code> or <code>
@@ -225,7 +221,7 @@ public class SqlCaseOperator extends SqlOperator {
     return inferTypeFromValidator((SqlCallBinding) opBinding);
   }
 
-  private static RelDataType inferTypeFromValidator(
+  private RelDataType inferTypeFromValidator(
       SqlCallBinding callBinding) {
     SqlCase caseCall = (SqlCase) callBinding.getCall();
     SqlNodeList thenList = caseCall.getThenOperands();
@@ -252,8 +248,7 @@ public class SqlCaseOperator extends SqlOperator {
       }
     }
 
-    SqlNode elseOp = requireNonNull(caseCall.getElseOperand(),
-        () -> "elseOperand for " + caseCall);
+    SqlNode elseOp = caseCall.getElseOperand();
     argTypes.add(
         SqlTypeUtil.deriveType(callBinding, elseOp));
     if (SqlUtil.isNullLiteral(elseOp, false)) {
@@ -283,14 +278,13 @@ public class SqlCaseOperator extends SqlOperator {
     }
     final SqlValidatorImpl validator =
         (SqlValidatorImpl) callBinding.getValidator();
-    requireNonNull(ret, () -> "return type for " + callBinding);
     for (SqlNode node : nullList) {
       validator.setValidatedNodeType(node, ret);
     }
     return ret;
   }
 
-  private static RelDataType inferTypeFromOperands(SqlOperatorBinding opBinding) {
+  private RelDataType inferTypeFromOperands(SqlOperatorBinding opBinding) {
     final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
     final List<RelDataType> argTypes = opBinding.collectOperandTypes();
     assert (argTypes.size() % 2) == 1 : "odd number of arguments expected: "
@@ -316,9 +310,7 @@ public class SqlCaseOperator extends SqlOperator {
     }
 
     thenTypes.add(Iterables.getLast(argTypes));
-    return requireNonNull(
-        typeFactory.leastRestrictive(thenTypes),
-        () -> "Can't find leastRestrictive type for " + thenTypes);
+    return typeFactory.leastRestrictive(thenTypes);
   }
 
   @Override public SqlOperandCountRange getOperandCountRange() {
@@ -329,11 +321,10 @@ public class SqlCaseOperator extends SqlOperator {
     return SqlSyntax.SPECIAL;
   }
 
-  @SuppressWarnings("argument.type.incompatible")
   @Override public SqlCall createCall(
-      @Nullable SqlLiteral functionQualifier,
+      SqlLiteral functionQualifier,
       SqlParserPos pos,
-      @Nullable SqlNode... operands) {
+      SqlNode... operands) {
     assert functionQualifier == null;
     assert operands.length == 4;
     return new SqlCase(pos, operands[0], (SqlNodeList) operands[1],
@@ -356,11 +347,8 @@ public class SqlCaseOperator extends SqlOperator {
       pair.right.unparse(writer, 0, 0);
     }
 
-    SqlNode elseExpr = kase.elseExpr;
-    if (elseExpr != null) {
-      writer.sep("ELSE");
-      elseExpr.unparse(writer, 0, 0);
-    }
+    writer.sep("ELSE");
+    kase.elseExpr.unparse(writer, 0, 0);
     writer.endList(frame);
   }
 }

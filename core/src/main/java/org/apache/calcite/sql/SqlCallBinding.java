@@ -16,7 +16,9 @@
  */
 package org.apache.calcite.sql;
 
+import org.apache.calcite.adapter.enumerable.EnumUtils;
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rel.type.RelDataTypeFactoryImpl;
 import org.apache.calcite.runtime.CalciteException;
 import org.apache.calcite.runtime.Resources;
 import org.apache.calcite.sql.fun.SqlLiteralChainOperator;
@@ -41,8 +43,6 @@ import org.apache.calcite.util.Pair;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -56,21 +56,12 @@ import static java.util.Objects.requireNonNull;
  * analyzing to the operands of a {@link SqlCall} with a {@link SqlValidator}.
  */
 public class SqlCallBinding extends SqlOperatorBinding {
-
-  /** Static nested class required due to
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-4393">[CALCITE-4393]
-   * ExceptionInInitializerError due to NPE in SqlCallBinding caused by circular dependency</a>.
-   * The static field inside it cannot be part of the outer class: it must be defined
-   * within a nested class in order to break the cycle during class loading. */
-  private static class DefaultCallHolder {
-    private static final SqlCall DEFAULT_CALL =
-        SqlStdOperatorTable.DEFAULT.createCall(SqlParserPos.ZERO);
-  }
-
+  private static final SqlCall DEFAULT_CALL =
+      SqlStdOperatorTable.DEFAULT.createCall(SqlParserPos.ZERO);
   //~ Instance fields --------------------------------------------------------
 
   private final SqlValidator validator;
-  private final @Nullable SqlValidatorScope scope;
+  private final SqlValidatorScope scope;
   private final SqlCall call;
 
   //~ Constructors -----------------------------------------------------------
@@ -84,7 +75,7 @@ public class SqlCallBinding extends SqlOperatorBinding {
    */
   public SqlCallBinding(
       SqlValidator validator,
-      @Nullable SqlValidatorScope scope,
+      SqlValidatorScope scope,
       SqlCall call) {
     super(
         validator.getTypeFactory(),
@@ -128,7 +119,7 @@ public class SqlCallBinding extends SqlOperatorBinding {
   /**
    * Returns the scope of the call.
    */
-  public @Nullable SqlValidatorScope getScope() {
+  public SqlValidatorScope getScope() {
     return scope;
   }
 
@@ -157,7 +148,7 @@ public class SqlCallBinding extends SqlOperatorBinding {
       while (list.size() < range.getMax()
           && checker.isOptional(list.size())
           && checker.isFixedParameters()) {
-        list.add(DefaultCallHolder.DEFAULT_CALL);
+        list.add(DEFAULT_CALL);
       }
       return list;
     }
@@ -177,9 +168,8 @@ public class SqlCallBinding extends SqlOperatorBinding {
   /** Returns the operands to a call permuted into the same order as the
    * formal parameters of the function. */
   private List<SqlNode> permutedOperands(final SqlCall call) {
-    final SqlOperandMetadata operandMetadata = requireNonNull(
-        (SqlOperandMetadata) call.getOperator().getOperandTypeChecker(),
-        () -> "operandTypeChecker is null for " + call + ", operator " + call.getOperator());
+    final SqlOperandMetadata operandMetadata =
+        (SqlOperandMetadata) call.getOperator().getOperandTypeChecker();
     final List<String> paramNames = operandMetadata.paramNames();
     final List<SqlNode> permuted = new ArrayList<>();
     final SqlNameMatcher nameMatcher =
@@ -211,7 +201,7 @@ public class SqlCallBinding extends SqlOperatorBinding {
             // with DEFAULT and then convert to nulls during sql-to-rel conversion.
             // Thus, there is no need to show the optional operands in the plan and
             // decide if the optional operand is null when code generation.
-            permuted.add(DefaultCallHolder.DEFAULT_CALL);
+            permuted.add(DEFAULT_CALL);
           }
         }
       }
@@ -242,7 +232,7 @@ public class SqlCallBinding extends SqlOperatorBinding {
   }
 
   @SuppressWarnings("deprecation")
-  @Override public @Nullable String getStringLiteralOperand(int ordinal) {
+  @Override public String getStringLiteralOperand(int ordinal) {
     SqlNode node = call.operand(ordinal);
     final Object o = SqlLiteral.value(node);
     return o instanceof NlsString ? ((NlsString) o).getValue() : null;
@@ -264,17 +254,32 @@ public class SqlCallBinding extends SqlOperatorBinding {
     throw new AssertionError();
   }
 
-  @Override public <T extends Object> @Nullable T getOperandLiteralValue(int ordinal,
-      Class<T> clazz) {
+  @Override public <T> T getOperandLiteralValue(int ordinal, Class<T> clazz) {
     final SqlNode node = operand(ordinal);
     return valueAs(node, clazz);
   }
 
-  private static <T extends Object> @Nullable T valueAs(SqlNode node, Class<T> clazz) {
+  @Override public Object getOperandLiteralValue(int ordinal, RelDataType type) {
+    if (!(type instanceof RelDataTypeFactoryImpl.JavaType)) {
+      return null;
+    }
+    final Class<?> clazz = ((RelDataTypeFactoryImpl.JavaType) type).getJavaClass();
+    final Object o = getOperandLiteralValue(ordinal, Object.class);
+    if (o == null) {
+      return null;
+    }
+    if (clazz.isInstance(o)) {
+      return clazz.cast(o);
+    }
+    final Object o2 = o instanceof NlsString ? ((NlsString) o).getValue() : o;
+    return EnumUtils.evaluate(o2, clazz);
+  }
+
+  private <T> T valueAs(SqlNode node, Class<T> clazz) {
     final SqlLiteral literal;
     switch (node.getKind()) {
     case ARRAY_VALUE_CONSTRUCTOR:
-      final List<@Nullable Object> list = new ArrayList<>();
+      final List<Object> list = new ArrayList<>();
       for (SqlNode o : ((SqlCall) node).getOperandList()) {
         list.add(valueAs(o, Object.class));
       }
@@ -346,7 +351,7 @@ public class SqlCallBinding extends SqlOperatorBinding {
     return type;
   }
 
-  @Override public @Nullable RelDataType getCursorOperand(int ordinal) {
+  @Override public RelDataType getCursorOperand(int ordinal) {
     final SqlNode operand = call.operand(ordinal);
     if (!SqlUtil.isCallTo(operand, SqlStdOperatorTable.CURSOR)) {
       return null;
@@ -356,7 +361,7 @@ public class SqlCallBinding extends SqlOperatorBinding {
     return SqlTypeUtil.deriveType(this, query);
   }
 
-  @Override public @Nullable String getColumnListParamInfo(
+  @Override public String getColumnListParamInfo(
       int ordinal,
       String paramName,
       List<String> columnList) {

@@ -29,7 +29,6 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.Locale;
 import java.util.stream.Collectors;
 
 import static org.apache.calcite.sql.type.SqlTypeUtil.areSameFamily;
@@ -156,10 +155,6 @@ class SqlTypeUtilTest {
         (SqlBasicTypeNameSpec) convertTypeToSpec(f.sqlNull).getTypeNameSpec();
     assertThat(nullSpec.getTypeName().getSimple(), is("NULL"));
 
-    SqlBasicTypeNameSpec unknownSpec =
-        (SqlBasicTypeNameSpec) convertTypeToSpec(f.sqlUnknown).getTypeNameSpec();
-    assertThat(unknownSpec.getTypeName().getSimple(), is("UNKNOWN"));
-
     SqlBasicTypeNameSpec basicSpec =
         (SqlBasicTypeNameSpec) convertTypeToSpec(f.sqlBigInt).getTypeNameSpec();
     assertThat(basicSpec.getTypeName().getSimple(), is("BIGINT"));
@@ -187,7 +182,7 @@ class SqlTypeUtilTest {
     assertThat(fieldTypeNames, is(Arrays.asList("INTEGER", "INTEGER")));
   }
 
-  @Test void testGetMaxPrecisionScaleDecimal() {
+  @Test public void testGetMaxPrecisionScaleDecimal() {
     RelDataType decimal = SqlTypeUtil.getMaxPrecisionScaleDecimal(f.typeFactory);
     assertThat(decimal, is(f.typeFactory.createSqlType(SqlTypeName.DECIMAL, 19, 9)));
   }
@@ -199,68 +194,5 @@ class SqlTypeUtilTest {
       builder.add("field" + i, relDataTypes[i]);
     }
     return builder.build();
-  }
-
-  private void compareTypesIgnoringNullability(
-      String comment, RelDataType type1, RelDataType type2, boolean expectedResult) {
-    String typeString1 = type1.getFullTypeString();
-    String typeString2 = type2.getFullTypeString();
-
-    assertThat(
-        "The result of SqlTypeUtil.equalSansNullability"
-            + "(typeFactory, " + typeString1 + ", " + typeString2 + ") is incorrect: " + comment,
-        SqlTypeUtil.equalSansNullability(f.typeFactory, type1, type2), is(expectedResult));
-    assertThat("The result of SqlTypeUtil.equalSansNullability"
-            + "(" + typeString1 + ", " + typeString2 + ") is incorrect: " + comment,
-        SqlTypeUtil.equalSansNullability(type1, type2), is(expectedResult));
-  }
-
-  @Test void testEqualSansNullability() {
-    RelDataType bigIntType = f.sqlBigInt;
-    RelDataType nullableBigIntType = f.sqlBigIntNullable;
-    RelDataType varCharType = f.sqlVarchar;
-    RelDataType bigIntType1 =
-        f.typeFactory.createTypeWithNullability(nullableBigIntType, false);
-
-    compareTypesIgnoringNullability("different types should return false. ",
-        bigIntType, varCharType, false);
-
-    compareTypesIgnoringNullability("types differing only in nullability should return true.",
-        bigIntType, nullableBigIntType, true);
-
-    compareTypesIgnoringNullability("identical types should return true.",
-        bigIntType, bigIntType1, true);
-  }
-
-  @Test void testCanAlwaysCastToUnknownFromBasic() {
-    RelDataType unknownType = f.typeFactory.createUnknownType();
-    RelDataType nullableUnknownType = f.typeFactory.createTypeWithNullability(unknownType, true);
-
-    for (SqlTypeName fromTypeName : SqlTypeName.values()) {
-      BasicSqlType fromType;
-      try {
-        // This only works for basic types. Ignore the rest.
-        fromType = (BasicSqlType) f.typeFactory.createSqlType(fromTypeName);
-      } catch (AssertionError e) {
-        continue;
-      }
-      BasicSqlType nullableFromType = fromType.createWithNullability(!fromType.isNullable);
-
-      assertCanCast(unknownType, fromType);
-      assertCanCast(unknownType, nullableFromType);
-      assertCanCast(nullableUnknownType, fromType);
-      assertCanCast(nullableUnknownType, nullableFromType);
-    }
-  }
-
-  private static void assertCanCast(RelDataType toType, RelDataType fromType) {
-    assertThat(
-        String.format(Locale.ROOT,
-            "Expected to be able to cast from %s to %s without coercion.", fromType, toType),
-        SqlTypeUtil.canCastFrom(toType, fromType, /* coerce= */ false), is(true));
-    assertThat(
-        String.format(Locale.ROOT,
-            "Expected to be able to cast from %s to %s with coercion.", fromType, toType),
-        SqlTypeUtil.canCastFrom(toType, fromType, /* coerce= */ true), is(true));
   }
 }

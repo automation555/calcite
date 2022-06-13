@@ -130,7 +130,14 @@ public final class Span {
    * Does not assume that the positions are sorted.
    * Throws if the list is empty. */
   public SqlParserPos pos() {
-    return SqlParserPos.sum(posList);
+    switch (posList.size()) {
+    case 0:
+      throw new AssertionError();
+    case 1:
+      return posList.get(0);
+    default:
+      return SqlParserPos.sum(posList);
+    }
   }
 
   /** Adds the position of the last token emitted by a parser to the list,

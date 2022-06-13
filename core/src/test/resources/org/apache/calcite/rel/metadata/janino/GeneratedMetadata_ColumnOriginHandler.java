@@ -43,7 +43,7 @@ public final class GeneratedMetadata_ColumnOriginHandler
     } else {
       key = org.apache.calcite.runtime.FlatLists.of(methodKey0, a2);
     }
-    final Object v = mq.map.get(r, key);
+    final Object v = mq.cache.get(r, key);
     if (v != null) {
       if (v == org.apache.calcite.rel.metadata.NullSentinel.ACTIVE) {
         throw new org.apache.calcite.rel.metadata.CyclicMetadataException();
@@ -53,13 +53,13 @@ public final class GeneratedMetadata_ColumnOriginHandler
       }
       return (java.util.Set) v;
     }
-    mq.map.put(r, key,org.apache.calcite.rel.metadata.NullSentinel.ACTIVE);
+    mq.cache.put(r, key,org.apache.calcite.rel.metadata.NullSentinel.ACTIVE);
     try {
       final java.util.Set x = getColumnOrigins_(r, mq, a2);
-      mq.map.put(r, key, org.apache.calcite.rel.metadata.NullSentinel.mask(x));
+      mq.cache.put(r, key, org.apache.calcite.rel.metadata.NullSentinel.mask(x));
       return x;
     } catch (java.lang.Exception e) {
-      mq.map.row(r).clear();
+      mq.cache.clear(r);
       throw e;
     }
   }
@@ -82,8 +82,6 @@ public final class GeneratedMetadata_ColumnOriginHandler
       return provider0.getColumnOrigins((org.apache.calcite.rel.core.Project) r, mq, a2);
     } else if (r instanceof org.apache.calcite.rel.core.SetOp) {
       return provider0.getColumnOrigins((org.apache.calcite.rel.core.SetOp) r, mq, a2);
-    } else if (r instanceof org.apache.calcite.rel.core.Snapshot) {
-      return provider0.getColumnOrigins((org.apache.calcite.rel.core.Snapshot) r, mq, a2);
     } else if (r instanceof org.apache.calcite.rel.core.Sort) {
       return provider0.getColumnOrigins((org.apache.calcite.rel.core.Sort) r, mq, a2);
     } else if (r instanceof org.apache.calcite.rel.core.TableFunctionScan) {

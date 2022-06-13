@@ -33,24 +33,18 @@ import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql.validate.SqlValidatorImpl;
 import org.apache.calcite.sql.validate.SqlValidatorScope;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
-import org.apache.calcite.util.ImmutableNullableList;
 import org.apache.calcite.util.Litmus;
 import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-import org.checkerframework.dataflow.qual.Pure;
-
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
 
-import static org.apache.calcite.linq4j.Nullness.castNonNull;
 import static org.apache.calcite.util.Static.RESOURCE;
-
-import static java.util.Objects.requireNonNull;
 
 /**
  * A <code>SqlOperator</code> is a type of node in a SQL parse tree (it is NOT a
@@ -113,13 +107,13 @@ public abstract class SqlOperator {
   private final int rightPrec;
 
   /** Used to infer the return type of a call to this operator. */
-  private final @Nullable SqlReturnTypeInference returnTypeInference;
+  private final SqlReturnTypeInference returnTypeInference;
 
   /** Used to infer types of unknown operands. */
-  private final @Nullable SqlOperandTypeInference operandTypeInference;
+  private final SqlOperandTypeInference operandTypeInference;
 
   /** Used to validate operand types. */
-  private final @Nullable SqlOperandTypeChecker operandTypeChecker;
+  private final SqlOperandTypeChecker operandTypeChecker;
 
   //~ Constructors -----------------------------------------------------------
 
@@ -131,19 +125,15 @@ public abstract class SqlOperator {
       SqlKind kind,
       int leftPrecedence,
       int rightPrecedence,
-      @Nullable SqlReturnTypeInference returnTypeInference,
-      @Nullable SqlOperandTypeInference operandTypeInference,
-      @Nullable SqlOperandTypeChecker operandTypeChecker) {
+      SqlReturnTypeInference returnTypeInference,
+      SqlOperandTypeInference operandTypeInference,
+      SqlOperandTypeChecker operandTypeChecker) {
     assert kind != null;
     this.name = name;
     this.kind = kind;
     this.leftPrec = leftPrecedence;
     this.rightPrec = rightPrecedence;
     this.returnTypeInference = returnTypeInference;
-    if (operandTypeInference == null
-        && operandTypeChecker != null) {
-      operandTypeInference = operandTypeChecker.typeInference();
-    }
     this.operandTypeInference = operandTypeInference;
     this.operandTypeChecker = operandTypeChecker;
   }
@@ -156,9 +146,9 @@ public abstract class SqlOperator {
       SqlKind kind,
       int prec,
       boolean leftAssoc,
-      @Nullable SqlReturnTypeInference returnTypeInference,
-      @Nullable SqlOperandTypeInference operandTypeInference,
-      @Nullable SqlOperandTypeChecker operandTypeChecker) {
+      SqlReturnTypeInference returnTypeInference,
+      SqlOperandTypeInference operandTypeInference,
+      SqlOperandTypeChecker operandTypeChecker) {
     this(
         name,
         kind,
@@ -187,7 +177,7 @@ public abstract class SqlOperator {
     return prec;
   }
 
-  public @Nullable SqlOperandTypeChecker getOperandTypeChecker() {
+  public SqlOperandTypeChecker getOperandTypeChecker() {
     return operandTypeChecker;
   }
 
@@ -220,7 +210,6 @@ public abstract class SqlOperator {
     return new SqlIdentifier(getName(), SqlParserPos.ZERO);
   }
 
-  @Pure
   public SqlKind getKind() {
     return kind;
   }
@@ -253,9 +242,9 @@ public abstract class SqlOperator {
    * @param operands          List of operands
    */
   public final SqlCall createCall(
-      @Nullable SqlLiteral functionQualifier,
+      SqlLiteral functionQualifier,
       SqlParserPos pos,
-      Iterable<? extends @Nullable SqlNode> operands) {
+      Iterable<? extends SqlNode> operands) {
     return createCall(functionQualifier, pos,
         Iterables.toArray(operands, SqlNode.class));
   }
@@ -271,12 +260,11 @@ public abstract class SqlOperator {
    * @param operands          Array of operands
    */
   public SqlCall createCall(
-      @Nullable SqlLiteral functionQualifier,
+      SqlLiteral functionQualifier,
       SqlParserPos pos,
-      @Nullable SqlNode... operands) {
-    pos = pos.plusAll(operands);
-    return new SqlBasicCall(this, ImmutableNullableList.copyOf(operands), pos,
-        functionQualifier);
+      SqlNode... operands) {
+    pos = pos.plusAll(Arrays.asList(operands));
+    return new SqlBasicCall(this, operands, pos, false, functionQualifier);
   }
 
   /** Not supported. Choose between
@@ -285,8 +273,8 @@ public abstract class SqlOperator {
    * {@link SqlNodeList} extends {@link SqlNode}
    * and also implements {@code List<SqlNode>}. */
   @Deprecated
-  public static SqlCall createCall(
-      @Nullable SqlLiteral functionQualifier,
+  public final SqlCall createCall(
+      SqlLiteral functionQualifier,
       SqlParserPos pos,
       SqlNodeList operands) {
     throw new UnsupportedOperationException();
@@ -304,7 +292,7 @@ public abstract class SqlOperator {
    */
   public final SqlCall createCall(
       SqlParserPos pos,
-      @Nullable SqlNode... operands) {
+      SqlNode... operands) {
     return createCall(null, pos, operands);
   }
 
@@ -322,7 +310,7 @@ public abstract class SqlOperator {
     return createCall(
         null,
         nodeList.getParserPosition(),
-        nodeList.toArray(new SqlNode[0]));
+        nodeList.toArray());
   }
 
   /**
@@ -333,7 +321,7 @@ public abstract class SqlOperator {
    */
   public final SqlCall createCall(
       SqlParserPos pos,
-      List<? extends @Nullable SqlNode> operandList) {
+      List<? extends SqlNode> operandList) {
     return createCall(
         null,
         pos,
@@ -398,7 +386,7 @@ public abstract class SqlOperator {
   protected void unparseListClause(
       SqlWriter writer,
       SqlNode clause,
-      @Nullable SqlKind sepKind) {
+      SqlKind sepKind) {
     final SqlNodeList nodeList =
         clause instanceof SqlNodeList
             ? (SqlNodeList) clause
@@ -421,7 +409,8 @@ public abstract class SqlOperator {
     writer.list(SqlWriter.FrameTypeEnum.SIMPLE, sepOp, nodeList);
   }
 
-  @Override public boolean equals(@Nullable Object obj) {
+  // override Object
+  @Override public boolean equals(Object obj) {
     if (!(obj instanceof SqlOperator)) {
       return false;
     }
@@ -486,7 +475,7 @@ public abstract class SqlOperator {
    */
   public final RelDataType validateOperands(
       SqlValidator validator,
-      @Nullable SqlValidatorScope scope,
+      SqlValidatorScope scope,
       SqlCall call) {
     // Let subclasses know what's up.
     preValidateCall(validator, scope, call);
@@ -502,7 +491,7 @@ public abstract class SqlOperator {
 
     // Now infer the result type.
     RelDataType ret = inferReturnType(opBinding);
-    validator.setValidatedNodeType(call, ret);
+    ((SqlValidatorImpl) validator).setValidatedNodeType(call, ret);
     return ret;
   }
 
@@ -517,7 +506,7 @@ public abstract class SqlOperator {
    */
   protected void preValidateCall(
       SqlValidator validator,
-      @Nullable SqlValidatorScope scope,
+      SqlValidatorScope scope,
       SqlCall call) {
   }
 
@@ -540,21 +529,6 @@ public abstract class SqlOperator {
             + opBinding.getOperator() + "; operand types: "
             + opBinding.collectOperandTypes());
       }
-
-      if (operandTypeInference != null
-          && opBinding instanceof SqlCallBinding
-          && this instanceof SqlFunction) {
-        final SqlCallBinding callBinding = (SqlCallBinding) opBinding;
-        final List<RelDataType> operandTypes = opBinding.collectOperandTypes();
-        if (operandTypes.stream().anyMatch(t -> t.getSqlTypeName() == SqlTypeName.ANY)) {
-          final RelDataType[] operandTypes2 = operandTypes.toArray(new RelDataType[0]);
-          operandTypeInference.inferOperandTypes(callBinding, returnType, operandTypes2);
-          ((SqlValidatorImpl) callBinding.getValidator())
-              .callToOperandTypesMap
-              .put(callBinding.getCall(), ImmutableList.copyOf(operandTypes2));
-        }
-      }
-
       return returnType;
     }
 
@@ -597,11 +571,7 @@ public abstract class SqlOperator {
             argTypes, null, null, getSyntax(), getKind(),
             validator.getCatalogReader().nameMatcher(), false);
 
-    if (sqlOperator == null) {
-      throw validator.handleUnresolvedFunction(call, this, argTypes, null);
-    }
-
-    ((SqlBasicCall) call).setOperator(castNonNull(sqlOperator));
+    ((SqlBasicCall) call).setOperator(sqlOperator);
     RelDataType type = call.getOperator().validateOperands(validator, scope, call);
 
     // Validate and determine coercibility and resulting collation
@@ -611,7 +581,7 @@ public abstract class SqlOperator {
     return type;
   }
 
-  protected @Nullable List<String> constructArgNameList(SqlCall call) {
+  protected List<String> constructArgNameList(SqlCall call) {
     // If any arguments are named, construct a map.
     final ImmutableList.Builder<String> nameBuilder = ImmutableList.builder();
     for (SqlNode operand : call.getOperandList()) {
@@ -632,7 +602,7 @@ public abstract class SqlOperator {
   protected List<SqlNode> constructOperandList(
       SqlValidator validator,
       SqlCall call,
-      @Nullable List<String> argNames) {
+      List<String> argNames) {
     if (argNames == null) {
       return call.getOperandList();
     }
@@ -675,7 +645,7 @@ public abstract class SqlOperator {
       if (operand.getKind() == SqlKind.ROW && convertRowArgToColumnList) {
         RelDataTypeFactory typeFactory = validator.getTypeFactory();
         nodeType = typeFactory.createSqlType(SqlTypeName.COLUMN_LIST);
-        validator.setValidatedNodeType(operand, nodeType);
+        ((SqlValidatorImpl) validator).setValidatedNodeType(operand, nodeType);
       } else {
         nodeType = validator.deriveType(operandScope, operand);
       }
@@ -757,7 +727,7 @@ public abstract class SqlOperator {
 
   protected void checkOperandCount(
       SqlValidator validator,
-      @Nullable SqlOperandTypeChecker argType,
+      SqlOperandTypeChecker argType,
       SqlCall call) {
     SqlOperandCountRange od = call.getOperator().getOperandCountRange();
     if (od.isValidCount(call.operandCount())) {
@@ -794,7 +764,7 @@ public abstract class SqlOperator {
    * @return signature template, or null to indicate that a default template
    * will suffice
    */
-  public @Nullable String getSignatureTemplate(final int operandsCount) {
+  public String getSignatureTemplate(final int operandsCount) {
     return null;
   }
 
@@ -812,14 +782,14 @@ public abstract class SqlOperator {
    * example) can be replaced by a specified name.
    */
   public String getAllowedSignatures(String opNameToUse) {
-    requireNonNull(operandTypeChecker,
-        "If you see this, assign operandTypeChecker a value "
-        + "or override this function");
+    assert operandTypeChecker != null
+        : "If you see this, assign operandTypeChecker a value "
+        + "or override this function";
     return operandTypeChecker.getAllowedSignatures(this, opNameToUse)
         .trim();
   }
 
-  public @Nullable SqlOperandTypeInference getOperandTypeInference() {
+  public SqlOperandTypeInference getOperandTypeInference() {
     return operandTypeInference;
   }
 
@@ -843,7 +813,6 @@ public abstract class SqlOperator {
    * @return whether this operator is an analytic function (aggregate function
    * or window function)
    */
-  @Pure
   public boolean isAggregator() {
     return false;
   }
@@ -919,7 +888,7 @@ public abstract class SqlOperator {
    * @param visitor Visitor
    * @param call    Call to visit
    */
-  public <R> @Nullable R acceptCall(SqlVisitor<R> visitor, SqlCall call) {
+  public <R> R acceptCall(SqlVisitor<R> visitor, SqlCall call) {
     for (SqlNode operand : call.getOperandList()) {
       if (operand == null) {
         continue;
@@ -957,40 +926,8 @@ public abstract class SqlOperator {
 
   /** Returns the return type inference strategy for this operator, or null if
    * return type inference is implemented by a subclass override. */
-  public @Nullable SqlReturnTypeInference getReturnTypeInference() {
+  public SqlReturnTypeInference getReturnTypeInference() {
     return returnTypeInference;
-  }
-
-  /** Returns the operator that is the logical inverse of this operator.
-   *
-   * <p>For example, {@code SqlStdOperatorTable.LIKE.not()} returns
-   * {@code SqlStdOperatorTable.NOT_LIKE}, and vice versa.
-   *
-   * <p>By default, returns {@code null}, which means there is no inverse
-   * operator.
-   *
-   * @see #reverse */
-  public @Nullable SqlOperator not() {
-    return null;
-  }
-
-  /** Returns the operator that has the same effect as this operator
-   * if its arguments are reversed.
-   *
-   * <p>For example, {@code SqlStdOperatorTable.GREATER_THAN.reverse()} returns
-   * {@code SqlStdOperatorTable.LESS_THAN}, and vice versa,
-   * because {@code a > b} is equivalent to {@code b < a}.
-   *
-   * <p>{@code SqlStdOperatorTable.EQUALS.reverse()} returns itself.
-   *
-   * <p>By default, returns {@code null}, which means there is no inverse
-   * operator.
-   *
-   * @see SqlOperator#not()
-   * @see SqlKind#reverse()
-   */
-  public @Nullable SqlOperator reverse() {
-    return null;
   }
 
   /**
@@ -1000,8 +937,7 @@ public abstract class SqlOperator {
    *
    * @see Strong
    */
-  @Pure
-  public @Nullable Supplier<Strong.Policy> getStrongPolicyInference() {
+  public Supplier<Strong.Policy> getStrongPolicyInference() {
     return null;
   }
 

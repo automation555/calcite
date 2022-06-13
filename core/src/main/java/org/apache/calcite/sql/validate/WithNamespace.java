@@ -22,8 +22,6 @@ import org.apache.calcite.sql.SqlWith;
 import org.apache.calcite.sql.SqlWithItem;
 import org.apache.calcite.util.Util;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 /**
  * Namespace for <code>WITH</code> clause.
  */
@@ -62,7 +60,7 @@ public class WithNamespace extends AbstractNamespace {
     return rowType;
   }
 
-  @Override public @Nullable SqlNode getNode() {
+  @Override public SqlNode getNode() {
     return with;
   }
 }
