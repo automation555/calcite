@@ -38,12 +38,9 @@ import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.mapping.MappingType;
 import org.apache.calcite.util.mapping.Mappings;
 
-import org.immutables.value.Value;
-
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -56,7 +53,6 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * @see CoreRules#PROJECT_AGGREGATE_MERGE
  */
-@Value.Enclosing
 public class ProjectAggregateMergeRule
     extends RelRule<ProjectAggregateMergeRule.Config>
     implements TransformationRule {
@@ -106,7 +102,7 @@ public class ProjectAggregateMergeRule
             final RexInputRef ref1 = (RexInputRef) cast.operands.get(0);
             final RexLiteral literal = (RexLiteral) operands.get(2);
             if (ref0.getIndex() == ref1.getIndex()
-                && Objects.equals(literal.getValueAs(BigDecimal.class), BigDecimal.ZERO)) {
+                && literal.getValueAs(BigDecimal.class).equals(BigDecimal.ZERO)) {
               final int aggCallIndex =
                   ref1.getIndex() - aggregate.getGroupCount();
               if (aggCallIndex >= 0) {
@@ -120,9 +116,6 @@ public class ProjectAggregateMergeRule
               }
             }
           }
-          break;
-        default:
-          break;
         }
         return super.visitCall(call);
       }
@@ -152,7 +145,8 @@ public class ProjectAggregateMergeRule
     final RelBuilder builder = call.builder();
     builder.push(aggregate.getInput());
     builder.aggregate(
-        builder.groupKey(aggregate.getGroupSet(), aggregate.groupSets), aggCallList);
+        builder.groupKey(aggregate.getGroupSet(),
+            (Iterable<ImmutableBitSet>) aggregate.groupSets), aggCallList);
     builder.project(
         RexPermuteInputsShuttle.of(mapping).visitList(projects2));
     call.transformTo(builder.build());
@@ -162,11 +156,8 @@ public class ProjectAggregateMergeRule
    * or creates one and adds it to the list. Returns the index. */
   private static int findSum0(RelDataTypeFactory typeFactory, AggregateCall sum,
       List<AggregateCall> aggCallList) {
-    final AggregateCall sum0 =
-        AggregateCall.create(SqlStdOperatorTable.SUM0, sum.isDistinct(),
-            sum.isApproximate(), sum.ignoreNulls(), sum.getArgList(),
-            sum.filterArg, sum.distinctKeys, sum.collation,
-            typeFactory.createTypeWithNullability(sum.type, false), null);
+    final AggregateCall sum0 = AggregateCall.builder(sum).aggFunction(SqlStdOperatorTable.SUM0)
+        .type(typeFactory.createTypeWithNullability(sum.type, false)).name(null).build();
     final int i = aggCallList.indexOf(sum0);
     if (i >= 0) {
       return i;
@@ -191,13 +182,13 @@ public class ProjectAggregateMergeRule
   }
 
   /** Rule configuration. */
-  @Value.Immutable
   public interface Config extends RelRule.Config {
-    Config DEFAULT = ImmutableProjectAggregateMergeRule.Config.of()
+    Config DEFAULT = EMPTY
         .withOperandSupplier(b0 ->
             b0.operand(Project.class)
                 .oneInput(b1 ->
-                    b1.operand(Aggregate.class).anyInputs()));
+                    b1.operand(Aggregate.class).anyInputs()))
+        .as(Config.class);
 
     @Override default ProjectAggregateMergeRule toRule() {
       return new ProjectAggregateMergeRule(this);

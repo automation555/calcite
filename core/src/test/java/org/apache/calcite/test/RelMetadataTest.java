@@ -97,8 +97,6 @@ import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.test.SqlTestFactory;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlTypeName;
-import org.apache.calcite.sql2rel.InitializerExpressionFactory;
-import org.apache.calcite.test.catalog.CountingFactory;
 import org.apache.calcite.test.catalog.MockCatalogReader;
 import org.apache.calcite.test.catalog.MockCatalogReaderSimple;
 import org.apache.calcite.tools.FrameworkConfig;
@@ -601,8 +599,8 @@ public class RelMetadataTest extends SqlToRelTestBase {
     final String sql = "select * from (select * from emp limit 0) as emp\n"
         + "right join (select * from dept limit 4) as dept\n"
         + "on emp.deptno = dept.deptno";
-    checkRowCount(sql, 4D,
-        0D, 4D);
+    checkRowCount(sql, 1D, // 0, rounded up to row count's minimum 1
+        0D, 4D); // 1 * 4
   }
 
   @Test void testRowCountJoinFiniteEmpty() {
@@ -612,23 +610,6 @@ public class RelMetadataTest extends SqlToRelTestBase {
     checkRowCount(sql, 1D, // 0, rounded up to row count's minimum 1
         0D, 0D); // 7 * 0
   }
-
-  @Test void testRowCountLeftJoinFiniteEmpty() {
-    final String sql = "select * from (select * from emp limit 4) as emp\n"
-        + "left join (select * from dept limit 0) as dept\n"
-        + "on emp.deptno = dept.deptno";
-    checkRowCount(sql, 4D,
-        0D, 4D);
-  }
-
-  @Test void testRowCountRightJoinFiniteEmpty() {
-    final String sql = "select * from (select * from emp limit 4) as emp\n"
-        + "right join (select * from dept limit 0) as dept\n"
-        + "on emp.deptno = dept.deptno";
-    checkRowCount(sql, 1D, // 0, rounded up to row count's minimum 1
-        0D, 0D); // 0 * 4
-  }
-
 
   @Test void testRowCountJoinEmptyEmpty() {
     final String sql = "select * from (select * from emp limit 0) as emp\n"
@@ -1207,20 +1188,6 @@ public class RelMetadataTest extends SqlToRelTestBase {
         ImmutableSet.of(ImmutableBitSet.of(0)));
   }
 
-  @Test void testUniqueKeysMinus() {
-    checkGetUniqueKeys("select distinct deptno from emp\n"
-            + "except all\n"
-            + "select deptno from dept",
-        ImmutableSet.of(ImmutableBitSet.of(0)));
-  }
-
-  @Test void testUniqueKeysIntersect() {
-    checkGetUniqueKeys("select distinct deptno from emp\n"
-            + "intersect all\n"
-            + "select deptno from dept",
-        ImmutableSet.of(ImmutableBitSet.of(0)));
-  }
-
   @Test void testSingleKeyTableScanUniqueKeys() {
     // select key column
     checkGetUniqueKeys("select empno, ename from emp",
@@ -1454,81 +1421,6 @@ public class RelMetadataTest extends SqlToRelTestBase {
     assertThat(buf.size(), equalTo(7));
     assertThat(colType(mq, input, 0), equalTo("DEPTNO-agg"));
     assertThat(buf.size(), equalTo(7));
-  }
-
-  @Test void testCachingRelMetadataProvider() {
-    final List<String> buf = new ArrayList<>();
-    ColTypeImpl.THREAD_LIST.set(buf);
-
-    final String sql = "select * from emp";
-    Map<List<Object>, CachingRelMetadataProvider.CacheEntry> cached = new HashMap<>();
-
-    final RelNode rel  = tester
-        .withClusterFactory(cluster -> {
-          // Create a custom provider that includes ColType.
-          cluster.setMetadataProvider(
-              new CachingRelMetadataProvider(
-                  ChainedRelMetadataProvider.of(
-                      ImmutableList.of(ColTypeImpl.SOURCE, cluster.getMetadataProvider())),
-                  cluster.getPlanner(),
-                  cached));
-          return cluster;
-        }).convertSqlToRel(sql).rel;
-    RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
-    RelOptCluster cluster = rel.getCluster();
-    ColType colTypeMetaData = cluster.getMetadataFactory().query(rel, mq, ColType.class);
-
-    assertThat(colTypeMetaData.rel(), is(rel));
-    assertThat(colTypeMetaData.toString(), notNullValue());
-    assertThat("Trivial calls are not cached", cached.size(), is(0));
-
-    colTypeMetaData.getColType(0);
-    assertThat("Non Trivial calls are cached", cached.size(), is(1));
-    colTypeMetaData.getColType(0);
-    assertThat("Non Trivial calls are read from the cache and not inserted again",
-        cached.size(),
-        is(1));
-  }
-
-  @Test void testCachingNullValues(){
-    Tester newTester = tester.withCatalogReaderFactory((typeFactory, caseSensitive) ->
-        new MockCatalogReader(typeFactory, caseSensitive) {
-          @Override
-          public MockCatalogReader init() {
-
-            // Register "SALES" schema.
-            MockSchema salesSchema = new MockSchema("my_schema");
-            registerSchema(salesSchema);
-
-            // Register "EMP" table with customer InitializerExpressionFactory
-            // to check whether newDefaultValue method called or not.
-            final InitializerExpressionFactory countingInitializerExpressionFactory =
-                new CountingFactory(ImmutableList.of("DEPTNO"));
-
-            registerType(
-                ImmutableList.of(salesSchema.getCatalogName(), salesSchema.getName(),
-                    "customBigInt"),
-                typeFactory -> typeFactory.createSqlType(SqlTypeName.BIGINT));
-
-            // Register "EMP" table.
-            final MockTable empTable =
-                MockTable.create(this, salesSchema, "EMP", false, 14, null,
-                    countingInitializerExpressionFactory, false);
-            empTable.addColumn("EMPNO", fixture.intType, true);
-            empTable.addColumn("ENAME", fixture.varchar20Type);
-            empTable.addColumn("JOB", fixture.varchar10Type);
-            empTable.addColumn("MGR", fixture.intTypeNull);
-            empTable.addColumn("HIREDATE", fixture.timestampType);
-            empTable.addColumn("SAL", fixture.intType);
-            empTable.addColumn("COMM", fixture.intType);
-            empTable.addColumn("DEPTNO", fixture.intType);
-            empTable.addColumn("SLACKER", fixture.booleanType);
-            registerTable(empTable);
-
-            return null;
-          }
-        }
-    );
   }
 
   @Test void testCustomProviderWithRelMetadataQuery() {
@@ -1916,9 +1808,8 @@ public class RelMetadataTest extends SqlToRelTestBase {
             ImmutableBitSet.of(2, 0),
             ImmutableList.of(),
             ImmutableList.of(
-                AggregateCall.create(SqlStdOperatorTable.COUNT,
-                    false, false, false, ImmutableIntList.of(),
-                    -1, RelCollations.EMPTY, 2, join, null, null)));
+                AggregateCall.builder().aggFunction(SqlStdOperatorTable.COUNT)
+                .groupCount(2).input(join).build()));
     rowSize = mq.getAverageRowSize(aggregate);
     columnSizes = mq.getAverageColumnSizes(aggregate);
     assertThat(columnSizes.size(), equalTo(3));
@@ -2142,7 +2033,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
         + "select empno, deptno from emp where empno=3 or deptno=4");
     final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
     assertThat(mq.getPulledUpPredicates(rel).pulledUpPredicates,
-        sortsAs("[OR(SEARCH($0, Sarg[1, 3]), SEARCH($1, Sarg[2, 4]))]"));
+        sortsAs("[OR(=($0, 1), =($1, 2), =($0, 3), =($1, 4))]"));
   }
 
   @Test void testPullUpPredicatesFromUnion2() {

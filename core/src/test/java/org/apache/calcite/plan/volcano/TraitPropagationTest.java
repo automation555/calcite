@@ -69,12 +69,11 @@ import org.apache.calcite.tools.FrameworkConfig;
 import org.apache.calcite.tools.Frameworks;
 import org.apache.calcite.tools.RuleSet;
 import org.apache.calcite.tools.RuleSets;
+import org.apache.calcite.util.ImmutableBeans;
 import org.apache.calcite.util.ImmutableBitSet;
 
 import com.google.common.collect.ImmutableList;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-import org.immutables.value.Value;
 import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
@@ -167,9 +166,9 @@ class TraitPropagationTest {
           .build());
 
       // aggregate on s, count
-      AggregateCall aggCall = AggregateCall.create(SqlStdOperatorTable.COUNT,
-          false, false, false, Collections.singletonList(1), -1,
-          null, RelCollations.EMPTY, sqlBigInt, "cnt");
+      AggregateCall aggCall = AggregateCall.builder()
+          .aggFunction(SqlStdOperatorTable.COUNT).argList(Collections.singletonList(1))
+          .type(sqlBigInt).name("cnt").build();
       RelNode agg = new LogicalAggregate(cluster,
           cluster.traitSetOf(Convention.NONE), ImmutableList.of(), project,
           ImmutableBitSet.of(0), null, Collections.singletonList(aggCall));
@@ -190,8 +189,7 @@ class TraitPropagationTest {
 
   /** Rule for PhysAgg. */
   public static class PhysAggRule extends RelRule<PhysAggRule.Config> {
-    static final PhysAggRule INSTANCE = ImmutablePhysAggRuleConfig.builder()
-        .build()
+    static final PhysAggRule INSTANCE = Config.EMPTY
         .withOperandSupplier(b ->
             b.operand(LogicalAggregate.class).anyInputs())
         .withDescription("PhysAgg")
@@ -220,8 +218,6 @@ class TraitPropagationTest {
     }
 
     /** Rule configuration. */
-    @Value.Immutable
-    @Value.Style(init = "with*", typeImmutable = "ImmutablePhysAggRuleConfig")
     public interface Config extends RelRule.Config {
       @Override default PhysAggRule toRule() {
         return new PhysAggRule(this);
@@ -232,14 +228,13 @@ class TraitPropagationTest {
   /** Rule for PhysProj. */
   public static class PhysProjRule extends RelRule<PhysProjRule.Config> {
     static final PhysProjRule INSTANCE =
-        ImmutablePhysProjRuleConfig.builder()
-            .withSubsetHack(false)
-            .build()
+        Config.EMPTY
             .withOperandSupplier(b0 ->
                 b0.operand(LogicalProject.class).oneInput(b1 ->
                     b1.operand(RelNode.class).anyInputs()))
             .withDescription("PhysProj")
             .as(Config.class)
+            .withSubsetHack(false)
             .toRule();
 
     protected PhysProjRule(Config config) {
@@ -272,13 +267,13 @@ class TraitPropagationTest {
     }
 
     /** Rule configuration. */
-    @Value.Immutable
-    @Value.Style(init = "with*", typeImmutable = "ImmutablePhysProjRuleConfig")
     public interface Config extends RelRule.Config {
       @Override default PhysProjRule toRule() {
         return new PhysProjRule(this);
       }
 
+      @ImmutableBeans.Property
+      @ImmutableBeans.BooleanDefault(false)
       boolean subsetHack();
 
       /** Sets {@link #subsetHack()}. */
@@ -315,7 +310,7 @@ class TraitPropagationTest {
   /** Rule for PhysTable. */
   public static class PhysTableRule
       extends RelRule<PhysTableRule.Config> {
-    static final PhysTableRule INSTANCE = ImmutablePhysTableRuleConfig.builder().build()
+    static final PhysTableRule INSTANCE = Config.EMPTY
         .withOperandSupplier(b ->
             b.operand(LogicalTableScan.class).noInputs())
         .withDescription("PhysScan")
@@ -332,8 +327,6 @@ class TraitPropagationTest {
     }
 
     /** Rule configuration. */
-    @Value.Immutable
-    @Value.Style(init = "with*", typeImmutable = "ImmutablePhysTableRuleConfig")
     public interface Config extends RelRule.Config {
       @Override default PhysTableRule toRule() {
         return new PhysTableRule(this);
@@ -355,12 +348,12 @@ class TraitPropagationTest {
 
     public Aggregate copy(RelTraitSet traitSet, RelNode input,
         ImmutableBitSet groupSet,
-        @Nullable List<ImmutableBitSet> groupSets, List<AggregateCall> aggCalls) {
+        List<ImmutableBitSet> groupSets, List<AggregateCall> aggCalls) {
       return new PhysAgg(getCluster(), traitSet, input, groupSet,
           groupSets, aggCalls);
     }
 
-    public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
+    public RelOptCost computeSelfCost(RelOptPlanner planner,
         RelMetadataQuery mq) {
       return planner.getCostFactory().makeCost(1, 1, 1);
     }
@@ -390,7 +383,7 @@ class TraitPropagationTest {
       return new PhysProj(getCluster(), traitSet, input, exps, rowType);
     }
 
-    public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
+    public RelOptCost computeSelfCost(RelOptPlanner planner,
         RelMetadataQuery mq) {
       return planner.getCostFactory().makeCost(1, 1, 1);
     }
@@ -412,7 +405,7 @@ class TraitPropagationTest {
           offset, fetch);
     }
 
-    public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
+    public RelOptCost computeSelfCost(RelOptPlanner planner,
         RelMetadataQuery mq) {
       return planner.getCostFactory().makeCost(1, 1, 1);
     }
@@ -429,7 +422,7 @@ class TraitPropagationTest {
           .add("i", integerType).build();
     }
 
-    public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
+    public RelOptCost computeSelfCost(RelOptPlanner planner,
         RelMetadataQuery mq) {
       return planner.getCostFactory().makeCost(1, 1, 1);
     }

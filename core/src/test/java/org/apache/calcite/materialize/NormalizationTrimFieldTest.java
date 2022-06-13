@@ -46,6 +46,7 @@ import java.util.List;
 
 import static org.apache.calcite.test.Matchers.isLinux;
 
+import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 /** Tests trimming unused fields before materialized view matching. */
@@ -83,11 +84,7 @@ public class NormalizationTrimFieldTest extends SqlToRelTestBase {
         .build();
     final ImmutableBitSet groupSet = ImmutableBitSet.of(4);
     final AggregateCall count = aggregate.getAggCallList().get(0);
-    final AggregateCall call = AggregateCall.create(count.getAggregation(),
-        count.isDistinct(), count.isApproximate(),
-        count.ignoreNulls(), ImmutableList.of(3),
-        count.filterArg, null, count.collation,
-        count.getType(), count.getName());
+    final AggregateCall call = AggregateCall.builder(count).argList(ImmutableList.of(3)).build();
     final RelNode query = LogicalAggregate.create(project, aggregate.getHints(),
         groupSet, ImmutableList.of(groupSet), ImmutableList.of(call));
     final RelNode target = aggregate;
@@ -103,6 +100,6 @@ public class NormalizationTrimFieldTest extends SqlToRelTestBase {
         + "LogicalProject(deptno=[CAST($0):TINYINT], count_sal=[$1])\n"
         + "  LogicalTableScan(table=[[mv0]])\n";
     final String relOptimizedStr = RelOptUtil.toString(relOptimized.get(0).getKey());
-    assertThat(relOptimizedStr, isLinux(optimized));
+    assertThat(isLinux(optimized).matches(relOptimizedStr), is(true));
   }
 }

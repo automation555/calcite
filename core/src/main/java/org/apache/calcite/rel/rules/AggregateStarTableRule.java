@@ -28,6 +28,7 @@ import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelRule;
+import org.apache.calcite.plan.SubstitutionVisitor;
 import org.apache.calcite.plan.ViewExpanders;
 import org.apache.calcite.prepare.RelOptTableImpl;
 import org.apache.calcite.rel.core.Aggregate;
@@ -46,14 +47,8 @@ import org.apache.calcite.util.mapping.AbstractSourceMapping;
 
 import com.google.common.collect.ImmutableList;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-import org.immutables.value.Value;
-
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
-
-import static java.util.Objects.requireNonNull;
 
 /**
  * Planner rule that matches an {@link org.apache.calcite.rel.core.Aggregate} on
@@ -66,7 +61,6 @@ import static java.util.Objects.requireNonNull;
  * @see CoreRules#AGGREGATE_STAR_TABLE
  * @see CoreRules#AGGREGATE_PROJECT_STAR_TABLE
  */
-@Value.Enclosing
 public class AggregateStarTableRule
     extends RelRule<AggregateStarTableRule.Config>
     implements TransformationRule {
@@ -92,12 +86,12 @@ public class AggregateStarTableRule
     apply(call, null, aggregate, scan);
   }
 
-  protected void apply(RelOptRuleCall call, @Nullable Project postProject,
+  protected void apply(RelOptRuleCall call, Project postProject,
       final Aggregate aggregate, StarTable.StarTableScan scan) {
     final RelOptPlanner planner = call.getPlanner();
-    final Optional<CalciteConnectionConfig> config =
-        planner.getContext().maybeUnwrap(CalciteConnectionConfig.class);
-    if (!(config.isPresent() && config.get().createMaterializations())) {
+    final CalciteConnectionConfig config =
+        planner.getContext().unwrap(CalciteConnectionConfig.class);
+    if (config == null || !config.createMaterializations()) {
       // Disable this rule if we if materializations are disabled - in
       // particular, if we are in a recursive statement that is being used to
       // populate a materialization
@@ -105,8 +99,7 @@ public class AggregateStarTableRule
     }
     final RelOptCluster cluster = scan.getCluster();
     final RelOptTable table = scan.getTable();
-    final RelOptLattice lattice = requireNonNull(planner.getLattice(table),
-        () -> "planner.getLattice(table) is null for " + table);
+    final RelOptLattice lattice = planner.getLattice(table);
     final List<Lattice.Measure> measures =
         lattice.lattice.toMeasures(aggregate.getAggCallList());
     final Pair<CalciteSchema.TableEntry, TileKey> pair =
@@ -172,7 +165,7 @@ public class AggregateStarTableRule
               new AbstractSourceMapping(
                   tileKey.dimensions.cardinality() + tileKey.measures.size(),
                   aggregate.getRowType().getFieldCount()) {
-                @Override public int getSourceOpt(int source) {
+                public int getSourceOpt(int source) {
                   if (source < aggregate.getGroupCount()) {
                     int in = tileKey.dimensions.nth(source);
                     return aggregate.getGroupSet().indexOf(in);
@@ -193,7 +186,7 @@ public class AggregateStarTableRule
     call.transformTo(relBuilder.build());
   }
 
-  private static @Nullable AggregateCall rollUp(int groupCount, RelBuilder relBuilder,
+  private static AggregateCall rollUp(int groupCount, RelBuilder relBuilder,
       AggregateCall aggregateCall, TileKey tileKey) {
     if (aggregateCall.isDistinct()) {
       return null;
@@ -209,14 +202,13 @@ public class AggregateStarTableRule
     final int i = find(measures, seek);
   tryRoll:
     if (i >= 0) {
-      final SqlAggFunction roll = aggregation.getRollup();
+      final SqlAggFunction roll = SubstitutionVisitor.getRollup(aggregation);
       if (roll == null) {
         break tryRoll;
       }
-      return AggregateCall.create(roll, false, aggregateCall.isApproximate(),
-          aggregateCall.ignoreNulls(), ImmutableList.of(offset + i), -1,
-          aggregateCall.distinctKeys, aggregateCall.collation,
-          groupCount, relBuilder.peek(), null, aggregateCall.name);
+      return AggregateCall.builder().aggFunction(roll).distinct(false)
+          .argList(ImmutableList.of(offset + i)).filterArg(-1).groupCount(groupCount)
+          .input(relBuilder.peek()).type(null).build();
     }
 
     // Second, try to satisfy the aggregation based on group set columns.
@@ -230,10 +222,9 @@ public class AggregateStarTableRule
         }
         newArgs.add(z);
       }
-      return AggregateCall.create(aggregation, false,
-          aggregateCall.isApproximate(), aggregateCall.ignoreNulls(),
-          newArgs, -1, aggregateCall.distinctKeys, aggregateCall.collation,
-          groupCount, relBuilder.peek(), null, aggregateCall.name);
+      return AggregateCall.builder().aggFunction(aggregation).distinct(false)
+          .argList(newArgs).filterArg(-1).groupCount(groupCount).input(relBuilder.peek())
+          .type(null).build();
     }
 
     // No roll up possible.
@@ -253,10 +244,8 @@ public class AggregateStarTableRule
   }
 
   /** Rule configuration. */
-  @Value.Immutable
   public interface Config extends RelRule.Config {
-
-    Config DEFAULT = ImmutableAggregateStarTableRule.Config.of()
+    Config DEFAULT = EMPTY.as(Config.class)
         .withOperandFor(Aggregate.class, StarTable.StarTableScan.class);
 
     @Override default AggregateStarTableRule toRule() {
@@ -274,5 +263,4 @@ public class AggregateStarTableRule
           .as(Config.class);
     }
   }
-
 }
