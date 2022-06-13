@@ -76,6 +76,8 @@ import java.util.function.IntPredicate;
 
 import static org.apache.calcite.linq4j.Nullness.castNonNull;
 
+import static java.util.Objects.requireNonNull;
+
 /**
  * Factory for row expressions.
  *
@@ -642,9 +644,6 @@ public class RexBuilder {
 
   boolean canRemoveCastFromLiteral(RelDataType toType, @Nullable Comparable value,
       SqlTypeName fromTypeName) {
-    if (value == null) {
-      return true;
-    }
     final SqlTypeName sqlType = toType.getSqlTypeName();
     if (!RexLiteral.valueMatchesType(value, sqlType, false)) {
       return false;
@@ -679,26 +678,6 @@ public class RexBuilder {
     if (toType.getSqlTypeName() == SqlTypeName.DECIMAL) {
       final BigDecimal decimalValue = (BigDecimal) value;
       return SqlTypeUtil.isValidDecimalValue(decimalValue, toType);
-    }
-
-    if (SqlTypeName.INT_TYPES.contains(sqlType)) {
-      final BigDecimal decimalValue = (BigDecimal) value;
-      final int s = decimalValue.scale();
-      if (s != 0) {
-        return false;
-      }
-      long l = decimalValue.longValue();
-      switch (sqlType) {
-      case TINYINT:
-        return l >= Byte.MIN_VALUE && l <= Byte.MAX_VALUE;
-      case SMALLINT:
-        return l >= Short.MIN_VALUE && l <= Short.MAX_VALUE;
-      case INTEGER:
-        return l >= Integer.MIN_VALUE && l <= Integer.MAX_VALUE;
-      case BIGINT:
-      default:
-        return true;
-      }
     }
 
     return true;
@@ -1355,10 +1334,14 @@ public class RexBuilder {
     if (areAssignable(arg, ranges)) {
       final Sarg sarg = toSarg(Comparable.class, ranges, RexUnknownAs.UNKNOWN);
       if (sarg != null) {
-        final RexNode range0 = ranges.get(0);
+        final List<RelDataType> types = Util.transform(ranges, RexNode::getType);
+        final List<RelDataType> distinctTypes = Util.distinctList(types);
+        final RelDataType sargType = requireNonNull(
+            typeFactory.leastRestrictive(distinctTypes),
+            () -> "Can't find leastRestrictive type among " + distinctTypes);
         return makeCall(SqlStdOperatorTable.SEARCH,
             arg,
-            makeSearchArgumentLiteral(sarg, range0.getType()));
+            makeSearchArgumentLiteral(sarg, sargType));
       }
     }
     return RexUtil.composeDisjunction(this, ranges.stream()
