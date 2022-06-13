@@ -33,6 +33,7 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelRoot;
+import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.core.TableModify;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
@@ -78,7 +79,6 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.apache.calcite.linq4j.Nullness.castNonNull;
-import static org.apache.calcite.sql2rel.SqlToRelConverter.DEFAULT_IN_SUB_QUERY_THRESHOLD;
 
 import static java.util.Objects.requireNonNull;
 
@@ -112,10 +112,6 @@ public abstract class Prepare {
    * is fixed, remove those overrides and use false everywhere. */
   public static final TryThreadLocal<@Nullable Boolean> THREAD_EXPAND =
       TryThreadLocal.of(false);
-
-  // temporary. for testing.
-  public static final TryThreadLocal<@Nullable Integer> THREAD_INSUBQUERY_THRESHOLD =
-      TryThreadLocal.of(DEFAULT_IN_SUB_QUERY_THRESHOLD);
 
   protected Prepare(CalcitePrepare.Context context, CatalogReader catalogReader,
       Convention resultConvention) {
@@ -153,11 +149,12 @@ public abstract class Prepare {
     for (Materialization materialization : materializations) {
       List<String> qualifiedTableName = materialization.materializedTable.path();
       materializationList.add(
-          new RelOptMaterialization(
+          RelOptMaterialization.create(
               castNonNull(materialization.tableRel),
               castNonNull(materialization.queryRel),
               materialization.starRelOptTable,
-              qualifiedTableName));
+              qualifiedTableName,
+              RelFactories.LOGICAL_BUILDER));
     }
 
     final List<RelOptLattice> latticeList = new ArrayList<>(lattices.size());
@@ -177,7 +174,7 @@ public abstract class Prepare {
     final RelNode rootRel4 = program.run(
         planner, root.rel, desiredTraits, materializationList, latticeList);
     if (LOGGER.isDebugEnabled()) {
-      LOGGER.debug("Plan after physical tweaks:\n{}",
+      LOGGER.debug("Plan after physical tweaks: {}",
           RelOptUtil.toString(rootRel4, SqlExplainLevel.ALL_ATTRIBUTES));
     }
 
@@ -237,7 +234,6 @@ public abstract class Prepare {
         SqlToRelConverter.config()
             .withTrimUnusedFields(true)
             .withExpand(castNonNull(THREAD_EXPAND.get()))
-            .withInSubQueryThreshold(castNonNull(THREAD_INSUBQUERY_THRESHOLD.get()))
             .withExplain(sqlQuery.getKind() == SqlKind.EXPLAIN);
     final Holder<SqlToRelConverter.Config> configHolder = Holder.of(config);
     Hook.SQL2REL_CONVERTER_CONFIG_BUILDER.run(configHolder);
@@ -375,8 +371,7 @@ public abstract class Prepare {
   protected RelRoot trimUnusedFields(RelRoot root) {
     final SqlToRelConverter.Config config = SqlToRelConverter.config()
         .withTrimUnusedFields(shouldTrim(root.rel))
-        .withExpand(castNonNull(THREAD_EXPAND.get()))
-        .withInSubQueryThreshold(castNonNull(THREAD_INSUBQUERY_THRESHOLD.get()));
+        .withExpand(castNonNull(THREAD_EXPAND.get()));
     final SqlToRelConverter converter =
         getSqlToRelConverter(getSqlValidator(), catalogReader, config);
     final boolean ordered = !root.collation.getFieldCollations().isEmpty();

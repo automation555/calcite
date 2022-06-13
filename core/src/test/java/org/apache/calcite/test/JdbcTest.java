@@ -48,23 +48,33 @@ import org.apache.calcite.linq4j.Ord;
 import org.apache.calcite.linq4j.QueryProvider;
 import org.apache.calcite.linq4j.Queryable;
 import org.apache.calcite.linq4j.function.Function0;
+import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptPlanner;
+import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.prepare.CalcitePrepareImpl;
 import org.apache.calcite.prepare.Prepare;
+import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.TableModify;
+import org.apache.calcite.rel.logical.LogicalTableModify;
 import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelProtoDataType;
+import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.runtime.FlatLists;
 import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.runtime.SqlFunctions;
+import org.apache.calcite.schema.ModifiableTable;
+import org.apache.calcite.schema.ModifiableView;
+import org.apache.calcite.schema.QueryableTable;
 import org.apache.calcite.schema.Schema;
 import org.apache.calcite.schema.SchemaFactory;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.TableFactory;
 import org.apache.calcite.schema.TableMacro;
+import org.apache.calcite.schema.TranslatableTable;
 import org.apache.calcite.schema.impl.AbstractSchema;
 import org.apache.calcite.schema.impl.AbstractTable;
 import org.apache.calcite.schema.impl.AbstractTableQueryable;
@@ -80,14 +90,7 @@ import org.apache.calcite.sql.SqlSpecialOperator;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.parser.impl.SqlParserImpl;
-import org.apache.calcite.sql2rel.SqlToRelConverter.Config;
-import org.apache.calcite.test.schemata.catchall.CatchallSchema;
-import org.apache.calcite.test.schemata.foodmart.FoodmartSchema;
-import org.apache.calcite.test.schemata.hr.Department;
-import org.apache.calcite.test.schemata.hr.Employee;
-import org.apache.calcite.test.schemata.hr.HrSchema;
 import org.apache.calcite.util.Bug;
-import org.apache.calcite.util.Holder;
 import org.apache.calcite.util.JsonBuilder;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Smalls;
@@ -137,6 +140,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.TimeZone;
@@ -146,7 +150,6 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.sql.DataSource;
 
-import static org.apache.calcite.test.CalciteAssert.checkResult;
 import static org.apache.calcite.test.Matchers.isLinux;
 import static org.apache.calcite.util.Static.RESOURCE;
 
@@ -171,6 +174,25 @@ import static org.junit.jupiter.api.Assertions.fail;
  * Tests for using Calcite via JDBC.
  */
 public class JdbcTest {
+
+  public static final String FOODMART_SCHEMA = "     {\n"
+      + "       type: 'jdbc',\n"
+      + "       name: 'foodmart',\n"
+      + "       jdbcDriver: " + q(CalciteAssert.DB.foodmart.driver) + ",\n"
+      + "       jdbcUser: " + q(CalciteAssert.DB.foodmart.username) + ",\n"
+      + "       jdbcPassword: " + q(CalciteAssert.DB.foodmart.password) + ",\n"
+      + "       jdbcUrl: " + q(CalciteAssert.DB.foodmart.url) + ",\n"
+      + "       jdbcCatalog: " + q(CalciteAssert.DB.foodmart.catalog) + ",\n"
+      + "       jdbcSchema: " + q(CalciteAssert.DB.foodmart.schema) + "\n"
+      + "     }\n";
+
+  public static final String FOODMART_MODEL = "{\n"
+      + "  version: '1.0',\n"
+      + "  defaultSchema: 'foodmart',\n"
+      + "   schemas: [\n"
+      + FOODMART_SCHEMA
+      + "   ]\n"
+      + "}";
 
   public static final ConnectionSpec SCOTT =
       Util.first(CalciteAssert.DB.scott,
@@ -217,7 +239,7 @@ public class JdbcTest {
   public static final String FOODMART_SCOTT_MODEL = "{\n"
       + "  version: '1.0',\n"
       + "   schemas: [\n"
-      + FoodmartSchema.FOODMART_SCHEMA
+      + FOODMART_SCHEMA
       + ",\n"
       + SCOTT_SCHEMA
       + "   ]\n"
@@ -244,16 +266,6 @@ public class JdbcTest {
 
   static Stream<String> explainFormats() {
     return Stream.of("text", "dot");
-  }
-
-  /** Runs a task (such as a test) with and without expansion. */
-  static void forEachExpand(Runnable r) {
-    try (TryThreadLocal.Memo ignored = Prepare.THREAD_EXPAND.push(false)) {
-      r.run();
-    }
-    try (TryThreadLocal.Memo ignored = Prepare.THREAD_EXPAND.push(true)) {
-      r.run();
-    }
   }
 
   /** Tests a modifiable view. */
@@ -826,7 +838,7 @@ public class JdbcTest {
     final int driverMajor = metaData.getDriverMajorVersion();
     final int driverMinor = metaData.getDriverMinorVersion();
     assertEquals(1, driverMajor);
-    assertTrue(driverMinor >= 0 && driverMinor < 40);
+    assertTrue(driverMinor >= 0 && driverMinor < 30);
 
     assertEquals("Calcite", metaData.getDatabaseProductName());
     final String databaseVersion =
@@ -1146,7 +1158,7 @@ public class JdbcTest {
     CalciteAssert.that()
         .with(CalciteConnectionProperty.LEX, Lex.JAVA)
         .with(CalciteConnectionProperty.FORCE_DECORRELATE, false)
-        .withSchema("s", new ReflectiveSchema(new HrSchema()))
+        .withSchema("s", new ReflectiveSchema(new JdbcTest.HrSchema()))
         .query(sql)
         .explainMatches("including all attributes ",
             CalciteAssert.checkResultContains("EnumerableCorrelate"));
@@ -1770,6 +1782,7 @@ public class JdbcTest {
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-35">[CALCITE-35]
    * Support parenthesized sub-clause in JOIN</a>. */
+  @Disabled
   @Test void testJoinJoin() {
     CalciteAssert.that()
         .with(CalciteAssert.Config.FOODMART_CLONE)
@@ -1794,22 +1807,24 @@ public class JdbcTest {
             + " or \"promotion\".\"media_type\" = 'Sunday Paper'\n"
             + " or \"promotion\".\"media_type\" = 'Street Handout')\n"
             + " and (\"product_class\".\"product_family\" = 'Drink')\n"
-            + " and (\"customer\".\"country\" = 'USA'\n"
-            + "   and \"customer\".\"state_province\" = 'WA'\n"
-            + "   and \"customer\".\"city\" = 'Bellingham')\n"
+            + " and (\"customer\".\"country\" = 'USA' and \"customer\".\"state_province\""
+            + " = 'WA' and \"customer\".\"city\" = 'Bellingham')\n"
             + "group by \"product_class\".\"product_family\",\n"
             + "   \"product_class\".\"product_department\",\n"
             + "   \"customer\".\"country\",\n"
             + "   \"customer\".\"state_province\",\n"
             + "   \"customer\".\"city\"\n"
-            + "order by \"product_class\".\"product_family\" asc nulls first,\n"
-            + "   \"product_class\".\"product_department\" asc nulls first,\n"
-            + "   \"customer\".\"country\" asc nulls first,\n"
-            + "   \"customer\".\"state_province\" asc nulls first,\n"
-            + "   \"customer\".\"city\" asc nulls first")
-        .returnsUnordered(
-            "c0=Drink; c1=Alcoholic Beverages; c2=USA; c3=WA; c4=Bellingham",
-            "c0=Drink; c1=Dairy; c2=USA; c3=WA; c4=Bellingham");
+            + "order by ISNULL(\"product_class\".\"product_family\") ASC,   \"product_class\".\"product_family\" ASC,\n"
+            + "   ISNULL(\"product_class\".\"product_department\") ASC,   \"product_class\".\"product_department\" ASC,\n"
+            + "   ISNULL(\"customer\".\"country\") ASC,   \"customer\".\"country\" ASC,\n"
+            + "   ISNULL(\"customer\".\"state_province\") ASC,   \"customer\".\"state_province\" ASC,\n"
+            + "   ISNULL(\"customer\".\"city\") ASC,   \"customer\".\"city\" ASC")
+        .returns("+-------+---------------------+-----+------+------------+\n"
+            + "| c0    | c1                  | c2  | c3   | c4         |\n"
+            + "+-------+---------------------+-----+------+------------+\n"
+            + "| Drink | Alcoholic Beverages | USA | WA   | Bellingham |\n"
+            + "| Drink | Dairy               | USA | WA   | Bellingham |\n"
+            + "+-------+---------------------+-----+------+------------+");
   }
 
   /** Four-way join. Used to take 80 seconds. */
@@ -2092,10 +2107,6 @@ public class JdbcTest {
   }
 
   @Test void testMultisetQuery() {
-    forEachExpand(this::checkMultisetQuery);
-  }
-
-  void checkMultisetQuery() {
     CalciteAssert.hr()
         .query("select multiset(\n"
             + "  select \"deptno\", \"empid\" from \"hr\".\"emps\") as a\n"
@@ -2104,10 +2115,6 @@ public class JdbcTest {
   }
 
   @Test void testMultisetQueryWithSingleColumn() {
-    forEachExpand(this::checkMultisetQueryWithSingleColumn);
-  }
-
-  void checkMultisetQueryWithSingleColumn() {
     CalciteAssert.hr()
         .query("select multiset(\n"
             + "  select \"deptno\" from \"hr\".\"emps\") as a\n"
@@ -2542,8 +2549,8 @@ public class JdbcTest {
         + "from \"hr\".\"emps\"";
     final String plan = ""
         + "      String case_when_value;\n"
-        + "              final org.apache.calcite.test.schemata.hr.Employee current = (org.apache"
-        + ".calcite.test.schemata.hr.Employee) inputEnumerator.current();\n"
+        + "              final org.apache.calcite.test.JdbcTest.Employee current = (org.apache"
+        + ".calcite.test.JdbcTest.Employee) inputEnumerator.current();\n"
         + "              if (current.empid > current.deptno * 10) {\n"
         + "                case_when_value = \"y\";\n"
         + "              } else {\n"
@@ -2566,8 +2573,8 @@ public class JdbcTest {
         + "from \"hr\".\"emps\"";
     final String plan = ""
         + "      String case_when_value;\n"
-        + "              final org.apache.calcite.test.schemata.hr.Employee current = (org.apache"
-        + ".calcite.test.schemata.hr.Employee) inputEnumerator.current();\n"
+        + "              final org.apache.calcite.test.JdbcTest.Employee current = (org.apache"
+        + ".calcite.test.JdbcTest.Employee) inputEnumerator.current();\n"
         + "              if (current.empid > current.deptno * 10) {\n"
         + "                case_when_value = current.name;\n"
         + "              } else {\n"
@@ -2589,8 +2596,8 @@ public class JdbcTest {
         + " \"deptno\"+case when CURRENT_PATH <> '' then 1 end)\n"
         + "from \"hr\".\"emps\"";
     final String plan = ""
-        + "              final org.apache.calcite.test.schemata.hr.Employee current"
-        + " = (org.apache.calcite.test.schemata.hr.Employee) inputEnumerator.current();\n"
+        + "              final org.apache.calcite.test.JdbcTest.Employee current"
+        + " = (org.apache.calcite.test.JdbcTest.Employee) inputEnumerator.current();\n"
         + "              final String input_value = current.name;\n"
         + "              Integer case_when_value;\n"
         + "              if ($L4J$C$org_apache_calcite_runtime_SqlFunctions_ne_) {\n"
@@ -2621,8 +2628,8 @@ public class JdbcTest {
         + "from\n"
         + "\"hr\".\"emps\"";
     final String plan = ""
-        + "              final org.apache.calcite.test.schemata.hr.Employee current ="
-        + " (org.apache.calcite.test.schemata.hr.Employee) inputEnumerator.current();\n"
+        + "              final org.apache.calcite.test.JdbcTest.Employee current ="
+        + " (org.apache.calcite.test.JdbcTest.Employee) inputEnumerator.current();\n"
         + "              final String input_value = current.name;\n"
         + "              final int input_value0 = current.deptno;\n"
         + "              Integer case_when_value;\n"
@@ -2685,8 +2692,8 @@ public class JdbcTest {
         + "from\n"
         + "\"hr\".\"emps\"";
     final String plan = ""
-        + "              final org.apache.calcite.test.schemata.hr.Employee current ="
-        + " (org.apache.calcite.test.schemata.hr.Employee) inputEnumerator.current();\n"
+        + "              final org.apache.calcite.test.JdbcTest.Employee current ="
+        + " (org.apache.calcite.test.JdbcTest.Employee) inputEnumerator.current();\n"
         + "              final String input_value = current.name;\n"
         + "              final int input_value0 = current.deptno;\n"
         + "              Integer case_when_value;\n"
@@ -3478,21 +3485,6 @@ public class JdbcTest {
             + "EXPR$0=500\n"
             + "EXPR$0=100\n"
             + "EXPR$0=250\n");
-  }
-
-  @Test void testSelectValuesIncludeNull() {
-    CalciteAssert.that()
-        .query("select * from (values (null))")
-        .returns("EXPR$0=null\n");
-  }
-
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-4757">[CALCITE-4757]
-   * In Avatica, support columns of type "NULL" in query results</a>. */
-  @Test void testSelectValuesIncludeNull2() {
-    CalciteAssert.that()
-        .query("select * from (values (null, true))")
-        .returns("EXPR$0=null; EXPR$1=true\n");
   }
 
   @Test void testSelectDistinct() {
@@ -4810,7 +4802,7 @@ public class JdbcTest {
     CalciteAssert.that()
         .withSchema("s",
             new ReflectiveSchema(
-                new CatchallSchema()))
+                new ReflectiveSchemaTest.CatchallSchema()))
         .query("select a.\"value\", b.\"value\"\n"
             + "  from \"bools\" a\n"
             + "     , \"bools\" b\n"
@@ -4831,7 +4823,7 @@ public class JdbcTest {
     CalciteAssert.that()
         .withSchema("s",
             new ReflectiveSchema(
-                new CatchallSchema()))
+                new ReflectiveSchemaTest.CatchallSchema()))
         .query(sql)
         .returnsUnordered("value=T; value=T",
             "value=T; value=F",
@@ -4867,7 +4859,7 @@ public class JdbcTest {
   }
 
   @Test void testVarcharEquals() {
-    CalciteAssert.model(FoodmartSchema.FOODMART_MODEL)
+    CalciteAssert.model(FOODMART_MODEL)
         .query("select \"lname\" from \"customer\" where \"lname\" = 'Nowmer'")
         .returns("lname=Nowmer\n");
 
@@ -4876,12 +4868,12 @@ public class JdbcTest {
     // type, thus lname would be cast to a varchar(40) in this case.
     // These sorts of casts are removed though when constructing the jdbc
     // sql, since e.g. HSQLDB does not support them.
-    CalciteAssert.model(FoodmartSchema.FOODMART_MODEL)
+    CalciteAssert.model(FOODMART_MODEL)
         .query("select count(*) as c from \"customer\" "
             + "where \"lname\" = 'this string is longer than 30 characters'")
         .returns("C=0\n");
 
-    CalciteAssert.model(FoodmartSchema.FOODMART_MODEL)
+    CalciteAssert.model(FOODMART_MODEL)
         .query("select count(*) as c from \"customer\" "
             + "where cast(\"customer_id\" as char(20)) = 'this string is longer than 30 characters'")
         .returns("C=0\n");
@@ -4894,7 +4886,7 @@ public class JdbcTest {
     final String sql = "select count(*) as c\n"
         + "from \"customer\" as c\n"
         + "join \"product\" as p on c.\"lname\" = p.\"brand_name\"";
-    CalciteAssert.model(FoodmartSchema.FOODMART_MODEL)
+    CalciteAssert.model(FOODMART_MODEL)
         .query(sql)
         .returns("C=607\n");
   }
@@ -4904,7 +4896,7 @@ public class JdbcTest {
         + "  select \"lname\" from \"customer\" as c\n"
         + "  intersect\n"
         + "  select \"brand_name\" from \"product\" as p)";
-    CalciteAssert.model(FoodmartSchema.FOODMART_MODEL)
+    CalciteAssert.model(FOODMART_MODEL)
         .query(sql)
         .returns("C=12\n");
   }
@@ -4970,12 +4962,12 @@ public class JdbcTest {
   }
 
   @Test void testTrim() {
-    CalciteAssert.model(FoodmartSchema.FOODMART_MODEL)
+    CalciteAssert.model(FOODMART_MODEL)
         .query("select trim(\"lname\") as \"lname\" "
             + "from \"customer\" where \"lname\" = 'Nowmer'")
         .returns("lname=Nowmer\n");
 
-    CalciteAssert.model(FoodmartSchema.FOODMART_MODEL)
+    CalciteAssert.model(FOODMART_MODEL)
         .query("select trim(leading 'N' from \"lname\") as \"lname\" "
             + "from \"customer\" where \"lname\" = 'Nowmer'")
         .returns("lname=owmer\n");
@@ -5066,6 +5058,7 @@ public class JdbcTest {
         .convertMatches(relNode -> {
           String s = RelOptUtil.toString(relNode);
           assertThat(s, not(containsString("Correlate")));
+          return null;
         });
   }
 
@@ -5427,32 +5420,10 @@ public class JdbcTest {
         });
   }
 
-  /**
-   * Test case for <a href="https://issues.apache.org/jira/browse/CALCITE-5048">[CALCITE-5048]
-   * Query with parameterized LIMIT and correlated sub-query throws AssertionError "not a
-   * literal"</a>.
-   */
-  @Test void testDynamicParameterInLimitOffset() {
-    CalciteAssert.hr()
-        .query("SELECT * FROM \"hr\".\"emps\" AS a "
-            + "WHERE \"deptno\" = "
-            + "(SELECT MAX(\"deptno\") "
-            + "FROM \"hr\".\"emps\" AS b "
-            + "WHERE a.\"empid\" = b.\"empid\""
-            + ") ORDER BY \"salary\" LIMIT ? OFFSET ?")
-        .explainContains("EnumerableLimit(offset=[?1], fetch=[?0])")
-        .consumesPreparedStatement(p -> {
-          p.setInt(1, 2);
-          p.setInt(2, 1);
-        })
-        .returns("empid=200; deptno=20; name=Eric; salary=8000.0; commission=500\n"
-            + "empid=100; deptno=10; name=Bill; salary=10000.0; commission=1000\n");
-  }
-
   /** Tests a JDBC connection that provides a model (a single schema based on
    * a JDBC database). */
   @Test void testModel() {
-    CalciteAssert.model(FoodmartSchema.FOODMART_MODEL)
+    CalciteAssert.model(FOODMART_MODEL)
         .query("select count(*) as c from \"foodmart\".\"time_by_day\"")
         .returns("C=730\n");
   }
@@ -5465,8 +5436,8 @@ public class JdbcTest {
    * Allow comments in schema definitions</a>. */
   @Test void testModelWithComment() {
     final String model =
-        FoodmartSchema.FOODMART_MODEL.replace("schemas:", "/* comment */ schemas:");
-    assertThat(model, not(equalTo(FoodmartSchema.FOODMART_MODEL)));
+        FOODMART_MODEL.replace("schemas:", "/* comment */ schemas:");
+    assertThat(model, not(equalTo(FOODMART_MODEL)));
     CalciteAssert.model(model)
         .query("select count(*) as c from \"foodmart\".\"time_by_day\"")
         .returns("C=730\n");
@@ -5477,13 +5448,13 @@ public class JdbcTest {
    * are more comprehensive tests in {@link MaterializationTest}. */
   @Disabled("until JdbcSchema can define materialized views")
   @Test void testModelWithMaterializedView() {
-    CalciteAssert.model(FoodmartSchema.FOODMART_MODEL)
+    CalciteAssert.model(FOODMART_MODEL)
         .enable(false)
         .query(
             "select count(*) as c from \"foodmart\".\"sales_fact_1997\" join \"foodmart\".\"time_by_day\" using (\"time_id\")")
         .returns("C=86837\n");
     CalciteAssert.that().withMaterializations(
-        FoodmartSchema.FOODMART_MODEL,
+        FOODMART_MODEL,
         "agg_c_10_sales_fact_1997",
             "select t.`month_of_year`, t.`quarter`, t.`the_year`, sum(s.`store_sales`) as `store_sales`, sum(s.`store_cost`), sum(s.`unit_sales`), count(distinct s.`customer_id`), count(*) as `fact_count` from `time_by_day` as t join `sales_fact_1997` as s using (`time_id`) group by t.`month_of_year`, t.`quarter`, t.`the_year`")
         .query(
@@ -5900,178 +5871,6 @@ public class JdbcTest {
     });
   }
 
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-4323">[CALCITE-4323]
-   * View with ORDER BY throws AssertionError during view expansion</a>. */
-  @Test void testSortedView() {
-    final String viewSql = "select * from \"EMPLOYEES\" order by \"deptno\"";
-    final CalciteAssert.AssertThat with = modelWithView(viewSql, null);
-    // Keep sort, because view is top node
-    with.query("select * from \"adhoc\".V")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalProject(empid=[$0], deptno=[$1], name=[$2], "
-                + "salary=[$3], commission=[$4])\n"
-                + "  LogicalSort(sort0=[$1], dir0=[ASC])\n"
-                + "    LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "      LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    // Remove sort, because view not is top node
-    with.query("select * from \"adhoc\".V union all select * from  \"adhoc\".\"EMPLOYEES\"")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalUnion(all=[true])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from "
-            + "(select \"empid\", \"deptno\" from  \"adhoc\".V) where \"deptno\" > 10")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalProject(empid=[$0], deptno=[$1])\n"
-                + "  LogicalFilter(condition=[>($1, 10)])\n"
-                + "    LogicalProject(empid=[$0], deptno=[$1])\n"
-                + "      LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from \"adhoc\".\"EMPLOYEES\" where exists (select * from \"adhoc\".V)")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalProject(empid=[$0], deptno=[$1], name=[$2], "
-                + "salary=[$3], commission=[$4])\n"
-                + "  LogicalFilter(condition=[EXISTS({\n"
-                + "LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n"
-                + "})])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    // View is used in a query at top level，but it's not the top plan
-    // Still remove sort
-    with.query("select * from \"adhoc\".V order by \"empid\"")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(sort0=[$0], dir0=[ASC])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from \"adhoc\".V, \"adhoc\".\"EMPLOYEES\"")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalProject(empid=[$0], deptno=[$1], name=[$2], "
-                + "salary=[$3], commission=[$4], empid0=[$5], deptno0=[$6], name0=[$7], salary0=[$8],"
-                + " commission0=[$9])\n"
-                + "  LogicalJoin(condition=[true], joinType=[inner])\n"
-                + "    LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "      LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select \"empid\", count(*) from \"adhoc\".V group by \"empid\"")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalAggregate(group=[{0}], EXPR$1=[COUNT()])\n"
-                + "  LogicalProject(empid=[$0])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select distinct * from \"adhoc\".V")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalAggregate(group=[{0, 1, 2, 3, 4}])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-  }
-
-  @Test void testCustomRemoveSortInView() {
-    final String viewSql = "select * from \"EMPLOYEES\" order by \"deptno\"";
-    final CalciteAssert.AssertThat with = modelWithView(viewSql, null);
-    // Some cases where we may or may not want to keep the Sort
-    with.query("select * from \"adhoc\".V where \"deptno\" > 10")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalProject(empid=[$0], deptno=[$1], name=[$2], "
-                + "salary=[$3], commission=[$4])\n"
-                + "  LogicalFilter(condition=[>($1, 10)])\n"
-                + "    LogicalSort(sort0=[$1], dir0=[ASC])\n"
-                + "      LogicalProject(empid=[$0], deptno=[$1], name=[$2], "
-                + "salary=[$3], commission=[$4])\n"
-                + "        LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from \"adhoc\".V where \"deptno\" > 10")
-        .withHook(Hook.SQL2REL_CONVERTER_CONFIG_BUILDER,
-            (Consumer<Holder<Config>>) configHolder ->
-                configHolder.set(configHolder.get().withRemoveSortInSubQuery(false)))
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalProject(empid=[$0], deptno=[$1], name=[$2], "
-                + "salary=[$3], commission=[$4])\n"
-                + "  LogicalFilter(condition=[>($1, 10)])\n"
-                + "    LogicalSort(sort0=[$1], dir0=[ASC])\n"
-                + "      LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "        LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-
-    with.query("select * from \"adhoc\".V limit 10")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(fetch=[10])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from \"adhoc\".V limit 10")
-        .withHook(Hook.SQL2REL_CONVERTER_CONFIG_BUILDER,
-            (Consumer<Holder<Config>>) configHolder ->
-                configHolder.set(configHolder.get().withRemoveSortInSubQuery(false)))
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(fetch=[10])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalSort(sort0=[$1], dir0=[ASC])\n"
-                + "      LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "        LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-
-    with.query("select * from \"adhoc\".V offset 10")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(offset=[10])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from \"adhoc\".V offset 10")
-        .withHook(Hook.SQL2REL_CONVERTER_CONFIG_BUILDER,
-            (Consumer<Holder<Config>>) configHolder ->
-                configHolder.set(configHolder.get().withRemoveSortInSubQuery(false)))
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(offset=[10])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalSort(sort0=[$1], dir0=[ASC])\n"
-                + "      LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "        LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-
-
-    with.query("select * from \"adhoc\".V limit 5 offset 5")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(offset=[5], fetch=[5])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from \"adhoc\".V limit 5 offset 5")
-        .withHook(Hook.SQL2REL_CONVERTER_CONFIG_BUILDER,
-            (Consumer<Holder<Config>>) configHolder ->
-                configHolder.set(configHolder.get().withRemoveSortInSubQuery(false)))
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(offset=[5], fetch=[5])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalSort(sort0=[$1], dir0=[ASC])\n"
-                + "      LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "        LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-  }
-
   /** Tests a view with ORDER BY and LIMIT clauses. */
   @Test void testOrderByView() throws Exception {
     final CalciteAssert.AssertThat with =
@@ -6171,16 +5970,19 @@ public class JdbcTest {
   @Test void testAutomaticTemporaryTable() throws Exception {
     final List<Object> objects = new ArrayList<>();
     CalciteAssert.that()
-        .with(() -> {
-          CalciteConnection connection = (CalciteConnection)
-              new AutoTempDriver(objects)
-                  .connect("jdbc:calcite:", new Properties());
-          final SchemaPlus rootSchema = connection.getRootSchema();
-          rootSchema.add("hr",
-              new ReflectiveSchema(new HrSchema()));
-          connection.setSchema("hr");
-          return connection;
-        })
+        .with(
+            new CalciteAssert.ConnectionFactory() {
+              public CalciteConnection createConnection() throws SQLException {
+                CalciteConnection connection = (CalciteConnection)
+                    new AutoTempDriver(objects)
+                        .connect("jdbc:calcite:", new Properties());
+                final SchemaPlus rootSchema = connection.getRootSchema();
+                rootSchema.add("hr",
+                    new ReflectiveSchema(new HrSchema()));
+                connection.setSchema("hr");
+                return connection;
+              }
+            })
         .doWithConnection(connection -> {
           try {
             final String sql = "select * from \"hr\".\"emps\" "
@@ -6940,7 +6742,7 @@ public class JdbcTest {
         .throws_("No match found for function signature NVL(<NUMERIC>, <NUMERIC>)");
   }
 
-  @Test void testIf() {
+  @Test public void testIf() {
     CalciteAssert.that(CalciteAssert.Config.REGULAR)
         .with(CalciteConnectionProperty.FUN, "bigquery")
         .query("select if(1 = 1,1,2) as r")
@@ -6955,7 +6757,7 @@ public class JdbcTest {
         .returnsUnordered("R=1");
   }
 
-  @Test void testIfWithExpression() {
+  @Test public void testIfWithExpression() {
     CalciteAssert.that(CalciteAssert.Config.REGULAR)
         .with(CalciteConnectionProperty.FUN, "bigquery")
         .query("select if(TRIM('a ') = 'a','a','b') as r")
@@ -7113,7 +6915,7 @@ public class JdbcTest {
     assertThat(aSchema.getSubSchemaNames().size(), is(2));
   }
 
-  @Test void testCaseSensitiveConfigurableSimpleCalciteSchema() throws Exception {
+  @Test public void testCaseSensitiveConfigurableSimpleCalciteSchema() throws Exception {
     final SchemaPlus rootSchema = CalciteSchema.createRootSchema(false, false).plus();
     // create schema "/a"
     final Map<String, Schema> dummySubSchemaMap = new HashMap<>();
@@ -7581,7 +7383,7 @@ public class JdbcTest {
     }
   }
 
-  @Test void testBindableIntersect() {
+  @Test public void testBindableIntersect() {
     try (Hook.Closeable ignored = Hook.ENABLE_BINDABLE.addThread(Hook.propertyJ(true))) {
       final String sql0 = "select \"empid\", \"deptno\" from \"hr\".\"emps\"";
       final String sql = sql0 + " intersect all " + sql0;
@@ -7601,7 +7403,7 @@ public class JdbcTest {
     }
   }
 
-  @Test void testBindableMinus() {
+  @Test public void testBindableMinus() {
     try (Hook.Closeable ignored = Hook.ENABLE_BINDABLE.addThread(Hook.propertyJ(true))) {
       final String sql0 = "select \"empid\", \"deptno\" from \"hr\".\"emps\"";
       final String sql = sql0 + " except all " + sql0;
@@ -7708,7 +7510,7 @@ public class JdbcTest {
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-2010">[CALCITE-2010]
    * Fails to plan query that is UNION ALL applied to VALUES</a>. */
-  @Test void testUnionAllValues() {
+  @Test public void testUnionAllValues() {
     CalciteAssert.hr()
         .query("select x, y from (values (1, 2)) as t(x, y)\n"
             + "union all\n"
@@ -7746,13 +7548,14 @@ public class JdbcTest {
         + "  pattern (up s)\n"
         + "  define up as up.\"empid\" = 100)";
     final String convert = ""
-        + "LogicalMatch(partition=[[]], order=[[0 DESC]], "
+        + "LogicalProject(C=[$0], EMPID=[$1], TWO=[$2])\n"
+        + "  LogicalMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID, TWO]], allRows=[false], "
         + "after=[FLAG(SKIP TO NEXT ROW)], pattern=[('UP', 'S')], "
         + "isStrictStarts=[false], isStrictEnds=[false], subsets=[[]], "
         + "patternDefinitions=[[=(CAST(PREV(UP.$0, 0)):INTEGER NOT NULL, 100)]], "
         + "inputFields=[[empid, deptno, name, salary, commission]])\n"
-        + "  LogicalTableScan(table=[[hr, emps]])\n";
+        + "    LogicalTableScan(table=[[hr, emps]])\n";
     final String plan = "PLAN="
         + "EnumerableMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID, TWO]], allRows=[false], "
@@ -7778,13 +7581,14 @@ public class JdbcTest {
         + "  pattern (s up)\n"
         + "  define up as up.\"commission\" < prev(up.\"commission\"))";
     final String convert = ""
-        + "LogicalMatch(partition=[[]], order=[[0 DESC]], "
+        + "LogicalProject(C=[$0], EMPID=[$1])\n"
+        + "  LogicalMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID]], allRows=[false], "
         + "after=[FLAG(SKIP TO NEXT ROW)], pattern=[('S', 'UP')], "
         + "isStrictStarts=[false], isStrictEnds=[false], subsets=[[]], "
         + "patternDefinitions=[[<(PREV(UP.$4, 0), PREV(UP.$4, 1))]], "
         + "inputFields=[[empid, deptno, name, salary, commission]])\n"
-        + "  LogicalTableScan(table=[[hr, emps]])\n";
+        + "    LogicalTableScan(table=[[hr, emps]])\n";
     final String plan = "PLAN="
         + "EnumerableMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID]], allRows=[false], "
@@ -7949,53 +7753,13 @@ public class JdbcTest {
    * <a href="https://issues.apache.org/jira/browse/CALCITE-3894">[CALCITE-3894]
    * SET operation between DATE and TIMESTAMP returns a wrong result</a>.
    */
-  @Test void testUnionDateTime() {
+  @Test public void testUnionDateTime() {
     CalciteAssert.AssertThat assertThat = CalciteAssert.that();
     String query = "select * from (\n"
         + "select \"id\" from (VALUES(DATE '2018-02-03')) \"foo\"(\"id\")\n"
         + "union\n"
         + "select \"id\" from (VALUES(TIMESTAMP '2008-03-31 12:23:34')) \"foo\"(\"id\"))";
     assertThat.query(query).returns("id=2008-03-31 12:23:34\nid=2018-02-03 00:00:00\n");
-  }
-
-  @Test void testNestedCastBigInt() {
-    CalciteAssert.AssertThat assertThat = CalciteAssert.that();
-    String query = "SELECT CAST(CAST(4200000000 AS BIGINT) AS ANY) FROM (VALUES(1))";
-    assertThat.query(query).returns("EXPR$0=4200000000\n");
-  }
-
-  /**
-   * Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-4811">[CALCITE-4811]
-   * Check for internal content in case of ROW in
-   * RelDataTypeFactoryImpl#leastRestrictiveStructuredType should be after isStruct check</a>.
-   */
-  @Test void testCoalesceNullAndRow() {
-    CalciteAssert.that()
-        .query("SELECT COALESCE(NULL, ROW(1)) AS F")
-        .typeIs("[F STRUCT]")
-        .returns("F={1}\n");
-  }
-
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-4600">[CALCITE-4600]
-   * ClassCastException retrieving from an ARRAY that has DATE, TIME or
-   * TIMESTAMP elements</a>. */
-  @Test void testArrayOfDates() {
-    CalciteAssert.that()
-        .query("select array[cast('1900-1-1' as date)]")
-        .returns("EXPR$0=[1900-01-01]\n");
-  }
-
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-4602">[CALCITE-4602]
-   * ClassCastException retrieving from ARRAY that has mixed INTEGER and DECIMAL
-   * elements</a>. */
-  @Test void testIntAndBigDecimalInArray() {
-    // Result should be "EXPR$0=[1, 1.1]\n"; [CALCITE-4850] logged.
-    CalciteAssert.that()
-        .query("select array[1, 1.1]")
-        .returns("EXPR$0=[0E+1, 1.1]\n");
   }
 
   private static String sums(int n, boolean c) {
@@ -8013,6 +7777,311 @@ public class JdbcTest {
 
   // Disable checkstyle, so it doesn't complain about fields like "customer_id".
   //CHECKSTYLE: OFF
+
+  /** A schema that contains two tables by reflection.
+   *
+   * <p>Here is the SQL to create equivalent tables in Oracle:
+   *
+   * <blockquote>
+   * <pre>
+   * CREATE TABLE "emps" (
+   *   "empid" INTEGER NOT NULL,
+   *   "deptno" INTEGER NOT NULL,
+   *   "name" VARCHAR2(10) NOT NULL,
+   *   "salary" NUMBER(6, 2) NOT NULL,
+   *   "commission" INTEGER);
+   * INSERT INTO "emps" VALUES (100, 10, 'Bill', 10000, 1000);
+   * INSERT INTO "emps" VALUES (200, 20, 'Eric', 8000, 500);
+   * INSERT INTO "emps" VALUES (150, 10, 'Sebastian', 7000, null);
+   * INSERT INTO "emps" VALUES (110, 10, 'Theodore', 11500, 250);
+   *
+   * CREATE TABLE "depts" (
+   *   "deptno" INTEGER NOT NULL,
+   *   "name" VARCHAR2(10) NOT NULL,
+   *   "employees" ARRAY OF "Employee",
+   *   "location" "Location");
+   * INSERT INTO "depts" VALUES (10, 'Sales', null, (-122, 38));
+   * INSERT INTO "depts" VALUES (30, 'Marketing', null, (0, 52));
+   * INSERT INTO "depts" VALUES (40, 'HR', null, null);
+   * </pre>
+   * </blockquote>
+   */
+  public static class HrSchema {
+    @Override public String toString() {
+      return "HrSchema";
+    }
+
+    public final Employee[] emps = {
+      new Employee(100, 10, "Bill", 10000, 1000),
+      new Employee(200, 20, "Eric", 8000, 500),
+      new Employee(150, 10, "Sebastian", 7000, null),
+      new Employee(110, 10, "Theodore", 11500, 250),
+    };
+    public final Department[] depts = {
+      new Department(10, "Sales", Arrays.asList(emps[0], emps[2]),
+          new Location(-122, 38)),
+      new Department(30, "Marketing", ImmutableList.of(), new Location(0, 52)),
+      new Department(40, "HR", Collections.singletonList(emps[1]), null),
+    };
+    public final Dependent[] dependents = {
+      new Dependent(10, "Michael"),
+      new Dependent(10, "Jane"),
+    };
+    public final Dependent[] locations = {
+      new Dependent(10, "San Francisco"),
+      new Dependent(20, "San Diego"),
+    };
+
+    public QueryableTable foo(int count) {
+      return Smalls.generateStrings(count);
+    }
+
+    public TranslatableTable view(String s) {
+      return Smalls.view(s);
+    }
+  }
+
+  public static class HrSchemaBig {
+    @Override public String toString() {
+      return "HrSchema";
+    }
+
+    public final Employee[] emps = {
+        new Employee(1, 10, "Bill", 10000, 1000),
+        new Employee(2, 20, "Eric", 8000, 500),
+        new Employee(3, 10, "Sebastian", 7000, null),
+        new Employee(4, 10, "Theodore", 11500, 250),
+        new Employee(5, 10, "Marjorie", 10000, 1000),
+        new Employee(6, 20, "Guy", 8000, 500),
+        new Employee(7, 10, "Dieudonne", 7000, null),
+        new Employee(8, 10, "Haroun", 11500, 250),
+        new Employee(9, 10, "Sarah", 10000, 1000),
+        new Employee(10, 20, "Gabriel", 8000, 500),
+        new Employee(11, 10, "Pierre", 7000, null),
+        new Employee(12, 10, "Paul", 11500, 250),
+        new Employee(13, 10, "Jacques", 100, 1000),
+        new Employee(14, 20, "Khawla", 8000, 500),
+        new Employee(15, 10, "Brielle", 7000, null),
+        new Employee(16, 10, "Hyuna", 11500, 250),
+        new Employee(17, 10, "Ahmed", 10000, 1000),
+        new Employee(18, 20, "Lara", 8000, 500),
+        new Employee(19, 10, "Capucine", 7000, null),
+        new Employee(20, 10, "Michelle", 11500, 250),
+        new Employee(21, 10, "Cerise", 10000, 1000),
+        new Employee(22, 80, "Travis", 8000, 500),
+        new Employee(23, 10, "Taylor", 7000, null),
+        new Employee(24, 10, "Seohyun", 11500, 250),
+        new Employee(25, 70, "Helen", 10000, 1000),
+        new Employee(26, 50, "Patric", 8000, 500),
+        new Employee(27, 10, "Clara", 7000, null),
+        new Employee(28, 10, "Catherine", 11500, 250),
+        new Employee(29, 10, "Anibal", 10000, 1000),
+        new Employee(30, 30, "Ursula", 8000, 500),
+        new Employee(31, 10, "Arturito", 7000, null),
+        new Employee(32, 70, "Diane", 11500, 250),
+        new Employee(33, 10, "Phoebe", 10000, 1000),
+        new Employee(34, 20, "Maria", 8000, 500),
+        new Employee(35, 10, "Edouard", 7000, null),
+        new Employee(36, 110, "Isabelle", 11500, 250),
+        new Employee(37, 120, "Olivier", 10000, 1000),
+        new Employee(38, 20, "Yann", 8000, 500),
+        new Employee(39, 60, "Ralf", 7000, null),
+        new Employee(40, 60, "Emmanuel", 11500, 250),
+        new Employee(41, 10, "Berenice", 10000, 1000),
+        new Employee(42, 20, "Kylie", 8000, 500),
+        new Employee(43, 80, "Natacha", 7000, null),
+        new Employee(44, 100, "Henri", 11500, 250),
+        new Employee(45, 90, "Pascal", 10000, 1000),
+        new Employee(46, 90, "Sabrina", 8000, 500),
+        new Employee(47, 8, "Riyad", 7000, null),
+        new Employee(48, 5, "Andy", 11500, 250),
+    };
+    public final Department[] depts = {
+        new Department(10, "Sales", Arrays.asList(emps[0], emps[2]),
+            new Location(-122, 38)),
+        new Department(20, "Marketing", ImmutableList.of(), new Location(0, 52)),
+        new Department(30, "HR", Collections.singletonList(emps[1]), null),
+        new Department(40, "Administration", Arrays.asList(emps[0], emps[2]),
+            new Location(-122, 38)),
+        new Department(50, "Design", ImmutableList.of(), new Location(0, 52)),
+        new Department(60, "IT", Collections.singletonList(emps[1]), null),
+        new Department(70, "Production", Arrays.asList(emps[0], emps[2]),
+            new Location(-122, 38)),
+        new Department(80, "Finance", ImmutableList.of(), new Location(0, 52)),
+        new Department(90, "Accounting", Collections.singletonList(emps[1]), null),
+        new Department(100, "Research", Arrays.asList(emps[0], emps[2]),
+            new Location(-122, 38)),
+        new Department(110, "Maintenance", ImmutableList.of(), new Location(0, 52)),
+        new Department(120, "Client Support", Collections.singletonList(emps[1]), null),
+    };
+  }
+
+  public static class Employee {
+    public final int empid;
+    public final int deptno;
+    public final String name;
+    public final float salary;
+    public final Integer commission;
+
+    public Employee(int empid, int deptno, String name, float salary,
+        Integer commission) {
+      this.empid = empid;
+      this.deptno = deptno;
+      this.name = name;
+      this.salary = salary;
+      this.commission = commission;
+    }
+
+    @Override public String toString() {
+      return "Employee [empid: " + empid + ", deptno: " + deptno
+          + ", name: " + name + "]";
+    }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof Employee
+          && empid == ((Employee) obj).empid;
+    }
+  }
+
+  public static class Department {
+    public final int deptno;
+    public final String name;
+
+    @org.apache.calcite.adapter.java.Array(component = Employee.class)
+    public final List<Employee> employees;
+    public final Location location;
+
+    public Department(int deptno, String name, List<Employee> employees,
+        Location location) {
+      this.deptno = deptno;
+      this.name = name;
+      this.employees = employees;
+      this.location = location;
+    }
+
+    @Override public String toString() {
+      return "Department [deptno: " + deptno + ", name: " + name
+          + ", employees: " + employees + ", location: " + location + "]";
+    }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof Department
+          && deptno == ((Department) obj).deptno;
+    }
+  }
+
+  public static class DepartmentPlus extends Department {
+    public final Timestamp inceptionDate;
+
+    public DepartmentPlus(int deptno, String name, List<Employee> employees,
+        Location location, Timestamp inceptionDate) {
+      super(deptno, name, employees, location);
+      this.inceptionDate = inceptionDate;
+    }
+  }
+
+  public static class Location {
+    public final int x;
+    public final int y;
+
+    public Location(int x, int y) {
+      this.x = x;
+      this.y = y;
+    }
+
+    @Override public String toString() {
+      return "Location [x: " + x + ", y: " + y + "]";
+    }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof Location
+          && x == ((Location) obj).x
+          && y == ((Location) obj).y;
+    }
+  }
+
+  public static class Dependent {
+    public final int empid;
+    public final String name;
+
+    public Dependent(int empid, String name) {
+      this.empid = empid;
+      this.name = name;
+    }
+
+    @Override public String toString() {
+      return "Dependent [empid: " + empid + ", name: " + name + "]";
+    }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof Dependent
+          && empid == ((Dependent) obj).empid
+          && Objects.equals(name, ((Dependent) obj).name);
+    }
+  }
+
+  public static class Event {
+    public final int eventid;
+    public final Timestamp ts;
+
+    public Event(int eventid, Timestamp ts) {
+      this.eventid = eventid;
+      this.ts = ts;
+    }
+
+    @Override public String toString() {
+      return "Event [eventid: " + eventid + ", ts: " + ts + "]";
+    }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof Event
+          && eventid == ((Event) obj).eventid;
+    }
+  }
+
+  public static class FoodmartSchema {
+    public final SalesFact[] sales_fact_1997 = {
+      new SalesFact(100, 10),
+      new SalesFact(150, 20),
+    };
+  }
+
+  public static class FoodmartSchemaIterable {
+    @org.apache.calcite.adapter.java.Array(component = SalesFact.class)
+    public final Iterable<SalesFact> sales_fact_1997;
+
+    public FoodmartSchemaIterable(Iterable<SalesFact> sales_fact_1997) {
+      this.sales_fact_1997 = sales_fact_1997;
+    }
+  }
+
+  public static class LingualSchema {
+    public final LingualEmp[] EMPS = {
+      new LingualEmp(1, 10),
+      new LingualEmp(2, 30)
+    };
+  }
+
+  public static class LingualEmp {
+    public final int EMPNO;
+    public final int DEPTNO;
+
+    public LingualEmp(int EMPNO, int DEPTNO) {
+      this.EMPNO = EMPNO;
+      this.DEPTNO = DEPTNO;
+    }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof LingualEmp
+          && EMPNO == ((LingualEmp) obj).EMPNO;
+    }
+  }
 
   public static class FoodmartJdbcSchema extends JdbcSchema {
     public FoodmartJdbcSchema(DataSource dataSource, SqlDialect dialect,
@@ -8037,7 +8106,51 @@ public class JdbcTest {
     }
   }
 
+  public static class SalesFact {
+    public final int cust_id;
+    public final int prod_id;
+
+    public SalesFact(int cust_id, int prod_id) {
+      this.cust_id = cust_id;
+      this.prod_id = prod_id;
+    }
+
+    @Override public boolean equals(Object obj) {
+      return obj == this
+          || obj instanceof SalesFact
+          && cust_id == ((SalesFact) obj).cust_id
+          && prod_id == ((SalesFact) obj).prod_id;
+    }
+  }
+
   //CHECKSTYLE: ON
+
+  /** Abstract base class for implementations of {@link ModifiableTable}. */
+  public abstract static class AbstractModifiableTable
+      extends AbstractTable implements ModifiableTable {
+    protected AbstractModifiableTable(String tableName) {
+    }
+
+    public TableModify toModificationRel(
+        RelOptCluster cluster,
+        RelOptTable table,
+        Prepare.CatalogReader catalogReader,
+        RelNode child,
+        TableModify.Operation operation,
+        List<String> updateColumnList,
+        List<RexNode> sourceExpressionList,
+        boolean flattened) {
+      return LogicalTableModify.create(table, catalogReader, child, operation,
+          updateColumnList, sourceExpressionList, flattened);
+    }
+  }
+
+  /** Abstract base class for implementations of {@link ModifiableView}. */
+  public abstract static class AbstractModifiableView
+      extends AbstractTable implements ModifiableView {
+    protected AbstractModifiableView() {
+    }
+  }
 
   /** Factory for EMP and DEPT tables. */
   public static class EmpDeptTableFactory implements TableFactory<Table> {

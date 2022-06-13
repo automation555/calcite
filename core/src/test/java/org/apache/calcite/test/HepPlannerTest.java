@@ -23,6 +23,8 @@ import org.apache.calcite.plan.hep.HepPlanner;
 import org.apache.calcite.plan.hep.HepProgram;
 import org.apache.calcite.plan.hep.HepProgramBuilder;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelRoot;
+import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.externalize.RelDotWriter;
 import org.apache.calcite.rel.logical.LogicalIntersect;
 import org.apache.calcite.rel.logical.LogicalUnion;
@@ -50,7 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * convenience only, whereas the tests in that class are targeted at exercising
  * specific rules, and use the planner for convenience only. Hence the split.
  */
-class HepPlannerTest {
+class HepPlannerTest extends RelOptTestBase {
   //~ Static fields/initializers ---------------------------------------------
 
   private static final String UNION_TREE =
@@ -83,14 +85,8 @@ class HepPlannerTest {
 
   //~ Methods ----------------------------------------------------------------
 
-  public RelOptFixture fixture() {
-    return RelOptFixture.DEFAULT
-        .withDiffRepos(DiffRepository.lookup(HepPlannerTest.class));
-  }
-
-  /** Sets the SQL statement for a test. */
-  public final RelOptFixture sql(String sql) {
-    return fixture().sql(sql);
+  protected DiffRepository getDiffRepos() {
+    return DiffRepository.lookup(HepPlannerTest.class);
   }
 
   @Test void testRuleClass() {
@@ -117,7 +113,7 @@ class HepPlannerTest {
 
     final String sql = "(select name from dept union select ename from emp)\n"
         + "intersect (select fname from customer.contact)";
-    sql(sql).withPlanner(planner).check();
+    sql(sql).with(planner).check();
   }
 
   @Test void testRuleDescription() {
@@ -133,42 +129,38 @@ class HepPlannerTest {
     planner.addRule(CoreRules.FILTER_TO_CALC);
 
     final String sql = "select name from sales.dept where deptno=12";
-    sql(sql).withPlanner(planner).check();
+    sql(sql).with(planner).check();
   }
 
   /**
    * Ensures {@link org.apache.calcite.rel.AbstractRelNode} digest does not include
    * full digest tree.
    */
-  @Test void testRelDigestLength() {
+  @Test void relDigestLength() {
     HepProgramBuilder programBuilder = HepProgram.builder();
     HepPlanner planner =
         new HepPlanner(
             programBuilder.build());
-    RelNode root = sql(buildUnion(10)).toRel();
-    planner.setRoot(root);
-    RelNode best = planner.findBestExp();
-
-    // Good digest should look like
-    //   rel#66:LogicalProject(input=rel#64:LogicalUnion)
-    // Bad digest includes full tree, like
-    //   rel#66:LogicalProject(input=rel#64:LogicalUnion(...))
-    // So the assertion is to ensure digest includes LogicalUnion exactly once.
-    assertIncludesExactlyOnce("best.getDescription()",
-        best.toString(), "LogicalUnion");
-    assertIncludesExactlyOnce("best.getDigest()",
-        best.getDigest(), "LogicalUnion");
-  }
-
-  private static String buildUnion(int n) {
     StringBuilder sb = new StringBuilder();
+    final int n = 10;
     sb.append("select * from (");
     sb.append("select name from sales.dept");
     for (int i = 0; i < n; i++) {
       sb.append(" union all select name from sales.dept");
     }
     sb.append(")");
-    return sb.toString();
+    RelRoot root = tester.convertSqlToRel(sb.toString());
+    planner.setRoot(root.rel);
+    RelNode best = planner.findBestExp();
+
+    // Good digest should look like rel#66:LogicalProject(input=rel#64:LogicalUnion)
+    // Bad digest includes full tree like rel#66:LogicalProject(input=rel#64:LogicalUnion(...))
+    // So the assertion is to ensure digest includes LogicalUnion exactly once
+
+    assertIncludesExactlyOnce("best.getDescription()",
+        best.toString(), "LogicalUnion");
+    assertIncludesExactlyOnce("best.getDigest()",
+        best.getDigest(), "LogicalUnion");
   }
 
   @Test void testPlanToDot() {
@@ -176,8 +168,8 @@ class HepPlannerTest {
     HepPlanner planner =
         new HepPlanner(
             programBuilder.build());
-    RelNode root = sql("select name from sales.dept").toRel();
-    planner.setRoot(root);
+    RelRoot root = tester.convertSqlToRel("select name from sales.dept");
+    planner.setRoot(root.rel);
 
     StringWriter sw = new StringWriter();
     PrintWriter pw = new PrintWriter(sw);
@@ -215,7 +207,7 @@ class HepPlannerTest {
     programBuilder.addMatchLimit(1);
     programBuilder.addRuleInstance(CoreRules.UNION_TO_DISTINCT);
 
-    sql(UNION_TREE).withProgram(programBuilder.build()).check();
+    sql(UNION_TREE).with(programBuilder.build()).check();
   }
 
   @Test void testMatchLimitOneBottomUp() {
@@ -226,7 +218,7 @@ class HepPlannerTest {
     programBuilder.addMatchOrder(HepMatchOrder.BOTTOM_UP);
     programBuilder.addRuleInstance(CoreRules.UNION_TO_DISTINCT);
 
-    sql(UNION_TREE).withProgram(programBuilder.build()).check();
+    sql(UNION_TREE).with(programBuilder.build()).check();
   }
 
   @Test void testMatchUntilFixpoint() {
@@ -236,7 +228,7 @@ class HepPlannerTest {
     programBuilder.addMatchLimit(HepProgram.MATCH_UNTIL_FIXPOINT);
     programBuilder.addRuleInstance(CoreRules.UNION_TO_DISTINCT);
 
-    sql(UNION_TREE).withProgram(programBuilder.build()).check();
+    sql(UNION_TREE).with(programBuilder.build()).check();
   }
 
   @Test void testReplaceCommonSubexpression() {
@@ -269,7 +261,7 @@ class HepPlannerTest {
     final String sql = "(select 1 from dept where abs(-1)=20)\n"
         + "union all\n"
         + "(select 1 from dept where abs(-1)=20)";
-    planner.setRoot(sql(sql).toRel());
+    planner.setRoot(tester.convertSqlToRel(sql).rel);
     RelNode bestRel = planner.findBestExp();
 
     assertThat(bestRel.getInput(0).equals(bestRel.getInput(1)), is(true));
@@ -293,7 +285,7 @@ class HepPlannerTest {
 
     final String sql = "select upper(ename) from\n"
         + "(select lower(ename) as ename from emp where empno = 100)";
-    sql(sql).withProgram(programBuilder.build()).check();
+    sql(sql).with(programBuilder.build()).check();
   }
 
   @Test void testGroup() {
@@ -308,7 +300,7 @@ class HepPlannerTest {
     programBuilder.addGroupEnd();
 
     final String sql = "select upper(name) from dept where deptno=20";
-    sql(sql).withProgram(programBuilder.build()).check();
+    sql(sql).with(programBuilder.build()).check();
   }
 
   @Test void testGC() {
@@ -320,11 +312,11 @@ class HepPlannerTest {
 
     HepPlanner planner = new HepPlanner(programBuilder.build());
     planner.setRoot(
-        sql("select upper(name) from dept where deptno=20").toRel());
+        tester.convertSqlToRel("select upper(name) from dept where deptno=20").rel);
     planner.findBestExp();
     // Reuse of HepPlanner (should trigger GC).
     planner.setRoot(
-        sql("select upper(name) from dept where deptno=20").toRel());
+        tester.convertSqlToRel("select upper(name) from dept where deptno=20").rel);
     planner.findBestExp();
   }
 
@@ -335,11 +327,10 @@ class HepPlannerTest {
             programBuilder.build());
     String query = "(select n_nationkey from SALES.CUSTOMER) union all\n"
         + "(select n_name from CUSTOMER_MODIFIABLEVIEW)";
-    sql(query)
-        .withDynamicTable()
-        .withDecorrelate(true)
-        .withProgram(programBuilder.build())
-        .withPlanner(planner)
+    sql(query).withTester(t -> createDynamicTester())
+        .withDecorrelation(true)
+        .with(programBuilder.build())
+        .with(planner)
         .checkUnchanged();
   }
 
@@ -353,10 +344,11 @@ class HepPlannerTest {
 
   @Test void testMaterialization() {
     HepPlanner planner = new HepPlanner(HepProgram.builder().build());
-    RelNode tableRel = sql("select * from dept").toRel();
+    RelNode tableRel = tester.convertSqlToRel("select * from dept").rel;
     RelNode queryRel = tableRel;
-    RelOptMaterialization mat1 = new RelOptMaterialization(
-        tableRel, queryRel, null, ImmutableList.of("default", "mv"));
+    RelOptMaterialization mat1 =
+        RelOptMaterialization.create(tableRel, queryRel, null,
+            ImmutableList.of("default", "mv"), RelFactories.LOGICAL_BUILDER);
     planner.addMaterialization(mat1);
     assertEquals(planner.getMaterializations().size(), 1);
     assertEquals(planner.getMaterializations().get(0), mat1);
@@ -373,7 +365,7 @@ class HepPlannerTest {
     final HepTestListener listener = new HepTestListener(0);
     HepPlanner planner = new HepPlanner(programBuilder.build());
     planner.addListener(listener);
-    planner.setRoot(sql(COMPLEX_UNION_TREE).toRel());
+    planner.setRoot(tester.convertSqlToRel(COMPLEX_UNION_TREE).rel);
     planner.findBestExp();
     return listener.getApplyTimes();
   }

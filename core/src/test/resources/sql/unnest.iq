@@ -223,23 +223,25 @@ FROM UNNEST(array [0, 2, 4, 4, 5]) as x;
 
 !ok
 
-!use bookstore
 
-# [CALCITE-4773] RelDecorrelator's RemoveSingleAggregateRule can produce result with wrong row type
-SELECT au."name"
-FROM "bookstore"."authors" au
-WHERE (
-    SELECT COUNT(*) > 0
-    FROM UNNEST(au."books") AS "unnested"("title", "year", "pages")
-    WHERE "unnested"."year" < 1920
+WITH tab(field1, field2) AS (VALUES 
+	(1, ARRAY[ ROW(0), ROW(NULL)]), 
+	(2, ARRAY[ ROW(1)])
+)
+SELECT field1 FROM tab
+WHERE field1 IS NOT NULL 
+AND field1 NOT IN (
+ 	SELECT subfield
+	FROM  UNNEST(field2) AS L(subfield)
 );
-+-------------+
-| name        |
-+-------------+
-| Victor Hugo |
-+-------------+
++--------+
+| FIELD1 |
++--------+
+|      2 |
++--------+
 (1 row)
 
 !ok
+
 
 # End unnest.iq
