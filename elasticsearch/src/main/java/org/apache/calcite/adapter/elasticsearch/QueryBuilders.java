@@ -125,26 +125,6 @@ class QueryBuilders {
    * @param name   The field name
    * @param values The terms
    */
-  static MatchesQueryBuilder matchesQuery(String name, Iterable<?> values) {
-    return new MatchesQueryBuilder(name, values);
-  }
-
-  /**
-   * A Query that matches documents containing a term.
-   *
-   * @param name  The name of the field
-   * @param value The value of the term
-   */
-  static MatchQueryBuilder matchQuery(String name, Object value) {
-    return new MatchQueryBuilder(name, value);
-  }
-
-  /**
-   * A filer for a field based on several terms matching on any of them.
-   *
-   * @param name   The field name
-   * @param values The terms
-   */
   static TermsQueryBuilder termsQuery(String name, Iterable<?> values) {
     return new TermsQueryBuilder(name, values);
   }
@@ -156,6 +136,10 @@ class QueryBuilders {
    */
   static RangeQueryBuilder rangeQuery(String name) {
     return new RangeQueryBuilder(name);
+  }
+
+  static WildcardQueryBuilder wildcardQuery(String name, String wildcard) {
+    return new WildcardQueryBuilder(name, wildcard);
   }
 
   /**
@@ -187,16 +171,6 @@ class QueryBuilders {
   }
 
   /**
-   * A query that wraps another query and simply returns a dismax score equal to the
-   * query boost for every document in the query.
-   *
-   * @param queryBuilder The query to wrap in a constant score query
-   */
-  static DisMaxQueryBuilder disMaxQueryBuilder(QueryBuilder queryBuilder) {
-    return new DisMaxQueryBuilder(queryBuilder);
-  }
-
-  /**
    * A filter to filter only documents where a field exists in them.
    *
    * @param name The name of the field
@@ -213,13 +187,12 @@ class QueryBuilders {
   }
 
   /**
-   * Base class to build Elasticsearch queries.
+   * Base class to build ES queries
    */
   abstract static class QueryBuilder {
 
     /**
-     * Converts an existing query to JSON format using jackson API.
-     *
+     * Convert existing query to JSON format using jackson API.
      * @param generator used to generate JSON elements
      * @throws IOException if IO error occurred
      */
@@ -227,7 +200,7 @@ class QueryBuilders {
   }
 
   /**
-   * Query for boolean logic.
+   * Query for boolean logic
    */
   static class BoolQueryBuilder extends QueryBuilder {
     private final List<QueryBuilder> mustClauses = new ArrayList<>();
@@ -271,7 +244,7 @@ class QueryBuilders {
       gen.writeEndObject();
     }
 
-    private static void writeJsonArray(String field, List<QueryBuilder> clauses, JsonGenerator gen)
+    private void writeJsonArray(String field, List<QueryBuilder> clauses, JsonGenerator gen)
         throws IOException {
       if (clauses.isEmpty()) {
         return;
@@ -328,59 +301,6 @@ class QueryBuilders {
     @Override void writeJson(final JsonGenerator generator) throws IOException {
       generator.writeStartObject();
       generator.writeFieldName("terms");
-      generator.writeStartObject();
-      generator.writeFieldName(fieldName);
-      generator.writeStartArray();
-      for (Object value: values) {
-        writeObject(generator, value);
-      }
-      generator.writeEndArray();
-      generator.writeEndObject();
-      generator.writeEndObject();
-    }
-  }
-
-
-
-  /**
-   * A Query that matches documents containing a term.
-   */
-  static class MatchQueryBuilder extends QueryBuilder {
-    private final String fieldName;
-    private final Object value;
-
-    private MatchQueryBuilder(final String fieldName, final Object value) {
-      this.fieldName = Objects.requireNonNull(fieldName, "fieldName");
-      this.value = Objects.requireNonNull(value, "value");
-    }
-
-    @Override void writeJson(final JsonGenerator generator) throws IOException {
-      generator.writeStartObject();
-      generator.writeFieldName("match");
-      generator.writeStartObject();
-      generator.writeFieldName(fieldName);
-      writeObject(generator, value);
-      generator.writeEndObject();
-      generator.writeEndObject();
-    }
-  }
-
-
-  /**
-   * A filter for a field based on several terms matching on any of them.
-   */
-  private static class MatchesQueryBuilder extends QueryBuilder {
-    private final String fieldName;
-    private final Iterable<?> values;
-
-    private MatchesQueryBuilder(final String fieldName, final Iterable<?> values) {
-      this.fieldName = Objects.requireNonNull(fieldName, "fieldName");
-      this.values = Objects.requireNonNull(values, "values");
-    }
-
-    @Override void writeJson(final JsonGenerator generator) throws IOException {
-      generator.writeStartObject();
-      generator.writeFieldName("match");
       generator.writeStartObject();
       generator.writeFieldName(fieldName);
       generator.writeStartArray();
@@ -490,11 +410,55 @@ class QueryBuilders {
 
   /**
    * A Query that does fuzzy matching for a specific value.
+   * It is equivalent to a wildcard search in Elasticsearch.
+   *
+   * <p>Attention:
+   * In Elasticsearch, the wildcard searches for the contents of the inverted index table,
+   * so the behavior is different for fields of type text and field type of keyword:
+   * 1.If the field type is keyword, es will index the entire field content,
+   * so the es wildcard search behavior is the same as sql's like.
+   * 2.If the field type is text, the content of the field will be saved into the index
+   * table after being segmented. So in this case, the es wildcard search is different
+   * from the like search in sql. In fact, at this time we recommend using full-text search
+   * instead of wildcard search.
+   *
+   */
+  static class WildcardQueryBuilder extends QueryBuilder {
+
+    private final String fieldName;
+    private final String value;
+
+    WildcardQueryBuilder(String fieldName, String value) {
+      this.fieldName = fieldName;
+      this.value = transformValue(value);
+    }
+
+    @Override void writeJson(JsonGenerator generator) throws IOException {
+      generator.writeStartObject();
+      generator.writeFieldName("wildcard");
+      generator.writeStartObject();
+      generator.writeFieldName(fieldName);
+      writeObject(generator, value);
+      generator.writeEndObject();
+      generator.writeEndObject();
+    }
+
+    // The symbols % and _ in sql are equivalent to the symbols * and ? in es, respectively.
+    private String transformValue(String value) {
+      if (value != null) {
+        value = value
+                .replaceAll("%", "*")
+                .replaceAll("_", "?");
+      }
+      return value;
+    }
+  }
+
+  /**
+   * A Query that does fuzzy matching for a specific value.
    */
   static class RegexpQueryBuilder extends QueryBuilder {
-    @SuppressWarnings("unused")
     private final String fieldName;
-    @SuppressWarnings("unused")
     private final String value;
 
     RegexpQueryBuilder(final String fieldName, final String value) {
@@ -551,33 +515,6 @@ class QueryBuilders {
   }
 
   /**
-   * A query that wraps a filter and simply returns a dismax score equal to the
-   * query boost for every document in the filter.
-   */
-  static class DisMaxQueryBuilder extends QueryBuilder {
-
-    private final QueryBuilder builder;
-
-    private DisMaxQueryBuilder(final QueryBuilder builder) {
-      this.builder = Objects.requireNonNull(builder, "builder");
-    }
-
-    @Override void writeJson(final JsonGenerator generator) throws IOException {
-      generator.writeStartObject();
-      generator.writeFieldName("dis_max");
-      generator.writeStartObject();
-      generator.writeFieldName("queries");
-      generator.writeStartArray();
-      builder.writeJson(generator);
-      generator.writeEndArray();
-      generator.writeEndObject();
-      generator.writeEndObject();
-    }
-  }
-
-
-
-  /**
    * A query that matches on all documents.
    * <pre>
    *   {
@@ -598,3 +535,5 @@ class QueryBuilders {
     }
   }
 }
+
+// End QueryBuilders.java
