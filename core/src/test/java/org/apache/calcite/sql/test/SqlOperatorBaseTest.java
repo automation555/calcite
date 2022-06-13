@@ -4460,16 +4460,6 @@ public abstract class SqlOperatorBaseTest {
     tester1.checkNull("SPACE(cast(null as integer))");
   }
 
-  @Test public void testStrcmpFunc() {
-    final SqlTester tester1 = tester(SqlLibrary.MYSQL);
-    tester1.setFor(SqlLibraryOperators.STRCMP);
-    tester1.checkString("STRCMP('mytesttext', 'mytesttext')", "0", "INTEGER NOT NULL");
-    tester1.checkString("STRCMP('mytesttext', 'mytest_text')", "-1", "INTEGER NOT NULL");
-    tester1.checkString("STRCMP('mytest_text', 'mytesttext')", "1", "INTEGER NOT NULL");
-    tester1.checkNull("STRCMP('mytesttext', cast(null as varchar(1)))");
-    tester1.checkNull("STRCMP(cast(null as varchar(1)), 'mytesttext')");
-  }
-
   @Test public void testSoundexFunc() {
     final SqlTester tester1 = oracleTester();
     tester1.setFor(SqlLibraryOperators.SOUNDEX);
@@ -4567,62 +4557,6 @@ public abstract class SqlOperatorBaseTest {
           t.checkNull("right(cast(null as binary(1)), -2)");
           t.checkNull("right(x'ABCdef', cast(null as Integer))");
         });
-  }
-
-  @Test public void testLambda() {
-    tester.checkType("(a)->2+2*a", "LAMBDA NOT NULL");
-    tester.checkType("(a,b)->a+b", "LAMBDA NOT NULL");
-    tester.checkType("(a,b,c)->2*a+b+c", "LAMBDA NOT NULL");
-  }
-
-  @Test public void testMapFilterFunc() {
-    final SqlTester tester = tester(SqlLibrary.MYSQL);
-
-    tester.checkString("map_filter(map[1, 2, 3, 4], (a,b)->true)",
-        "{1=2, 3=4}",
-        "(INTEGER NOT NULL, INTEGER NOT NULL) MAP NOT NULL");
-
-    tester.checkType("map_filter(null, (a,b)->a>b)", "NULL");
-    tester.checkFails("^map_filter(map[1, 2, 3, 4], (a,b)->2)^",
-        "Cannot apply 'MAP_FILTER' to arguments of type "
-            + "'MAP_FILTER\\(\\<\\(INTEGER, INTEGER\\) MAP\\>, <LAMBDA>\\)'. "
-            + "Supported form\\(s\\): MAP_FILTER\\(<ANY>, <LAMBDA\\(BOOLEAN, ANY, ANY\\)\\>\\)",
-        false);
-
-    tester.checkFails("^map_filter(map[1, 2, 3, 4], (a)->true)^",
-        "Cannot apply 'MAP_FILTER' to arguments of type "
-            + "'MAP_FILTER\\(\\<\\(INTEGER, INTEGER\\) MAP\\>, <LAMBDA>\\)'. "
-            + "Supported form\\(s\\): MAP_FILTER\\(<ANY>, <LAMBDA\\(BOOLEAN, ANY, ANY\\)\\>\\)",
-        false);
-
-    tester.checkFails("^map_filter(map[1, 2, 3, 4], (a, b, c)->true)^",
-        "Cannot apply 'MAP_FILTER' to arguments of type "
-            + "'MAP_FILTER\\(\\<\\(INTEGER, INTEGER\\) MAP\\>, <LAMBDA>\\)'. "
-            + "Supported form\\(s\\): MAP_FILTER\\(<ANY>, <LAMBDA\\(BOOLEAN, ANY, ANY\\)\\>\\)",
-        false);
-
-    tester.checkFails("^map_filter(null, (b)->2+2*a)^",
-        "Cannot apply 'MAP_FILTER' to arguments of type "
-            + "'MAP_FILTER\\(<NULL>, <LAMBDA>\\)'\\. "
-            + "Supported form\\(s\\): MAP_FILTER\\(<ANY>, <LAMBDA\\(BOOLEAN, ANY, ANY\\)\\>\\)",
-        false);
-
-    tester.checkFails("map_filter(map[1, 2, 5, 4], (a,b)->2+2*^c^)",
-        "Column 'C' not found in any table",
-        false);
-
-    tester.checkFails("^map_filter(map[1, 2, 5, 4], (a,b)->2)^",
-        "Cannot apply 'MAP_FILTER' to arguments of type "
-            + "'MAP_FILTER\\(\\<\\(INTEGER, INTEGER\\) MAP\\>, <LAMBDA>\\)'. "
-            + "Supported form\\(s\\): MAP_FILTER\\(<ANY>, <LAMBDA\\(BOOLEAN, ANY, ANY\\)\\>\\)",
-        false);
-
-    tester.checkString("map_filter(map[1, 2, 5, 4], (a,b)->a>b)",
-        "{5=4}",
-        "(INTEGER NOT NULL, INTEGER NOT NULL) MAP NOT NULL");
-    tester.checkString("map_filter(map[1, 'a', 3, 'b'], (a,b)->b='b')",
-        "{3=b}",
-        "(INTEGER NOT NULL, CHAR(1) NOT NULL) MAP NOT NULL");
   }
 
   @Test public void testRegexpReplaceFunc() {
@@ -5229,23 +5163,6 @@ public abstract class SqlOperatorBaseTest {
     tester.checkBoolean("'[]' is not json array", false);
     tester.checkBoolean("'100' is not json scalar", false);
     tester.checkBoolean("'[]' is not json scalar", true);
-  }
-
-  @Test public void testCompress() {
-    SqlTester sqlTester = tester(SqlLibrary.MYSQL);
-    sqlTester.checkNull("COMPRESS(NULL)");
-    sqlTester.checkString("COMPRESS('')", "",
-        "VARBINARY NOT NULL");
-
-    sqlTester.checkString("COMPRESS(REPEAT('a',1000))",
-        "e8030000789c4b4c1c05a360140c770000f9d87af8", "VARBINARY NOT NULL");
-    sqlTester.checkString("COMPRESS(REPEAT('a',16))",
-        "10000000789c4b4c44050033980611", "VARBINARY NOT NULL");
-
-    sqlTester.checkString("COMPRESS('sample')",
-        "06000000789c2b4ecc2dc849050008de0283", "VARBINARY NOT NULL");
-    sqlTester.checkString("COMPRESS('example')",
-        "07000000789c4bad48cc2dc84905000bc002ed", "VARBINARY NOT NULL");
   }
 
   @Test public void testExtractValue() {
@@ -6037,31 +5954,6 @@ public abstract class SqlOperatorBaseTest {
         0.0001d);
     tester.checkNull("sin(cast(null as integer))");
     tester.checkNull("sin(cast(null as double))");
-  }
-
-  @Test public void testSinhFunc() {
-    SqlTester tester = tester(SqlLibrary.ORACLE);
-    tester.checkType("sinh(1)", "DOUBLE NOT NULL");
-    tester.checkType("sinh(cast(1 as float))", "DOUBLE NOT NULL");
-    tester.checkType(
-        "sinh(case when false then 1 else null end)", "DOUBLE");
-    strictTester.checkFails(
-        "^sinh('abc')^",
-        "No match found for function signature SINH\\(<CHARACTER>\\)",
-        false);
-    tester.checkType("sinh('abc')", "DOUBLE NOT NULL");
-    tester.checkScalarApprox(
-        "sinh(1)",
-        "DOUBLE NOT NULL",
-        1.1752d,
-        0.0001d);
-    tester.checkScalarApprox(
-        "sinh(cast(1 as decimal(1, 0)))",
-        "DOUBLE NOT NULL",
-        1.1752d,
-        0.0001d);
-    tester.checkNull("sinh(cast(null as integer))");
-    tester.checkNull("sinh(cast(null as double))");
   }
 
   @Test public void testTanFunc() {
@@ -7042,28 +6934,6 @@ public abstract class SqlOperatorBaseTest {
 
   @Test public void testFusionFunc() {
     tester.setFor(SqlStdOperatorTable.FUSION, VM_FENNEL, VM_JAVA);
-    tester.checkFails("fusion(^*^)", "Unknown identifier '\\*'", false);
-    checkAggType(tester, "fusion(MULTISET[1,2,3])", "INTEGER NOT NULL MULTISET NOT NULL");
-    strictTester.checkFails("^fusion(12)^",
-        "Cannot apply 'FUSION' to arguments of type .*", false);
-    final String[] values1 = {"MULTISET[0]", "MULTISET[1]", "MULTISET[2]", "MULTISET[3]"};
-    tester.checkAgg("fusion(x)", values1, "[0, 1, 2, 3]", 0);
-    final String[] values2 = {"MULTISET[0,1]", "MULTISET[1, 2]"};
-    tester.checkAgg("fusion(x)", values2, "[0, 1, 1, 2]", 0);
-  }
-
-  @Test public void testIntersectionFunc() {
-    tester.setFor(SqlStdOperatorTable.INTERSECTION, VM_FENNEL, VM_JAVA);
-    tester.checkFails("intersection(^*^)", "Unknown identifier '\\*'", false);
-    checkAggType(tester, "intersection(MULTISET[1,2,3])", "INTEGER NOT NULL MULTISET NOT NULL");
-    strictTester.checkFails("^intersection(12)^",
-        "Cannot apply 'INTERSECTION' to arguments of type .*", false);
-    final String[] values1 = {"MULTISET[0]", "MULTISET[1]", "MULTISET[2]", "MULTISET[3]"};
-    tester.checkAgg("intersection(x)", values1, "[]", 0);
-    final String[] values2 = {"MULTISET[0, 1]", "MULTISET[1, 2]"};
-    tester.checkAgg("intersection(x)", values2, "[1]", 0);
-    final String[] values3 = {"MULTISET[0, 1, 1]", "MULTISET[0, 1, 2]"};
-    tester.checkAgg("intersection(x)", values3, "[0, 1, 1]", 0);
   }
 
   @Test public void testYear() {
@@ -8038,14 +7908,9 @@ public abstract class SqlOperatorBaseTest {
         "2015-02-19 12:34:00", "TIMESTAMP(0) NOT NULL");
     tester.checkScalar("floor(timestamp '2015-02-19 12:34:56' to year)",
         "2015-01-01 00:00:00", "TIMESTAMP(0) NOT NULL");
-    tester.checkScalar("floor(date '2015-02-19' to year)",
-        "2015-01-01", "DATE NOT NULL");
     tester.checkScalar("floor(timestamp '2015-02-19 12:34:56' to month)",
         "2015-02-01 00:00:00", "TIMESTAMP(0) NOT NULL");
-    tester.checkScalar("floor(date '2015-02-19' to month)",
-        "2015-02-01", "DATE NOT NULL");
     tester.checkNull("floor(cast(null as timestamp) to month)");
-    tester.checkNull("floor(cast(null as date) to month)");
   }
 
   @Test public void testCeilFuncDateTime() {
@@ -8079,20 +7944,13 @@ public abstract class SqlOperatorBaseTest {
         "2015-02-19 12:35:00", "TIMESTAMP(0) NOT NULL");
     tester.checkScalar("ceil(timestamp '2015-02-19 12:34:56' to year)",
         "2016-01-01 00:00:00", "TIMESTAMP(0) NOT NULL");
-    tester.checkScalar("ceil(date '2015-02-19' to year)",
-        "2016-01-01", "DATE NOT NULL");
     tester.checkScalar("ceil(timestamp '2015-02-19 12:34:56' to month)",
         "2015-03-01 00:00:00", "TIMESTAMP(0) NOT NULL");
-    tester.checkScalar("ceil(date '2015-02-19' to month)",
-        "2015-03-01", "DATE NOT NULL");
     tester.checkNull("ceil(cast(null as timestamp) to month)");
-    tester.checkNull("ceil(cast(null as date) to month)");
 
     // ceiling alias
     tester.checkScalar("ceiling(timestamp '2015-02-19 12:34:56' to month)",
         "2015-03-01 00:00:00", "TIMESTAMP(0) NOT NULL");
-    tester.checkScalar("ceiling(date '2015-02-19' to month)",
-        "2015-03-01", "DATE NOT NULL");
     tester.checkNull("ceiling(cast(null as timestamp) to month)");
   }
 
@@ -8988,63 +8846,6 @@ public abstract class SqlOperatorBaseTest {
         0d);
   }
 
-  @Test public void testEveryFunc() {
-    tester.setFor(SqlStdOperatorTable.EVERY, VM_EXPAND);
-    tester.checkFails(
-        "every(^*^)",
-        "Unknown identifier '\\*'",
-        false);
-    tester.checkType("every(1 = 1)", "BOOLEAN");
-    tester.checkType("every(1.2 = 1.2)", "BOOLEAN");
-    tester.checkType("every(1.5 = 1.4)", "BOOLEAN");
-    tester.checkFails(
-        "^every()^",
-        "Invalid number of arguments to function 'EVERY'. Was expecting 1 arguments",
-        false);
-    tester.checkFails(
-        "^every(1, 2)^",
-        "Invalid number of arguments to function 'EVERY'. Was expecting 1 arguments",
-        false);
-    final String[] values = {"0", "CAST(null AS INTEGER)", "2", "2"};
-    if (!enable) {
-      return;
-    }
-    tester.checkAgg(
-        "every(x = 2)",
-        values,
-        "false",
-        0d);
-  }
-
-  @Test public void testSomeAggFunc() {
-    tester.setFor(SqlStdOperatorTable.SOME, VM_EXPAND);
-    tester.checkFails(
-        "some(^*^)",
-        "Unknown identifier '\\*'",
-        false);
-    tester.checkType("some(1 = 1)", "BOOLEAN");
-    tester.checkType("some(1.2 = 1.2)", "BOOLEAN");
-    tester.checkType("some(1.5 = 1.4)", "BOOLEAN");
-    tester.checkFails(
-        "^some()^",
-        "Invalid number of arguments to function 'SOME'. Was expecting 1 arguments",
-        false);
-    tester.checkFails(
-        "^some(1, 2)^",
-        "Invalid number of arguments to function 'SOME'. Was expecting 1 arguments",
-        false);
-    final String[] values = {"0", "CAST(null AS INTEGER)", "2", "2"};
-    if (!enable) {
-      return;
-    }
-    tester.checkAgg(
-        "some(x = 2)",
-        values,
-        "true",
-        0d);
-  }
-
-
   @Test public void testAnyValueFunc() {
     tester.setFor(SqlStdOperatorTable.ANY_VALUE, VM_EXPAND);
     tester.checkFails(
@@ -9086,6 +8887,46 @@ public abstract class SqlOperatorBaseTest {
         values,
         "0",
         0d);
+  }
+
+  @Test public void testBitNotFunc() {
+    final SqlTester tester1 = tester(SqlLibrary.SNOWFLAKE);
+    tester1.setFor(SqlLibraryOperators.BITNOT);
+
+    tester.checkFails(
+        "^bitnot()^",
+        "No match found for function signature BITNOT\\(\\)",
+        false);
+    tester.checkFails(
+        "^bitnot(1, 2)^",
+        "No match found for function signature BITNOT\\(<NUMERIC>, <NUMERIC>\\)",
+        false);
+
+    tester1.checkScalar("bitnot(CAST(2 AS TINYINT))",
+        "-3",
+        "TINYINT NOT NULL");
+    tester1.checkScalar("bitnot(CAST(3 AS SMALLINT))",
+        "-4",
+        "SMALLINT NOT NULL");
+    tester1.checkScalar("bitnot(CAST(-2 AS INTEGER))",
+        "1",
+        "INTEGER NOT NULL");
+    tester1.checkScalar("bitnot(CAST(-3 AS BIGINT))",
+        "2",
+        "BIGINT NOT NULL");
+    tester1.checkScalar("bitnot(CAST(x'03' AS BINARY(1)))",
+        "fc",
+        "BINARY(1) NOT NULL");
+    tester1.checkScalar("bitnot(CAST(x'ABCDEF12' AS BINARY(4)))",
+        "543210ed",
+        "BINARY(4) NOT NULL");
+    tester1.checkScalar("bitnot(CAST(x'ABCDEF12' AS VARBINARY(4)))",
+        "543210ed",
+        "VARBINARY(4) NOT NULL");
+    tester1.checkScalar("bitnot(CAST(x'ABCDEF12' AS VARBINARY))",
+        "543210ed",
+        "VARBINARY NOT NULL");
+    tester1.checkNull("bitnot(CAST(null AS BINARY(1)))");
   }
 
   @Test public void testBitAndFunc() {

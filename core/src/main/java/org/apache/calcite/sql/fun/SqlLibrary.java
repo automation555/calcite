@@ -18,7 +18,6 @@ package org.apache.calcite.sql.fun;
 
 import org.apache.calcite.config.CalciteConnectionProperty;
 
-import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
@@ -42,22 +41,17 @@ import java.util.Objects;
  */
 public enum SqlLibrary {
   /** The standard operators. */
-  STANDARD("", "standard"),
+  STANDARD(""),
   /** Geospatial operators. */
-  SPATIAL("s", "spatial"),
-  /** A collection of operators that are in Google BigQuery but not in standard
-   * SQL. */
-  BIG_QUERY("b", "bigquery"),
+  SPATIAL("s"),
   /** A collection of operators that are in MySQL but not in standard SQL. */
-  MYSQL("m", "mysql"),
+  MYSQL("m"),
   /** A collection of operators that are in Oracle but not in standard SQL. */
-  ORACLE("o", "oracle"),
-  /** A collection of operators that are in PostgreSQL but not in standard
-   * SQL. */
-  POSTGRESQL("p", "postgresql"),
-  /** A collection of operators that are in Snowflake but not in standard
-   * SQL. */
-  SNOWFLAKE("s", "snowflake");
+  ORACLE("o"),
+  /** A collection of operators that are in PostgreSQL but not in standard SQL. */
+  POSTGRESQL("p"),
+  /** A collection of operators that are in Snowflake but not in standard SQL. */
+  SNOWFLAKE("s");
 
   /** Abbreviation for the library used in SQL reference. */
   public final String abbrev;
@@ -66,11 +60,9 @@ public enum SqlLibrary {
    * see {@link CalciteConnectionProperty#FUN}. */
   public final String fun;
 
-  SqlLibrary(String abbrev, String fun) {
+  SqlLibrary(String abbrev) {
     this.abbrev = Objects.requireNonNull(abbrev);
-    this.fun = Objects.requireNonNull(fun);
-    Preconditions.checkArgument(
-        fun.equals(name().toLowerCase(Locale.ROOT).replace("_", "")));
+    this.fun = name().toLowerCase(Locale.ROOT);
   }
 
   /** Looks up a value.

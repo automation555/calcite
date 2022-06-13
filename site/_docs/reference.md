@@ -253,7 +253,6 @@ hintOptions:
 
 hintKVOption:
       optionName '=' stringLiteral
-  |   stringLiteral '=' stringLiteral
 
 optionValue:
       stringLiteral
@@ -1334,16 +1333,6 @@ Not implemented:
 | CURRENT_ROLE    | Returns the current active role
 | CURRENT_SCHEMA  | Returns the current schema
 
-
-## Lambda Expressions
-Calcite supports Lambda expressions which written with ->:
-
-LAMBDA Expressions Examples :
-
-    x -> x + 1
-    (x, y) -> x + y
-
-
 ### Conditional functions and operators
 
 | Operator syntax | Description
@@ -1776,15 +1765,12 @@ and `LISTAGG`).
 | COUNT( [ ALL &#124; DISTINCT ] value [, value ]*) | Returns the number of input rows for which *value* is not null (wholly not null if *value* is composite)
 | COUNT(*)                           | Returns the number of input rows
 | FUSION(multiset)                   | Returns the multiset union of *multiset* across all input values
-| INTERSECTION(multiset)             | Returns the multiset intersection of *multiset* across all input values
 | APPROX_COUNT_DISTINCT(value [, value ]*)      | Returns the approximate number of distinct values of *value*; the database is allowed to use an approximation but is not required to
 | AVG( [ ALL &#124; DISTINCT ] numeric)         | Returns the average (arithmetic mean) of *numeric* across all input values
 | SUM( [ ALL &#124; DISTINCT ] numeric)         | Returns the sum of *numeric* across all input values
 | MAX( [ ALL &#124; DISTINCT ] value)           | Returns the maximum value of *value* across all input values
 | MIN( [ ALL &#124; DISTINCT ] value)           | Returns the minimum value of *value* across all input values
 | ANY_VALUE( [ ALL &#124; DISTINCT ] value)     | Returns one of the values of *value* across all input values; this is NOT specified in the SQL standard
-| SOME(condition)                               | Returns true if any condition is true.
-| EVERY(condition)                              | Returns true if all conditions are true.
 | BIT_AND( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise AND of all non-null input values, or null if none
 | BIT_OR( [ ALL &#124; DISTINCT ] value)        | Returns the bitwise OR of all non-null input values, or null if none
 | BIT_XOR( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise XOR of all non-null input values, or null if none
@@ -2323,6 +2309,7 @@ The 'C' (compatibility) column contains value
 'm' for MySQL ('fun=mysql' in the connect string),
 'o' for Oracle ('fun=oracle' in the connect string),
 'p' for PostgreSQL ('fun=postgresql' in the connect string).
+'s' for Snowflake ('fun=snowflake' in the connect string).
 
 One operator name may correspond to multiple SQL dialects, but with different
 semantics.
@@ -2333,7 +2320,6 @@ semantics.
 | o | CHR(integer) | Returns the character having the binary equivalent to *integer* as a CHAR value
 | o | COSH(numeric)                                  | Returns the hyperbolic cosine of *numeric*
 | m o p | CONCAT(string [, string ]*)                | Concatenates two or more strings
-| m | COMPRESS(string)                               | Compresses a string using zlib compression and returns the result as a binary string.
 | p | CONVERT_TIMEZONE(tz1, tz2, datetime)           | Converts the timezone of *datetime* from *tz1* to *tz2*
 | m | DAYNAME(datetime)                              | Returns the name, in the connection's locale, of the weekday in *datetime*; for example, it returns '星期日' for both DATE '2020-02-10' and TIMESTAMP '2020-02-10 10:10:10'
 | o | DECODE(value, value1, result1 [, valueN, resultN ]* [, default ]) | Compares *value* to each *valueN* value one by one; if *value* is equal to a *valueN*, returns the corresponding *resultN*, else returns *default*, or NULL if *default* is not specified
@@ -2351,7 +2337,6 @@ semantics.
 | m | JSON_STORAGE_SIZE(jsonValue)                   | Returns the number of bytes used to store the binary representation of a *jsonValue*
 | o | LEAST(expr [, expr ]* )                        | Returns the least of the expressions
 | m p | LEFT(string, length)                         | Returns the leftmost *length* characters from the *string*
-| m | MAP_FILTER(map, function(K, V, boolean))       | Constructs a map from those entries of map for which function returns true.
 | m | TO_BASE64(string)                              | Converts the *string* to base-64 encoded form and returns a encoded string
 | m | FROM_BASE64(string)                            | Returns the decoded result of a base-64 *string* as a string
 | o | LTRIM(string)                                  | Returns *string* with all blanks removed from the start
@@ -2364,16 +2349,15 @@ semantics.
 | m p | RIGHT(string, length)                        | Returns the rightmost *length* characters from the *string*
 | o | RTRIM(string)                                  | Returns *string* with all blanks removed from the end
 | m p | SHA1(string)                                 | Calculates a SHA-1 hash value of *string* and returns it as a hex string
-| o | SINH(numeric)                                  | Returns the hyperbolic sine of *numeric*
 | m o p | SOUNDEX(string)                            | Returns the phonetic representation of *string*; throws if *string* is encoded with multi-byte encoding such as UTF-8
 | m | SPACE(integer)                                 | Returns a string of *integer* spaces; returns an empty string if *integer* is less than 1
 | o | SUBSTR(string, position [, substringLength ]) | Returns a portion of *string*, beginning at character *position*, *substringLength* characters long. SUBSTR calculates lengths using characters as defined by the input character set
-| m | STRCMP(string, string)                         | Returns 0 if both of the strings are same and returns -1 when the first argument is smaller than the second and 1 when the second one is smaller the first one.
 | o | TANH(numeric)                                  | Returns the hyperbolic tangent of *numeric*
 | o p | TO_DATE(string, format)                      | Converts *string* to a date using the format *format*
 | o p | TO_TIMESTAMP(string, format)                 | Converts *string* to a timestamp using the format *format*
 | o p | TRANSLATE(expr, fromString, toString)        | Returns *expr* with all occurrences of each character in *fromString* replaced by its corresponding character in *toString*. Characters in *expr* that are not in *fromString* are not replaced
 | o | XMLTRANSFORM(xml, xslt)                        | Returns a string after applying xslt to supplied xml.
+| s | BITNOT(value)                                  | Returns bitwise not of input value
 
 Note:
 
@@ -2675,68 +2659,6 @@ Here are some examples:
 * `f(c => 3, d => 1, a => 0)` is equivalent to `f(0, NULL, 3, 1, NULL)`;
 * `f(c => 3, d => 1)` is not legal, because you have not specified a value for
   `a` and `a` is not optional.
-
-### SQL Hints
-
-A hint is an instruction to the optimizer. When writing SQL, you may know information about
-the data unknown to the optimizer. Hints enable you to make decisions normally made by the optimizer.
-
-* Planner enforcers: there's no perfect planner, so it makes sense to implement hints to
-allow user better control the execution. For instance: "never merge this subquery with others" (`/*+ no_merge */`);
-“treat those tables as leading ones" (`/*+ leading */`) to affect join ordering, etc;
-* Append meta data/statistics: some statistics like “table index for scan” or “skew info of some shuffle keys”
-are somehow dynamic for the query, it would be very convenient to config them with hints because
-our planning metadata from the planner is very often not very accurate;
-* Operator resource constraints: for many cases, we would give a default resource configuration
-for the execution operators,
-i.e. min parallelism, memory (resource consuming UDF), special resource requirement (GPU or SSD disk) ...
-It would be very flexible to profile the resource with hints per query (not the Job).
-
-#### Syntax
-
-Calcite supports basically two kinds of hints:
-
-* Query Hint: right after the `SELECT` keyword;
-* Table Hint: right after the referenced table name.
-
-{% highlight sql %}
-query :
-      SELECT /*+ hints */
-      ...
-      from
-          tableName /*+ hints */
-          JOIN
-          tableName /*+ hints */
-      ...
-
-hints :
-      hintItem[, hintItem ]*
-
-hintItem :
-      hintName
-  |   hintName(optionKey=optionVal[, optionKey=optionVal ]*)
-  |   hintName(hintOption [, hintOption ]*)
-
-optionKey :
-      simpleIdentifier
-  |   stringLiteral
-
-optionVal :
-      stringLiteral
-
-hintOption :
-      simpleIdentifier
-   |  numericLiteral
-   |  stringLiteral
-{% endhighlight %}
-
-It is experimental in Calcite, and yet not fully implemented, what we have implemented are:
-
-* The parser support for the syntax above;
-* `RelHint` to represent a hint item;
-* Mechanism to propagate the hints, during sql-to-rel conversion and planner planning.
-
-We do not add any builtin hint items yet, would introduce more if we think the hints is stable enough.
 
 ### MATCH_RECOGNIZE
 

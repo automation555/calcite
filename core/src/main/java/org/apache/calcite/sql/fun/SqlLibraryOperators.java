@@ -27,7 +27,6 @@ import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlOperandCountRanges;
 import org.apache.calcite.sql.type.SqlReturnTypeInference;
-import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeTransforms;
 
@@ -37,6 +36,7 @@ import java.util.List;
 import static org.apache.calcite.sql.fun.SqlLibrary.MYSQL;
 import static org.apache.calcite.sql.fun.SqlLibrary.ORACLE;
 import static org.apache.calcite.sql.fun.SqlLibrary.POSTGRESQL;
+import static org.apache.calcite.sql.fun.SqlLibrary.SNOWFLAKE;
 
 /**
  * Defines functions and operators that are not part of standard SQL but
@@ -174,12 +174,6 @@ public abstract class SqlLibraryOperators {
   public static final SqlFunction REGEXP_REPLACE = new SqlRegexpReplaceFunction();
 
   @LibraryOperator(libraries = {MYSQL})
-  public static final SqlFunction COMPRESS = new SqlFunction("COMPRESS", SqlKind.OTHER_FUNCTION,
-      ReturnTypes.cascade(ReturnTypes.explicit(SqlTypeName.VARBINARY),
-          SqlTypeTransforms.TO_NULLABLE), null, OperandTypes.STRING, SqlFunctionCategory.STRING);
-
-
-  @LibraryOperator(libraries = {MYSQL})
   public static final SqlFunction EXTRACT_VALUE = new SqlFunction(
       "EXTRACTVALUE", SqlKind.OTHER_FUNCTION,
       ReturnTypes.cascade(ReturnTypes.VARCHAR_2000, SqlTypeTransforms.FORCE_NULLABLE),
@@ -250,15 +244,6 @@ public abstract class SqlLibraryOperators {
           OperandTypes.INTEGER,
           SqlFunctionCategory.STRING);
 
-  @LibraryOperator(libraries = {MYSQL})
-  public static final SqlFunction STRCMP =
-      new SqlFunction("STRCMP",
-          SqlKind.OTHER_FUNCTION,
-          ReturnTypes.INTEGER_NULLABLE,
-          null,
-          OperandTypes.STRING_STRING,
-          SqlFunctionCategory.STRING);
-
   @LibraryOperator(libraries = {MYSQL, POSTGRESQL, ORACLE})
   public static final SqlFunction SOUNDEX =
       new SqlFunction("SOUNDEX",
@@ -304,17 +289,6 @@ public abstract class SqlLibraryOperators {
           null,
           OperandTypes.CHARACTER,
           SqlFunctionCategory.STRING);
-
-  @LibraryOperator(libraries = {MYSQL})
-  public static final SqlFunction MAP_FILTER =
-      new SqlFunction("MAP_FILTER",
-          SqlKind.OTHER_FUNCTION,
-          ReturnTypes.cascade(ReturnTypes.ARG0, SqlTypeTransforms.TO_NULLABLE),
-          null,
-          OperandTypes.sequence("MAP_FILTER(<ANY>, <LAMBDA(BOOLEAN, ANY, ANY)>)",
-              OperandTypes.family(SqlTypeFamily.MAP),
-              OperandTypes.lambda(SqlTypeFamily.BOOLEAN, SqlTypeFamily.ANY, SqlTypeFamily.ANY)),
-          SqlFunctionCategory.SYSTEM);
 
   @LibraryOperator(libraries = {MYSQL})
   public static final SqlFunction FROM_BASE64 =
@@ -385,15 +359,6 @@ public abstract class SqlLibraryOperators {
           OperandTypes.NUMERIC,
           SqlFunctionCategory.NUMERIC);
 
-  @LibraryOperator(libraries = {ORACLE})
-  public static final SqlFunction SINH =
-      new SqlFunction("SINH",
-          SqlKind.OTHER_FUNCTION,
-          ReturnTypes.DOUBLE_NULLABLE,
-          null,
-          OperandTypes.NUMERIC,
-          SqlFunctionCategory.NUMERIC);
-
   @LibraryOperator(libraries = {MYSQL, POSTGRESQL})
   public static final SqlFunction MD5 =
       new SqlFunction("MD5",
@@ -419,5 +384,14 @@ public abstract class SqlLibraryOperators {
   @LibraryOperator(libraries = { POSTGRESQL })
   public static final SqlOperator INFIX_CAST =
       new SqlCastOperator();
+
+  @LibraryOperator(libraries = {SNOWFLAKE})
+  public static final SqlFunction BITNOT =
+      new SqlFunction("BITNOT",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.ARG0_NULLABLE,
+          null,
+          OperandTypes.or(OperandTypes.INTEGER, OperandTypes.BINARY),
+          SqlFunctionCategory.NUMERIC);
 
 }
