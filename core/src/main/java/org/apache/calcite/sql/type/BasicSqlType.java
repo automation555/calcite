@@ -57,11 +57,20 @@ public class BasicSqlType extends AbstractSqlType {
     this(typeSystem, typeName, false);
   }
 
-  protected BasicSqlType(RelDataTypeSystem typeSystem, SqlTypeName typeName,
-      boolean nullable) {
+  public BasicSqlType(RelDataTypeSystem typeSystem, SqlTypeName typeName, boolean nullable) {
     this(typeSystem, typeName, nullable, PRECISION_NOT_SPECIFIED,
         SCALE_NOT_SPECIFIED, null, null);
     checkPrecScale(typeName, false, false);
+  }
+
+  /** Throws if {@code typeName} does not allow the given combination of
+   * precision and scale. */
+  protected static void checkPrecScale(SqlTypeName typeName,
+      boolean precisionSpecified, boolean scaleSpecified) {
+    if (!typeName.allowsPrecScale(precisionSpecified, scaleSpecified)) {
+      throw new AssertionError("typeName.allowsPrecScale("
+          + precisionSpecified + ", " + scaleSpecified + "): " + typeName);
+    }
   }
 
   /**
@@ -108,16 +117,6 @@ public class BasicSqlType extends AbstractSqlType {
     this.collation = collation;
     this.wrappedCharset = wrappedCharset;
     computeDigest();
-  }
-
-  /** Throws if {@code typeName} does not allow the given combination of
-   * precision and scale. */
-  protected static void checkPrecScale(SqlTypeName typeName,
-      boolean precisionSpecified, boolean scaleSpecified) {
-    if (!typeName.allowsPrecScale(precisionSpecified, scaleSpecified)) {
-      throw new AssertionError("typeName.allowsPrecScale("
-          + precisionSpecified + ", " + scaleSpecified + "): " + typeName);
-    }
   }
 
   //~ Methods ----------------------------------------------------------------
