@@ -16,10 +16,11 @@
  */
 package org.apache.calcite.plan.volcano;
 
-import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.util.trace.CalciteTrace;
 
 import org.slf4j.Logger;
+
+import static java.util.Objects.requireNonNull;
 
 /***
  * <p>The algorithm executes repeatedly. The exact rules
@@ -46,8 +47,8 @@ class IterativeRuleDriver implements RuleDriver {
 
   @Override public void drive() {
     while (true) {
-      assert planner.root != null : "RelSubset must not be null at this point";
-      LOGGER.debug("Best cost before rule match: {}", planner.root.bestCost);
+      LOGGER.debug("PLANNER = {}; COST = {}", this,
+          requireNonNull(planner.root, "planner.root").bestCost);
 
       VolcanoRuleMatch match = ruleQueue.popMatch();
       if (match == null) {
@@ -70,10 +71,7 @@ class IterativeRuleDriver implements RuleDriver {
 
   }
 
-  @Override public void onProduce(RelNode rel, RelSubset subset) {
-  }
-
-  @Override public void onSetMerged(RelSet set) {
+  @Override public void onSetMerged(RelSet dest, RelSet src) {
   }
 
   @Override public void clear() {

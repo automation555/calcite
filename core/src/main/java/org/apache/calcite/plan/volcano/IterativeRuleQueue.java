@@ -33,8 +33,6 @@ import java.util.HashSet;
 import java.util.Queue;
 import java.util.Set;
 
-import static java.util.Objects.requireNonNull;
-
 /**
  * Priority queue of relexps whose rules have not been called, and rule-matches
  * which have not yet been acted upon.
@@ -64,13 +62,8 @@ class IterativeRuleQueue extends RuleQueue {
   /**
    * Clear internal data structure for this rule queue.
    */
-  @Override public boolean clear() {
-    boolean empty = true;
-    if (!matchList.queue.isEmpty() || !matchList.preQueue.isEmpty()) {
-      empty = false;
-    }
+  @Override public void clear() {
     matchList.clear();
-    return !empty;
   }
 
   /**
@@ -89,7 +82,7 @@ class IterativeRuleQueue extends RuleQueue {
     matchList.offer(match);
 
     matchList.matchMap.put(
-        requireNonNull(planner.getSubset(match.rels[0])), match);
+        planner.getSubset(match.rels[0]), match);
   }
 
   /**
@@ -102,7 +95,7 @@ class IterativeRuleQueue extends RuleQueue {
    * obsolete set or has been pruned.
    *
    */
-  public @Nullable VolcanoRuleMatch popMatch() {
+  @Override public @Nullable VolcanoRuleMatch popMatch() {
     dumpPlannerState();
 
     VolcanoRuleMatch match;
