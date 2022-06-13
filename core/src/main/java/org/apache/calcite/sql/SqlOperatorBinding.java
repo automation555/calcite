@@ -16,17 +16,12 @@
  */
 package org.apache.calcite.sql;
 
-import org.apache.calcite.adapter.enumerable.EnumUtils;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
-import org.apache.calcite.rel.type.RelDataTypeFactoryImpl;
 import org.apache.calcite.runtime.CalciteException;
 import org.apache.calcite.runtime.Resources;
 import org.apache.calcite.sql.validate.SqlMonotonicity;
 import org.apache.calcite.sql.validate.SqlValidatorException;
-import org.apache.calcite.util.NlsString;
-
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.AbstractList;
 import java.util.List;
@@ -97,7 +92,7 @@ public abstract class SqlOperatorBinding {
    * @return string value
    */
   @Deprecated // to be removed before 2.0
-  public @Nullable String getStringLiteralOperand(int ordinal) {
+  public String getStringLiteralOperand(int ordinal) {
     throw new UnsupportedOperationException();
   }
 
@@ -136,7 +131,7 @@ public abstract class SqlOperatorBinding {
    *
    * @return value of operand
    */
-  public <T extends Object> @Nullable T getOperandLiteralValue(int ordinal, Class<T> clazz) {
+  public <T> T getOperandLiteralValue(int ordinal, Class<T> clazz) {
     throw new UnsupportedOperationException();
   }
 
@@ -148,25 +143,12 @@ public abstract class SqlOperatorBinding {
    *
    * @return value of operand
    */
-  public @Nullable Object getOperandLiteralValue(int ordinal, RelDataType type) {
-    if (!(type instanceof RelDataTypeFactoryImpl.JavaType)) {
-      return null;
-    }
-    final Class<?> clazz = ((RelDataTypeFactoryImpl.JavaType) type).getJavaClass();
-    final Object o = getOperandLiteralValue(ordinal, Object.class);
-    if (o == null) {
-      return null;
-    }
-    if (clazz.isInstance(o)) {
-      return clazz.cast(o);
-    }
-    final Object o2 = o instanceof NlsString ? ((NlsString) o).getValue() : o;
-    return EnumUtils.evaluate(o2, clazz);
+  public Object getOperandLiteralValue(int ordinal, RelDataType type) {
+    throw new UnsupportedOperationException();
   }
 
-
   @Deprecated // to be removed before 2.0
-  public @Nullable Comparable getOperandLiteralValue(int ordinal) {
+  public Comparable getOperandLiteralValue(int ordinal) {
     return getOperandLiteralValue(ordinal, Comparable.class);
   }
 
@@ -237,12 +219,10 @@ public abstract class SqlOperatorBinding {
    * Returns the rowtype of the <code>ordinal</code>th operand, which is a
    * cursor.
    *
-   * <p>This is only implemented for {@link SqlCallBinding}.
-   *
    * @param ordinal Ordinal of the operand
    * @return Rowtype of the query underlying the cursor
    */
-  public @Nullable RelDataType getCursorOperand(int ordinal) {
+  public RelDataType getCursorOperand(int ordinal) {
     throw new UnsupportedOperationException();
   }
 
@@ -256,7 +236,7 @@ public abstract class SqlOperatorBinding {
    * @return the name of the parent cursor referenced by the column list
    * parameter if it is a column list parameter; otherwise, null is returned
    */
-  public @Nullable String getColumnListParamInfo(
+  public String getColumnListParamInfo(
       int ordinal,
       String paramName,
       List<String> columnList) {
