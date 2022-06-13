@@ -21,9 +21,11 @@ import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.sql.SqlFunction;
 import org.apache.calcite.sql.SqlFunctionCategory;
 import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlOperatorTable;
 import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
+import org.apache.calcite.sql.type.SqlOperandCountRanges;
 import org.apache.calcite.sql.type.SqlReturnTypeInference;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeTransforms;
@@ -46,6 +48,19 @@ import static org.apache.calcite.sql.fun.SqlLibrary.POSTGRESQL;
 public abstract class SqlLibraryOperators {
   private SqlLibraryOperators() {
   }
+
+  /** The "CONVERT_TIMEZONE(tz1, tz2, datetime)" function;
+   * converts the timezone of {@code datetime} from {@code tz1} to {@code tz2}.
+   * This function is only on Redshift, but we list it in PostgreSQL
+   * because Redshift does not have its own library. */
+  @LibraryOperator(libraries = {POSTGRESQL})
+  public static final SqlFunction CONVERT_TIMEZONE =
+      new SqlFunction("CONVERT_TIMEZONE",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.DATE_NULLABLE,
+          null,
+          OperandTypes.CHARACTER_CHARACTER_DATETIME,
+          SqlFunctionCategory.TIMEDATE);
 
   /** Return type inference for {@code DECODE}. */
   private static final SqlReturnTypeInference DECODE_RETURN_TYPE =
@@ -154,6 +169,30 @@ public abstract class SqlLibraryOperators {
   @LibraryOperator(libraries = {MYSQL})
   public static final SqlFunction JSON_STORAGE_SIZE = new SqlJsonStorageSizeFunction();
 
+  @LibraryOperator(libraries = {MYSQL})
+  public static final SqlFunction JSON_INSERT = new SqlJsonModifyFunction("JSON_INSERT");
+
+  @LibraryOperator(libraries = {MYSQL})
+  public static final SqlFunction JSON_REPLACE = new SqlJsonModifyFunction("JSON_REPLACE");
+
+  @LibraryOperator(libraries = {MYSQL})
+  public static final SqlFunction JSON_SET = new SqlJsonModifyFunction("JSON_SET");
+
+  @LibraryOperator(libraries = {MYSQL, ORACLE})
+  public static final SqlFunction REGEXP_REPLACE = new SqlRegexpReplaceFunction();
+
+  @LibraryOperator(libraries = {MYSQL})
+  public static final SqlFunction EXTRACT_VALUE = new SqlFunction(
+      "EXTRACTVALUE", SqlKind.OTHER_FUNCTION,
+      ReturnTypes.cascade(ReturnTypes.VARCHAR_2000, SqlTypeTransforms.FORCE_NULLABLE),
+      null, OperandTypes.STRING_STRING, SqlFunctionCategory.SYSTEM);
+
+  @LibraryOperator(libraries = {ORACLE})
+  public static final SqlFunction XML_TRANSFORM = new SqlFunction(
+      "XMLTRANSFORM", SqlKind.OTHER_FUNCTION,
+      ReturnTypes.cascade(ReturnTypes.VARCHAR_2000, SqlTypeTransforms.FORCE_NULLABLE),
+      null, OperandTypes.STRING_STRING, SqlFunctionCategory.SYSTEM);
+
 
   /** The "MONTHNAME(datetime)" function; returns the name of the month,
    * in the current locale, of a TIMESTAMP or DATE argument. */
@@ -170,12 +209,6 @@ public abstract class SqlLibraryOperators {
       new SqlFunction("DAYNAME", SqlKind.OTHER_FUNCTION,
           ReturnTypes.VARCHAR_2000, null, OperandTypes.DATETIME,
           SqlFunctionCategory.TIMEDATE);
-
-  @LibraryOperator(libraries = {MYSQL})
-  public static final SqlFunction JSON_QUOTE = new SqlJsonQuoteFunction();
-
-  @LibraryOperator(libraries = {MYSQL})
-  public static final SqlFunction JSON_UNQUOTE = new SqlJsonUnQuoteFunction();
 
   @LibraryOperator(libraries = {MYSQL, POSTGRESQL})
   public static final SqlFunction LEFT =
@@ -201,8 +234,7 @@ public abstract class SqlLibraryOperators {
 
   @LibraryOperator(libraries = {MYSQL})
   public static final SqlFunction SPACE =
-      new SqlFunction(
-          "SPACE",
+      new SqlFunction("SPACE",
           SqlKind.OTHER_FUNCTION,
           ReturnTypes.VARCHAR_2000_NULLABLE,
           null,
@@ -211,8 +243,7 @@ public abstract class SqlLibraryOperators {
 
   @LibraryOperator(libraries = {MYSQL, POSTGRESQL, ORACLE})
   public static final SqlFunction SOUNDEX =
-      new SqlFunction(
-          "SOUNDEX",
+      new SqlFunction("SOUNDEX",
           SqlKind.OTHER_FUNCTION,
           ReturnTypes.VARCHAR_4_NULLABLE,
           null,
@@ -221,18 +252,35 @@ public abstract class SqlLibraryOperators {
 
   @LibraryOperator(libraries = {POSTGRESQL})
   public static final SqlFunction DIFFERENCE =
-      new SqlFunction(
-          "DIFFERENCE",
+      new SqlFunction("DIFFERENCE",
           SqlKind.OTHER_FUNCTION,
           ReturnTypes.INTEGER_NULLABLE,
           null,
           OperandTypes.STRING_STRING,
           SqlFunctionCategory.STRING);
 
+  /** The "CONCAT(arg, ...)" function that concatenates strings.
+   * For example, "CONCAT('a', 'bc', 'd')" returns "abcd". */
+  @LibraryOperator(libraries = {MYSQL, POSTGRESQL, ORACLE})
+  public static final SqlFunction CONCAT_FUNCTION =
+      new SqlFunction("CONCAT",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.cascade(
+              opBinding -> {
+                int precision = opBinding.collectOperandTypes().stream()
+                    .mapToInt(RelDataType::getPrecision).sum();
+                return opBinding.getTypeFactory()
+                    .createSqlType(SqlTypeName.VARCHAR, precision);
+              },
+              SqlTypeTransforms.TO_NULLABLE),
+          null,
+          OperandTypes.repeat(SqlOperandCountRanges.from(2),
+              OperandTypes.STRING),
+          SqlFunctionCategory.STRING);
+
   @LibraryOperator(libraries = {MYSQL})
   public static final SqlFunction REVERSE =
-      new SqlFunction(
-          "REVERSE",
+      new SqlFunction("REVERSE",
           SqlKind.REVERSE,
           ReturnTypes.ARG0_NULLABLE_VARYING,
           null,
@@ -241,35 +289,79 @@ public abstract class SqlLibraryOperators {
 
   @LibraryOperator(libraries = {MYSQL})
   public static final SqlFunction FROM_BASE64 =
-      new SqlFunction(
-          "FROM_BASE64",
+      new SqlFunction("FROM_BASE64",
           SqlKind.OTHER_FUNCTION,
-          ReturnTypes.cascade(
-                  ReturnTypes.explicit(SqlTypeName.VARBINARY), SqlTypeTransforms.TO_NULLABLE),
+          ReturnTypes.cascade(ReturnTypes.explicit(SqlTypeName.VARBINARY),
+              SqlTypeTransforms.TO_NULLABLE),
           null,
           OperandTypes.STRING,
           SqlFunctionCategory.STRING);
 
   @LibraryOperator(libraries = {MYSQL})
   public static final SqlFunction TO_BASE64 =
-      new SqlFunction(
-          "TO_BASE64",
+      new SqlFunction("TO_BASE64",
           SqlKind.OTHER_FUNCTION,
-          ReturnTypes.cascade(
-                  ReturnTypes.explicit(SqlTypeName.VARCHAR), SqlTypeTransforms.TO_NULLABLE),
+          ReturnTypes.cascade(ReturnTypes.explicit(SqlTypeName.VARCHAR),
+              SqlTypeTransforms.TO_NULLABLE),
           null,
           OperandTypes.or(OperandTypes.STRING, OperandTypes.BINARY),
           SqlFunctionCategory.STRING);
 
+  /** The "TO_DATE(string1, string2)" function; casts string1
+   * to a DATE using the format specified in string2. */
+  @LibraryOperator(libraries = {POSTGRESQL, ORACLE})
+  public static final SqlFunction TO_DATE =
+      new SqlFunction("TO_DATE",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.DATE_NULLABLE,
+          null,
+          OperandTypes.STRING_STRING,
+          SqlFunctionCategory.TIMEDATE);
+
+  /** The "TO_TIMESTAMP(string1, string2)" function; casts string1
+   * to a TIMESTAMP using the format specified in string2. */
+  @LibraryOperator(libraries = {POSTGRESQL, ORACLE})
+  public static final SqlFunction TO_TIMESTAMP =
+      new SqlFunction("TO_TIMESTAMP",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.DATE_NULLABLE,
+          null,
+          OperandTypes.STRING_STRING,
+          SqlFunctionCategory.TIMEDATE);
+
   @LibraryOperator(libraries = {ORACLE})
   public static final SqlFunction CHR =
-          new SqlFunction(
-                  "CHR",
-                  SqlKind.OTHER_FUNCTION,
-                  ReturnTypes.CHAR,
-                  null,
-                  OperandTypes.INTEGER,
-                  SqlFunctionCategory.STRING);
-}
+      new SqlFunction("CHR",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.CHAR,
+          null,
+          OperandTypes.INTEGER,
+          SqlFunctionCategory.STRING);
 
-// End SqlLibraryOperators.java
+  @LibraryOperator(libraries = {MYSQL, POSTGRESQL})
+  public static final SqlFunction MD5 =
+      new SqlFunction("MD5",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.cascade(ReturnTypes.explicit(SqlTypeName.VARCHAR),
+              SqlTypeTransforms.TO_NULLABLE),
+          null,
+          OperandTypes.or(OperandTypes.STRING, OperandTypes.BINARY),
+          SqlFunctionCategory.STRING);
+
+  @LibraryOperator(libraries = {MYSQL, POSTGRESQL})
+  public static final SqlFunction SHA1 =
+      new SqlFunction("SHA1",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.cascade(ReturnTypes.explicit(SqlTypeName.VARCHAR),
+              SqlTypeTransforms.TO_NULLABLE),
+          null,
+          OperandTypes.or(OperandTypes.STRING, OperandTypes.BINARY),
+          SqlFunctionCategory.STRING);
+
+  /** Infix "::" cast operator used by PostgreSQL, for example
+   * {@code '100'::INTEGER}. */
+  @LibraryOperator(libraries = { POSTGRESQL })
+  public static final SqlOperator INFIX_CAST =
+      new SqlCastOperator();
+
+}

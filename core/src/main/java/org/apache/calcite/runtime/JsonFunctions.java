@@ -27,6 +27,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.core.PrettyPrinter;
 import com.fasterxml.jackson.core.util.DefaultIndenter;
 import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
+import com.google.common.base.Strings;
 import com.jayway.jsonpath.Configuration;
 import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
@@ -69,6 +70,8 @@ public class JsonFunctions {
   private static final PrettyPrinter JSON_PRETTY_PRINTER =
       new DefaultPrettyPrinter().withObjectIndenter(
           DefaultIndenter.SYSTEM_LINEFEED_INSTANCE.withLinefeed("\n"));
+
+  private static final String JSON_ROOT_PATH = "$";
 
   private JsonFunctions() {
   }
@@ -644,44 +647,128 @@ public class JsonFunctions {
     }
   }
 
-  public static String jsonQuote(String input) {
-    return jsonQuote(jsonValueExpression(input));
-  }
+  private static String jsonModify(JsonValueContext jsonDoc, JsonModifyMode type, Object... kvs) {
+    int step = type == JsonModifyMode.REMOVE ? 1 : 2;
+    assert kvs.length % step == 0;
+    String result = null;
+    DocumentContext ctx = JsonPath.parse(jsonDoc.obj,
+        Configuration
+            .builder()
+            .options(Option.SUPPRESS_EXCEPTIONS)
+            .jsonProvider(JSON_PATH_JSON_PROVIDER)
+            .mappingProvider(JSON_PATH_MAPPING_PROVIDER)
+            .build());
 
-  public static String jsonQuote(JsonValueContext input) {
-    try {
-      return input.obj == null ? null : "\"" + JSON_PATH_JSON_PROVIDER.getObjectMapper()
-          .writeValueAsString(input.obj) + "\"";
-    } catch (Exception e) {
-      throw RESOURCE.invalidInputForJsonQuote(Objects.toString(input.obj)).ex();
+    for (int i = 0; i < kvs.length; i += step) {
+      String k = (String) kvs[i];
+      Object v = kvs[i + step - 1];
+      if (!(JsonPath.isPathDefinite(k) && k.contains(JSON_ROOT_PATH))) {
+        throw RESOURCE.validationError(k).ex();
+      }
+      switch (type) {
+      case REPLACE:
+        if (k.equals(JSON_ROOT_PATH)) {
+          result = jsonize(v);
+        } else {
+          if (ctx.read(k) != null) {
+            ctx.set(k, v);
+          }
+        }
+        break;
+      case INSERT:
+        if ((!k.equals(JSON_ROOT_PATH)) && (ctx.read(k) == null)) {
+          insertToJson(ctx, k, v);
+        }
+        break;
+      case SET:
+        if (k.equals(JSON_ROOT_PATH)) {
+          result = jsonize(v);
+        } else {
+          if (ctx.read(k) != null) {
+            ctx.set(k, v);
+          } else {
+            insertToJson(ctx, k, v);
+          }
+        }
+        break;
+      case REMOVE:
+        if (ctx.read(k) != null) {
+          ctx.delete(k);
+        }
+        break;
+      }
     }
+
+    result = Strings.isNullOrEmpty(result) ? ctx.jsonString() : result;
+    return result;
   }
 
-  public static String jsonUnQuote(String input, String sqlMode) {
-    return jsonUnQuote(jsonValueExpression(input), sqlMode);
-  }
+  private static void insertToJson(DocumentContext ctx, String path, Object value) {
+    final String parentPath;
+    final String key;
 
-  public static String jsonUnQuote(JsonValueContext input, String sqlMode) {
-    try {
-      return input.obj == null ? null
-          : getJsonUnQuoteString(JSON_PATH_JSON_PROVIDER.getObjectMapper()
-          .writeValueAsString(input.obj), sqlMode);
-    } catch (Exception e) {
-      throw RESOURCE.invalidInputForJsonUnQuote(Objects.toString(input.obj)).ex();
-    }
-  }
-
-  private static String getJsonUnQuoteString(String input, String sqlMode) {
-    if ("NO_BACKSLASH_ESCAPES".equals(sqlMode)) {
-      return input.replace("\"", "")
-          .replace("\\b", "")
-          .replace("\\f", "")
-          .replace("\\n", "")
-          .replace("\\r", "")
-          .replace("\\t", "")
-          .replace("\\\\", "");
+    //The following paragraph of logic is mainly used to obtain the parent node path of path and
+    //the key value that should be inserted when the preant Path is map.
+    //eg: path is $.a ,parentPath is $
+    //eg: path is $.a[1] ,parentPath is $.a
+    Integer dotIndex = path.lastIndexOf(".");
+    Integer leftBracketIndex = path.lastIndexOf("[");
+    if (dotIndex.equals(-1) && leftBracketIndex.equals(-1)) {
+      parentPath = path;
+      key = path;
+    } else if (!dotIndex.equals(-1) && leftBracketIndex.equals(-1)) {
+      parentPath = path.substring(0, dotIndex);
+      key = path.substring(dotIndex + 1);
+    } else if (dotIndex.equals(-1) && !leftBracketIndex.equals(-1)) {
+      parentPath = path.substring(0, leftBracketIndex);
+      key = path.substring(leftBracketIndex + 1);
     } else {
-      return input.replace("\"", "");
+      int position = dotIndex > leftBracketIndex ? dotIndex : leftBracketIndex;
+      parentPath = path.substring(0, position);
+      key = path.substring(position);
+    }
+
+    Object obj = ctx.read(parentPath);
+    if (obj instanceof Map) {
+      ctx.put(parentPath, key, value.toString());
+    } else if (obj instanceof Collection) {
+      ctx.add(parentPath, value);
+    }
+  }
+
+  public static String jsonReplace(String jsonDoc, Object... kvs) {
+    return jsonReplace(jsonValueExpression(jsonDoc), kvs);
+  }
+
+  public static String jsonReplace(JsonValueContext input, Object... kvs) {
+    try {
+      return jsonModify(input, JsonModifyMode.REPLACE, kvs);
+    } catch (Exception ex) {
+      throw RESOURCE.invalidInputForJsonReplace(input.toString(), jsonize(kvs)).ex();
+    }
+  }
+
+  public static String jsonInsert(String jsonDoc, Object... kvs) {
+    return jsonInsert(jsonValueExpression(jsonDoc), kvs);
+  }
+
+  public static String jsonInsert(JsonValueContext input, Object... kvs) {
+    try {
+      return jsonModify(input, JsonModifyMode.INSERT, kvs);
+    } catch (Exception ex) {
+      throw RESOURCE.invalidInputForJsonInsert(input.toString(), jsonize(kvs)).ex();
+    }
+  }
+
+  public static String jsonSet(String jsonDoc, Object... kvs) {
+    return jsonSet(jsonValueExpression(jsonDoc), kvs);
+  }
+
+  public static String jsonSet(JsonValueContext input, Object... kvs) {
+    try {
+      return jsonModify(input, JsonModifyMode.SET, kvs);
+    } catch (Exception ex) {
+      throw RESOURCE.invalidInputForJsonSet(input.toString(), jsonize(kvs)).ex();
     }
   }
 
@@ -832,6 +919,14 @@ public class JsonFunctions {
     UNKNOWN,
     NONE
   }
-}
 
-// End JsonFunctions.java
+  /**
+   * Used in the JsonModify function.
+   */
+  public enum JsonModifyMode {
+    REPLACE,
+    INSERT,
+    SET,
+    REMOVE
+  }
+}

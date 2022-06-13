@@ -31,6 +31,7 @@ import org.apache.calcite.sql.SqlJsonConstructorNullClause;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlLateralOperator;
 import org.apache.calcite.sql.SqlLiteral;
+import org.apache.calcite.sql.SqlMatchFunction;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNullTreatmentOperator;
 import org.apache.calcite.sql.SqlNumericLiteral;
@@ -1070,6 +1071,12 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
   public static final SqlAggFunction BIT_OR =
       new SqlBitOpAggFunction(SqlKind.BIT_OR);
 
+  /**
+   * <code>BIT_XOR</code> aggregate function.
+   */
+  public static final SqlAggFunction BIT_XOR =
+      new SqlBitOpAggFunction(SqlKind.BIT_XOR);
+
   //-------------------------------------------------------------
   // WINDOW Aggregate Functions
   //-------------------------------------------------------------
@@ -1334,10 +1341,13 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
   public static final SqlFunction JSON_STORAGE_SIZE = SqlLibraryOperators.JSON_STORAGE_SIZE;
 
   @Deprecated // to be removed before 2.0
-  public static final SqlFunction JSON_QUOTE = SqlLibraryOperators.JSON_QUOTE;
+  public static final SqlFunction JSON_INSERT = SqlLibraryOperators.JSON_INSERT;
 
   @Deprecated // to be removed before 2.0
-  public static final SqlFunction JSON_UNQUOTE = SqlLibraryOperators.JSON_UNQUOTE;
+  public static final SqlFunction JSON_REPLACE = SqlLibraryOperators.JSON_REPLACE;
+
+  @Deprecated // to be removed before 2.0
+  public static final SqlFunction JSON_SET = SqlLibraryOperators.JSON_SET;
 
   public static final SqlJsonArrayAggAggFunction JSON_ARRAYAGG =
       new SqlJsonArrayAggAggFunction(SqlKind.JSON_ARRAYAGG,
@@ -1741,13 +1751,13 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
           null, OperandTypes.ANY_NUMERIC, SqlFunctionCategory.MATCH_RECOGNIZE);
 
   /** {@code LAST} function to be used within {@code MATCH_RECOGNIZE}. */
-  public static final SqlFunction LAST =
-      new SqlFunction("LAST", SqlKind.LAST, ReturnTypes.ARG0_NULLABLE,
+  public static final SqlMatchFunction LAST =
+      new SqlMatchFunction("LAST", SqlKind.LAST, ReturnTypes.ARG0_NULLABLE,
           null, OperandTypes.ANY_NUMERIC, SqlFunctionCategory.MATCH_RECOGNIZE);
 
   /** {@code PREV} function to be used within {@code MATCH_RECOGNIZE}. */
-  public static final SqlFunction PREV =
-      new SqlFunction("PREV", SqlKind.PREV, ReturnTypes.ARG0_NULLABLE,
+  public static final SqlMatchFunction PREV =
+      new SqlMatchFunction("PREV", SqlKind.PREV, ReturnTypes.ARG0_NULLABLE,
           null, OperandTypes.ANY_NUMERIC, SqlFunctionCategory.MATCH_RECOGNIZE);
 
   /** {@code NEXT} function to be used within {@code MATCH_RECOGNIZE}. */
@@ -1756,8 +1766,8 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
           OperandTypes.ANY_NUMERIC, SqlFunctionCategory.MATCH_RECOGNIZE);
 
   /** {@code CLASSIFIER} function to be used within {@code MATCH_RECOGNIZE}. */
-  public static final SqlFunction CLASSIFIER =
-      new SqlFunction("CLASSIFIER", SqlKind.CLASSIFIER, ReturnTypes.VARCHAR_2000,
+  public static final SqlMatchFunction CLASSIFIER =
+      new SqlMatchFunction("CLASSIFIER", SqlKind.CLASSIFIER, ReturnTypes.VARCHAR_2000,
           null, OperandTypes.NILADIC, SqlFunctionCategory.MATCH_RECOGNIZE);
 
   /** {@code MATCH_NUMBER} function to be used within {@code MATCH_RECOGNIZE}. */
@@ -2257,9 +2267,21 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
         }
       };
 
-  /** The {@code TUMBLE} group function. */
+  /** The {@code TUMBLE} group function.
+   *
+   * <p>This operator is named "$TUMBLE" (not "TUMBLE") because it is created
+   * directly by the parser, not by looking up an operator by name.
+   *
+   * <p>Why did we add TUMBLE to the parser? Because we plan to support TUMBLE
+   * as a table function (see [CALCITE-3272]); "TUMBLE" as a name will only be
+   * used by the TUMBLE table function.
+   *
+   * <p>After the TUMBLE table function is introduced, we plan to deprecate
+   * this TUMBLE group function, and in fact all group functions. See
+   * [CALCITE-3340] for details.
+   */
   public static final SqlGroupedWindowFunction TUMBLE =
-      new SqlGroupedWindowFunction(SqlKind.TUMBLE.name(), SqlKind.TUMBLE,
+      new SqlGroupedWindowFunction("$TUMBLE", SqlKind.TUMBLE,
           null, ReturnTypes.ARG0, null,
           OperandTypes.or(OperandTypes.DATETIME_INTERVAL,
               OperandTypes.DATETIME_INTERVAL_TIME),
@@ -2537,5 +2559,3 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
   }
 
 }
-
-// End SqlStdOperatorTable.java

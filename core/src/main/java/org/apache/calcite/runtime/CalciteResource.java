@@ -560,6 +560,9 @@ public interface CalciteResource {
   @BaseMessage("Statement preparation aborted")
   ExInst<CalciteException> preparationAborted();
 
+  @BaseMessage("Warning: use of non-standard feature ''{0}''")
+  ExInst<CalciteException> nonStandardFeatureUsed(String feature);
+
   @BaseMessage("SELECT DISTINCT not supported")
   @Property(name = "FeatureDefinition", value = "SQL:2003 Part 2 Annex F")
   Feature sQLFeature_E051_01();
@@ -788,6 +791,9 @@ public interface CalciteResource {
   @BaseMessage("Type ''{0}'' not found")
   ExInst<SqlValidatorException> typeNotFound(String name);
 
+  @BaseMessage("Function ''{0}'' not found")
+  ExInst<SqlValidatorException> functionNotFound(String name);
+
   @BaseMessage("Dialect does not support feature: ''{0}''")
   ExInst<SqlValidatorException> dialectDoesNotSupportFeature(String featureName);
 
@@ -871,32 +877,45 @@ public interface CalciteResource {
   @BaseMessage("While executing SQL [{0}] on JDBC sub-schema")
   ExInst<RuntimeException> exceptionWhilePerformingQueryOnJdbcSubSchema(String sql);
 
-  @BaseMessage("Not a valid input for JSON_TYPE: ''{0}''")
+  @BaseMessage("Invalid input for JSON_TYPE: ''{0}''")
   ExInst<CalciteException> invalidInputForJsonType(String value);
 
-  @BaseMessage("Not a valid input for JSON_DEPTH: ''{0}''")
+  @BaseMessage("Invalid input for JSON_DEPTH: ''{0}''")
   ExInst<CalciteException> invalidInputForJsonDepth(String value);
 
   @BaseMessage("Cannot serialize object to JSON: ''{0}''")
   ExInst<CalciteException> exceptionWhileSerializingToJson(String value);
 
-  @BaseMessage("Not a valid input for JSON_LENGTH: ''{0}''")
+  @BaseMessage("Invalid input for JSON_LENGTH: ''{0}''")
   ExInst<CalciteException> invalidInputForJsonLength(String value);
 
-  @BaseMessage("Not a valid input for JSON_KEYS: ''{0}''")
+  @BaseMessage("Invalid input for JSON_KEYS: ''{0}''")
   ExInst<CalciteException> invalidInputForJsonKeys(String value);
 
   @BaseMessage("Invalid input for JSON_REMOVE: document: ''{0}'', jsonpath expressions: ''{1}''")
   ExInst<CalciteException> invalidInputForJsonRemove(String value, String pathSpecs);
 
-  @BaseMessage("Not a valid input for JSON_STORAGE_SIZE: ''{0}''")
+  @BaseMessage("Invalid input for JSON_STORAGE_SIZE: ''{0}''")
   ExInst<CalciteException> invalidInputForJsonStorageSize(String value);
 
-  @BaseMessage("Invalid input for JSON_QUOTE: jsonDoc: ''{0}''")
-  ExInst<CalciteException> invalidInputForJsonQuote(String value);
+  @BaseMessage("Invalid input for REGEXP_REPLACE: ''{0}''")
+  ExInst<CalciteException> invalidInputForRegexpReplace(String value);
 
-  @BaseMessage("Invalid input for JSON_UNQUOTE: jsonDoc: ''{0}''")
-  ExInst<CalciteException> invalidInputForJsonUnQuote(String value);
+  @BaseMessage("Invalid input for JSON_INSERT: jsonDoc: ''{0}'', kvs: ''{1}''")
+  ExInst<CalciteException> invalidInputForJsonInsert(String jsonDoc, String kvs);
+
+  @BaseMessage("Invalid input for JSON_REPLACE: jsonDoc: ''{0}'', kvs: ''{1}''")
+  ExInst<CalciteException> invalidInputForJsonReplace(String jsonDoc, String kvs);
+
+  @BaseMessage("Invalid input for JSON_SET: jsonDoc: ''{0}'', kvs: ''{1}''")
+  ExInst<CalciteException> invalidInputForJsonSet(String jsonDoc, String kvs);
+
+  @BaseMessage("Illegal xslt specified : ''{0}''")
+  ExInst<CalciteException> illegalXslt(String xslt);
+
+  @BaseMessage("Invalid input for XMLTRANSFORM xml: ''{0}''")
+  ExInst<CalciteException> invalidInputForXmlTransform(String xml);
+
+  @BaseMessage("Invalid input for EXTRACTVALUE: xml: ''{0}'', xpath expression: ''{1}''")
+  ExInst<CalciteException> invalidInputForExtractValue(String xml, String xpath);
 }
-
-// End CalciteResource.java
