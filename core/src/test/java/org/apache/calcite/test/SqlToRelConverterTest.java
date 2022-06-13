@@ -57,6 +57,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.hamcrest.CoreMatchers;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
@@ -88,12 +89,7 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
   /** Sets the SQL statement for a test. */
   public final Sql sql(String sql) {
     return new Sql(sql, true, tester, false, UnaryOperator.identity(),
-        tester.getConformance(), true);
-  }
-
-  public final Sql expr(String expr) {
-    return new Sql(expr, true, tester, false, UnaryOperator.identity(),
-            tester.getConformance(), false);
+        tester.getConformance());
   }
 
   @Test void testDotLiteralAfterNestedRow() {
@@ -648,7 +644,6 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-476">[CALCITE-476]
    * DISTINCT flag in windowed aggregates</a>. */
-  @Disabled
   @Test void testSelectOverDistinct() {
     // Checks to see if <aggregate>(DISTINCT x) is set and preserved
     // as a flag for the aggregate call.
@@ -659,7 +654,6 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
   }
 
   /** As {@link #testSelectOverDistinct()} but for streaming queries. */
-  @Disabled
   @Test void testSelectStreamPartitionDistinct() {
     final String sql = "select stream\n"
         + "  count(distinct orderId) over (partition by productId\n"
@@ -1522,15 +1516,6 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
   @Test void testExistsCorrelatedDecorrelate() {
     final String sql = "select*from emp where exists (\n"
         + "  select 1 from dept where emp.deptno=dept.deptno)";
-    sql(sql).decorrelate(true).ok();
-  }
-
-  /**
-   * Test case for <a href="https://issues.apache.org/jira/browse/CALCITE-4560">[CALCITE-4560]
-   * Wrong plan when decorrelating EXISTS subquery with COALESCE in the predicate</a>. */
-  @Test void testExistsDecorrelateComplexCorrelationPredicate() {
-    final String sql = "select e1.empno from empnullables e1 where exists (\n"
-        + "  select 1 from empnullables e2 where COALESCE(e1.ename,'M')=COALESCE(e2.ename,'M'))";
     sql(sql).decorrelate(true).ok();
   }
 
@@ -4145,25 +4130,62 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
     sql(sql).trim(true).ok();
   }
 
-  @Test void testJoinExpandAndDecorrelation() {
-    String sql = ""
-        + "SELECT emp.deptno, emp.sal\n"
-        + "FROM dept\n"
-        + "JOIN emp ON emp.deptno = dept.deptno AND emp.sal < (\n"
-        + "  SELECT AVG(emp.sal)\n"
-        + "  FROM emp\n"
-        + "  WHERE  emp.deptno = dept.deptno\n"
-        + ")";
-    sql(sql)
-        .withConfig(configBuilder -> configBuilder
-            .withExpand(true)
-            .withDecorrelationEnabled(true))
-        .convertsTo("${plan_extended}");
-    sql(sql)
-        .withConfig(configBuilder -> configBuilder
-            .withExpand(false)
-            .withDecorrelationEnabled(false))
-        .convertsTo("${plan_not_extended}");
+  @Test void testJoinDecorrelationWithCorrelatedVariablesFromBothSideOfTheJoin() {
+    try {
+      String sql = "\n"
+          + "SELECT outerEmp.deptno, outerEmp.sal\n"
+          + "FROM dept\n"
+          + "LEFT JOIN emp outerEmp ON outerEmp.sal < (\n"
+          + "  SELECT AVG(avg_emp.sal)\n"
+          + "  FROM emp avg_emp\n"
+          + "  WHERE avg_emp.deptno = dept.deptno\n"
+          + "    AND avg_emp.deptno = outerEmp.deptno\n"
+          + ")\n";
+      sql(sql).convertsTo("${plan}");
+    } catch (AssertionError assertionError) {
+      assertThat(
+          assertionError.getMessage(),
+          CoreMatchers.containsString(
+              "Correlated sub-queries in ON clauses are not supported"));
+    }
+  }
+
+  @Test void testJoinDecorrelationWithCorrelatedVariablesFromTheRight() {
+    try {
+      String sql = "\n"
+          + "SELECT outerEmp.deptno, outerEmp.sal\n"
+          + "FROM dept\n"
+          + "LEFT JOIN emp outerEmp ON outerEmp.deptno = dept.deptno AND outerEmp.sal < (\n"
+          + "  SELECT AVG(avg_emp.sal)\n"
+          + "  FROM emp avg_emp\n"
+          + "  WHERE avg_emp.deptno = outerEmp.deptno\n"
+          + ")\n";
+      sql(sql).convertsTo("${plan}");
+    } catch (AssertionError exception) {
+      assertThat(
+          exception.getMessage(),
+          CoreMatchers.containsString(
+              "Correlated sub-queries in ON clauses are not supported"));
+    }
+  }
+
+  @Test void testJoinDecorrelationWithCorrelatedVariablesFromTheLeft() {
+    try {
+      String sql = "\n"
+          + "SELECT outerEmp.deptno, outerEmp.sal\n"
+          + "FROM dept\n"
+          + "LEFT JOIN emp outerEmp ON outerEmp.deptno = dept.deptno AND outerEmp.sal < (\n"
+          + "  SELECT AVG(avg_emp.sal)\n"
+          + "  FROM emp avg_emp\n"
+          + "  WHERE avg_emp.deptno = dept.deptno\n"
+          + ")\n";
+      sql(sql).convertsTo("${plan}");
+    } catch (AssertionError exception) {
+      assertThat(
+          exception.getMessage(),
+          CoreMatchers.containsString(
+              "Correlated sub-queries in ON clauses are not supported"));
+    }
   }
 
   @Test void testImplicitJoinExpandAndDecorrelation() {
@@ -4175,16 +4197,44 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         + "  FROM emp\n"
         + "  WHERE  emp.deptno = dept.deptno\n"
         + ")";
-    sql(sql)
-        .withConfig(configBuilder -> configBuilder
-            .withDecorrelationEnabled(true)
-            .withExpand(true))
-        .convertsTo("${plan_extended}");
-    sql(sql)
-        .withConfig(configBuilder -> configBuilder
-            .withDecorrelationEnabled(false)
-            .withExpand(false))
-        .convertsTo("${plan_not_extended}");
+    sql(sql).convertsTo("${plan}");
+  }
+
+  @Test void testJoinSubqueryWithKeyColumnOnTheRight() {
+    String sql = "\n"
+        + "SELECT outerEmp.deptno, outerEmp.sal\n"
+        + "FROM dept\n"
+        + "LEFT JOIN emp outerEmp ON outerEmp.deptno = dept.deptno AND outerEmp.sal IN (\n"
+        + "  SELECT emp_in.sal\n"
+        + "  FROM emp emp_in)\n";
+    sql(sql).convertsTo("${plan}");
+  }
+
+  @Test void testJoinSubqueryWithKeyColumnOnTheLeft() {
+    String sql = "\n"
+        + "SELECT outerEmp.deptno, outerEmp.sal\n"
+        + "FROM dept\n"
+        + "LEFT JOIN emp outerEmp ON outerEmp.deptno = dept.deptno AND dept.deptno IN (\n"
+        + "  SELECT emp_in.deptno\n"
+        + "  FROM emp emp_in)\n";
+    sql(sql).convertsTo("${plan}");
+  }
+
+  @Test void testJoinExpandNestedQuery() {
+    String sql = "\n"
+        + "SELECT emp.deptno, emp.sal\n"
+        + "FROM dept\n"
+        + "INNER JOIN emp ON emp.deptno = dept.deptno\n"
+        + "  AND emp.sal < (\n"
+        + "    SELECT AVG(avg_emp_sal.sal)\n"
+        + "    FROM emp avg_emp_sal)\n"
+        + "  AND emp.sal >= (\n"
+        + "    SELECT MIN(sal) * 2\n"
+        + "    FROM emp)\n"
+        + "  AND emp.sal > (\n"
+        + "    SELECT AVG(avg_emp_sal.sal) / 2\n"
+        + "    FROM emp avg_emp_sal)\n";
+    sql(sql).convertsTo("${plan}");
   }
 
   /**
@@ -4197,12 +4247,6 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         + "select COMPOSITE(deptno)\n"
         + "from dept";
     sql(sql).trim(true).ok();
-  }
-
-
-  @Test public void testInWithConstantList() {
-    String expr = "1 in (1,2,3)";
-    expr(expr).ok();
   }
 
   /**
@@ -4245,12 +4289,10 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
     private final boolean trim;
     private final UnaryOperator<SqlToRelConverter.Config> config;
     private final SqlConformance conformance;
-    private final boolean query;
-
 
     Sql(String sql, boolean decorrelate, Tester tester, boolean trim,
         UnaryOperator<SqlToRelConverter.Config> config,
-        SqlConformance conformance, boolean query) {
+        SqlConformance conformance) {
       this.sql = Objects.requireNonNull(sql, "sql");
       if (sql.contains(" \n")) {
         throw new AssertionError("trailing whitespace");
@@ -4260,7 +4302,6 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
       this.trim = trim;
       this.config = Objects.requireNonNull(config, "config");
       this.conformance = Objects.requireNonNull(conformance, "conformance");
-      this.query = query;
     }
 
     public void ok() {
@@ -4272,13 +4313,13 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
           .withConformance(conformance)
           .withConfig(config)
           .withConfig(c -> c.withTrimUnusedFields(true))
-          .assertConvertsTo(sql, plan, trim, query);
+          .assertConvertsTo(sql, plan, trim);
     }
 
     public Sql withConfig(UnaryOperator<SqlToRelConverter.Config> config) {
       final UnaryOperator<SqlToRelConverter.Config> config2 =
           this.config.andThen(Objects.requireNonNull(config, "config"))::apply;
-      return new Sql(sql, decorrelate, tester, trim, config2, conformance, query);
+      return new Sql(sql, decorrelate, tester, trim, config2, conformance);
     }
 
     public Sql expand(boolean expand) {
@@ -4286,19 +4327,19 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
     }
 
     public Sql decorrelate(boolean decorrelate) {
-      return new Sql(sql, decorrelate, tester, trim, config, conformance, query);
+      return new Sql(sql, decorrelate, tester, trim, config, conformance);
     }
 
     public Sql with(Tester tester) {
-      return new Sql(sql, decorrelate, tester, trim, config, conformance, query);
+      return new Sql(sql, decorrelate, tester, trim, config, conformance);
     }
 
     public Sql trim(boolean trim) {
-      return new Sql(sql, decorrelate, tester, trim, config, conformance, query);
+      return new Sql(sql, decorrelate, tester, trim, config, conformance);
     }
 
     public Sql conformance(SqlConformance conformance) {
-      return new Sql(sql, decorrelate, tester, trim, config, conformance, query);
+      return new Sql(sql, decorrelate, tester, trim, config, conformance);
     }
   }
 }
