@@ -18,6 +18,7 @@ package org.apache.calcite.runtime;
 
 import org.apache.calcite.DataContext;
 import org.apache.calcite.avatica.SqlType;
+import org.apache.calcite.avatica.remote.TypedValue;
 import org.apache.calcite.linq4j.AbstractEnumerable;
 import org.apache.calcite.linq4j.Enumerable;
 import org.apache.calcite.linq4j.Enumerator;
@@ -27,35 +28,25 @@ import org.apache.calcite.linq4j.function.Function1;
 import org.apache.calcite.linq4j.tree.Primitive;
 import org.apache.calcite.util.Static;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.math.BigDecimal;
-import java.net.URL;
-import java.sql.Blob;
-import java.sql.Clob;
+import java.sql.Array;
 import java.sql.Connection;
 import java.sql.Date;
-import java.sql.NClob;
 import java.sql.PreparedStatement;
-import java.sql.Ref;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
-import java.sql.RowId;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
-import java.sql.SQLXML;
 import java.sql.Statement;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import javax.sql.DataSource;
-
-import static org.apache.calcite.linq4j.Nullness.castNonNull;
 
 /**
  * Executes a SQL statement and returns the result as an {@link Enumerable}.
@@ -66,16 +57,12 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
   private final DataSource dataSource;
   private final String sql;
   private final Function1<ResultSet, Function0<T>> rowBuilderFactory;
-  private final @Nullable PreparedStatementEnricher preparedStatementEnricher;
+  private final PreparedStatementEnricher preparedStatementEnricher;
 
   private static final Logger LOGGER = LoggerFactory.getLogger(
       ResultSetEnumerable.class);
 
-  private @Nullable Long queryStart;
-  private long timeout;
-  private boolean timeoutSetFailed;
-
-  private static final Function1<ResultSet, Function0<@Nullable Object>> AUTO_ROW_BUILDER_FACTORY =
+  private static final Function1<ResultSet, Function0<Object>> AUTO_ROW_BUILDER_FACTORY =
       resultSet -> {
         final ResultSetMetaData metaData;
         final int columnCount;
@@ -94,37 +81,35 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
             }
           };
         } else {
-          return () -> convertColumns(resultSet, metaData, columnCount);
+          //noinspection unchecked
+          return (Function0) () -> {
+            try {
+              final List<Object> list = new ArrayList<>();
+              for (int i = 0; i < columnCount; i++) {
+                if (metaData.getColumnType(i + 1) == Types.TIMESTAMP) {
+                  long v = resultSet.getLong(i + 1);
+                  if (v == 0 && resultSet.wasNull()) {
+                    list.add(null);
+                  } else {
+                    list.add(v);
+                  }
+                } else {
+                  list.add(resultSet.getObject(i + 1));
+                }
+              }
+              return list.toArray();
+            } catch (SQLException e) {
+              throw new RuntimeException(e);
+            }
+          };
         }
       };
-
-  private static @Nullable Object[] convertColumns(ResultSet resultSet, ResultSetMetaData metaData,
-      int columnCount) {
-    final List<@Nullable Object> list = new ArrayList<>(columnCount);
-    try {
-      for (int i = 0; i < columnCount; i++) {
-        if (metaData.getColumnType(i + 1) == Types.TIMESTAMP) {
-          long v = resultSet.getLong(i + 1);
-          if (v == 0 && resultSet.wasNull()) {
-            list.add(null);
-          } else {
-            list.add(v);
-          }
-        } else {
-          list.add(resultSet.getObject(i + 1));
-        }
-      }
-      return list.toArray();
-    } catch (SQLException e) {
-      throw new RuntimeException(e);
-    }
-  }
 
   private ResultSetEnumerable(
       DataSource dataSource,
       String sql,
       Function1<ResultSet, Function0<T>> rowBuilderFactory,
-      @Nullable PreparedStatementEnricher preparedStatementEnricher) {
+      PreparedStatementEnricher preparedStatementEnricher) {
     this.dataSource = dataSource;
     this.sql = sql;
     this.rowBuilderFactory = rowBuilderFactory;
@@ -138,33 +123,41 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
     this(dataSource, sql, rowBuilderFactory, null);
   }
 
-  /** Creates a ResultSetEnumerable. */
-  public static ResultSetEnumerable<@Nullable Object> of(DataSource dataSource, String sql) {
+  /**
+   * Creates an ResultSetEnumerable.
+   */
+  public static Enumerable<Object> of(DataSource dataSource, String sql) {
     return of(dataSource, sql, AUTO_ROW_BUILDER_FACTORY);
   }
 
-  /** Creates a ResultSetEnumerable that retrieves columns as specific
-   * Java types. */
-  public static ResultSetEnumerable<@Nullable Object> of(DataSource dataSource, String sql,
-      Primitive[] primitives) {
+  /**
+   * Creates an ResultSetEnumerable that retrieves columns as specific
+   * Java types.
+   */
+  public static Enumerable<Object> of(DataSource dataSource, String sql,
+                                      Primitive[] primitives) {
     return of(dataSource, sql, primitiveRowBuilderFactory(primitives));
   }
 
-  /** Executes a SQL query and returns the results as an enumerator, using a
-   * row builder to convert JDBC column values into rows. */
-  public static <T> ResultSetEnumerable<T> of(
+  /**
+   * Executes a SQL query and returns the results as an enumerator, using a
+   * row builder to convert JDBC column values into rows.
+   */
+  public static <T> Enumerable<T> of(
       DataSource dataSource,
       String sql,
       Function1<ResultSet, Function0<T>> rowBuilderFactory) {
     return new ResultSetEnumerable<>(dataSource, sql, rowBuilderFactory);
   }
 
-  /** Executes a SQL query and returns the results as an enumerator, using a
+  /**
+   * Executes a SQL query and returns the results as an enumerator, using a
    * row builder to convert JDBC column values into rows.
    *
    * <p>It uses a {@link PreparedStatement} for computing the query result,
-   * and that means that it can bind parameters. */
-  public static <T> ResultSetEnumerable<T> of(
+   * and that means that it can bind parameters.
+   */
+  public static <T> Enumerable<T> of(
       DataSource dataSource,
       String sql,
       Function1<ResultSet, Function0<T>> rowBuilderFactory,
@@ -172,87 +165,85 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
     return new ResultSetEnumerable<>(dataSource, sql, rowBuilderFactory, consumer);
   }
 
-  public void setTimeout(DataContext context) {
-    this.queryStart = (Long) context.get(DataContext.Variable.UTC_TIMESTAMP.camelName);
-    Object timeout = context.get(DataContext.Variable.TIMEOUT.camelName);
-    if (timeout instanceof Long) {
-      this.timeout = (Long) timeout;
-    } else {
-      if (timeout != null) {
-        LOGGER.debug("Variable.TIMEOUT should be `long`. Given value was {}", timeout);
-      }
-      this.timeout = 0;
-    }
-  }
-
-  /** Called from generated code that proposes to create a
-   * {@code ResultSetEnumerable} over a prepared statement. */
+  /**
+   * Called from generated code that proposes to create a
+   * {@code ResultSetEnumerable} over a prepared statement.
+   */
   public static PreparedStatementEnricher createEnricher(Integer[] indexes,
-      DataContext context) {
+                                                         DataContext context) {
     return preparedStatement -> {
       for (int i = 0; i < indexes.length; i++) {
         final int index = indexes[i];
         setDynamicParam(preparedStatement, i + 1,
-            context.get("?" + index));
+            (TypedValue) context.get("?" + index));
       }
     };
   }
 
-  /** Assigns a value to a dynamic parameter in a prepared statement, calling
-   * the appropriate {@code setXxx} method based on the type of the value. */
+  /**
+   * Assigns a value to a dynamic parameter in a prepared statement, calling
+   * the appropriate {@code setXxx} method based on the type of the value.
+   */
   private static void setDynamicParam(PreparedStatement preparedStatement,
-      int i, @Nullable Object value) throws SQLException {
+                                      int i, TypedValue value) throws SQLException {
     if (value == null) {
-      // TODO: use proper type instead of ANY
       preparedStatement.setObject(i, null, SqlType.ANY.id);
-    } else if (value instanceof Timestamp) {
-      preparedStatement.setTimestamp(i, (Timestamp) value);
-    } else if (value instanceof Time) {
-      preparedStatement.setTime(i, (Time) value);
-    } else if (value instanceof String) {
-      preparedStatement.setString(i, (String) value);
-    } else if (value instanceof Integer) {
-      preparedStatement.setInt(i, (Integer) value);
-    } else if (value instanceof Double) {
-      preparedStatement.setDouble(i, (Double) value);
-    } else if (value instanceof java.sql.Array) {
-      preparedStatement.setArray(i, (java.sql.Array) value);
-    } else if (value instanceof BigDecimal) {
-      preparedStatement.setBigDecimal(i, (BigDecimal) value);
-    } else if (value instanceof Boolean) {
-      preparedStatement.setBoolean(i, (Boolean) value);
-    } else if (value instanceof Blob) {
-      preparedStatement.setBlob(i, (Blob) value);
-    } else if (value instanceof Byte) {
-      preparedStatement.setByte(i, (Byte) value);
-    } else if (value instanceof NClob) {
-      preparedStatement.setNClob(i, (NClob) value);
-    } else if (value instanceof Clob) {
-      preparedStatement.setClob(i, (Clob) value);
-    } else if (value instanceof byte[]) {
-      preparedStatement.setBytes(i, (byte[]) value);
-    } else if (value instanceof Date) {
-      preparedStatement.setDate(i, (Date) value);
-    } else if (value instanceof Float) {
-      preparedStatement.setFloat(i, (Float) value);
-    } else if (value instanceof Long) {
-      preparedStatement.setLong(i, (Long) value);
-    } else if (value instanceof Ref) {
-      preparedStatement.setRef(i, (Ref) value);
-    } else if (value instanceof RowId) {
-      preparedStatement.setRowId(i, (RowId) value);
-    } else if (value instanceof Short) {
-      preparedStatement.setShort(i, (Short) value);
-    } else if (value instanceof URL) {
-      preparedStatement.setURL(i, (URL) value);
-    } else if (value instanceof SQLXML) {
-      preparedStatement.setSQLXML(i, (SQLXML) value);
-    } else {
-      preparedStatement.setObject(i, value);
+      return;
+    }
+    switch (value.type) {
+    case PRIMITIVE_BOOLEAN:
+    case BOOLEAN:
+      preparedStatement.setBoolean(i, (Boolean) value.value);
+      break;
+    case PRIMITIVE_BYTE:
+    case BYTE:
+      preparedStatement.setByte(i, (Byte) value.value);
+      break;
+    case PRIMITIVE_CHAR:
+    case CHARACTER:
+    case STRING:
+      preparedStatement.setString(i, Objects.toString(value.value));
+      break;
+    case PRIMITIVE_SHORT:
+    case SHORT:
+      preparedStatement.setShort(i, (Short) value.value);
+      break;
+    case PRIMITIVE_INT:
+    case INTEGER:
+      preparedStatement.setInt(i, (Integer) value.value);
+      break;
+    case PRIMITIVE_LONG:
+    case LONG:
+      preparedStatement.setLong(i, (Long) value.value);
+      break;
+    case PRIMITIVE_FLOAT:
+    case FLOAT:
+      preparedStatement.setFloat(i, (Float) value.value);
+      break;
+    case PRIMITIVE_DOUBLE:
+    case DOUBLE:
+      preparedStatement.setDouble(i, (Double) value.value);
+      break;
+    case ARRAY:
+      preparedStatement.setArray(i, (Array) value.value);
+      break;
+    case JAVA_SQL_TIME:
+      preparedStatement.setTime(i, new Time(((Number) value.value).longValue()));
+      break;
+    case JAVA_SQL_TIMESTAMP:
+      preparedStatement.setTimestamp(i, new Timestamp(((Number) value.value).longValue()));
+      break;
+    case JAVA_SQL_DATE:
+    case JAVA_UTIL_DATE:
+      preparedStatement.setDate(i, new Date(((Number) value.value).longValue() * 86400000L));
+      break;
+    case OBJECT:
+      preparedStatement.setObject(i, value.value);
+      break;
     }
   }
 
-  @Override public Enumerator<T> enumerator() {
+  public Enumerator<T> enumerator() {
     if (preparedStatementEnricher == null) {
       return enumeratorBasedOnStatement();
     } else {
@@ -274,7 +265,6 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
         return new ResultSetEnumerator<>(resultSet, rowBuilderFactory);
       } else {
         Integer updateCount = statement.getUpdateCount();
-        //noinspection unchecked
         return Linq4j.singletonEnumerator((T) updateCount);
       }
     } catch (SQLException e) {
@@ -292,7 +282,7 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
       connection = dataSource.getConnection();
       preparedStatement = connection.prepareStatement(sql);
       setTimeoutIfPossible(preparedStatement);
-      castNonNull(preparedStatementEnricher).enrich(preparedStatement);
+      preparedStatementEnricher.enrich(preparedStatement);
       if (preparedStatement.execute()) {
         final ResultSet resultSet = preparedStatement.getResultSet();
         preparedStatement = null;
@@ -300,7 +290,6 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
         return new ResultSetEnumerator<>(resultSet, rowBuilderFactory);
       } else {
         Integer updateCount = preparedStatement.getUpdateCount();
-        //noinspection unchecked
         return Linq4j.singletonEnumerator((T) updateCount);
       }
     } catch (SQLException e) {
@@ -312,34 +301,14 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
   }
 
   private void setTimeoutIfPossible(Statement statement) throws SQLException {
-    Long queryStart = this.queryStart;
-    if (timeout == 0 || queryStart == null) {
-      return;
-    }
-    long now = System.currentTimeMillis();
-    long secondsLeft = (queryStart + timeout - now) / 1000;
-    if (secondsLeft <= 0) {
-      throw Static.RESOURCE.queryExecutionTimeoutReached(
-          String.valueOf(timeout),
-          String.valueOf(Instant.ofEpochMilli(queryStart))).ex();
-    }
-    if (secondsLeft > Integer.MAX_VALUE) {
-      // Just ignore the timeout if it happens to be too big, we can't squeeze it into int
-      return;
-    }
     try {
-      statement.setQueryTimeout((int) secondsLeft);
+      statement.setQueryTimeout(10);
     } catch (SQLFeatureNotSupportedException e) {
-      if (!timeoutSetFailed && LOGGER.isDebugEnabled()) {
-        // We don't really want to print this again and again if enumerable is used multiple times
-        LOGGER.debug("Failed to set query timeout " + secondsLeft + " seconds", e);
-        timeoutSetFailed = true;
-      }
+      LOGGER.debug("Failed to set query timeout.");
     }
   }
 
-  private static void closeIfPossible(@Nullable Connection connection,
-      @Nullable Statement statement) {
+  private void closeIfPossible(Connection connection, Statement statement) {
     if (statement != null) {
       try {
         statement.close();
@@ -356,13 +325,15 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
     }
   }
 
-  /** Implementation of {@link Enumerator} that reads from a
+  /**
+   * Implementation of {@link Enumerator} that reads from a
    * {@link ResultSet}.
    *
-   * @param <T> element type */
+   * @param <T> element type
+   */
   private static class ResultSetEnumerator<T> implements Enumerator<T> {
     private final Function0<T> rowBuilder;
-    private @Nullable ResultSet resultSet;
+    private ResultSet resultSet;
 
     ResultSetEnumerator(
         ResultSet resultSet,
@@ -371,31 +342,27 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
       this.rowBuilder = rowBuilderFactory.apply(resultSet);
     }
 
-    private ResultSet resultSet() {
-      return castNonNull(resultSet);
-    }
-
-    @Override public T current() {
+    public T current() {
       return rowBuilder.apply();
     }
 
-    @Override public boolean moveNext() {
+    public boolean moveNext() {
       try {
-        return resultSet().next();
+        return resultSet.next();
       } catch (SQLException e) {
         throw new RuntimeException(e);
       }
     }
 
-    @Override public void reset() {
+    public void reset() {
       try {
-        resultSet().beforeFirst();
+        resultSet.beforeFirst();
       } catch (SQLException e) {
         throw new RuntimeException(e);
       }
     }
 
-    @Override public void close() {
+    public void close() {
       ResultSet savedResultSet = resultSet;
       if (savedResultSet != null) {
         try {
@@ -416,7 +383,7 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
     }
   }
 
-  private static Function1<ResultSet, Function0<@Nullable Object>>
+  private static Function1<ResultSet, Function0<Object>>
       primitiveRowBuilderFactory(final Primitive[] primitives) {
     return resultSet -> {
       final ResultSetMetaData metaData;
@@ -437,21 +404,19 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
           }
         };
       }
-      return () -> convertPrimitiveColumns(primitives, resultSet, columnCount);
+      //noinspection unchecked
+      return (Function0) () -> {
+        try {
+          final List<Object> list = new ArrayList<>();
+          for (int i = 0; i < columnCount; i++) {
+            list.add(primitives[i].jdbcGet(resultSet, i + 1));
+          }
+          return list.toArray();
+        } catch (SQLException e) {
+          throw new RuntimeException(e);
+        }
+      };
     };
-  }
-
-  private static @Nullable Object[] convertPrimitiveColumns(Primitive[] primitives,
-      ResultSet resultSet, int columnCount) {
-    final List<@Nullable Object> list = new ArrayList<>(columnCount);
-    try {
-      for (int i = 0; i < columnCount; i++) {
-        list.add(primitives[i].jdbcGet(resultSet, i + 1));
-      }
-      return list.toArray();
-    } catch (SQLException e) {
-      throw new RuntimeException(e);
-    }
   }
 
   /**
@@ -462,3 +427,5 @@ public class ResultSetEnumerable<T> extends AbstractEnumerable<T> {
     void enrich(PreparedStatement statement) throws SQLException;
   }
 }
+
+// End ResultSetEnumerable.java

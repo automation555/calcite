@@ -535,17 +535,17 @@ public class RexToLixTranslator {
       }
       break;
     case TIMESTAMP:
-      int targetTimestampPrecision = targetType.getPrecision();
-      if (targetTimestampPrecision == RelDataType.PRECISION_NOT_SPECIFIED) {
-        targetTimestampPrecision = 0;
+      int targetScale = targetType.getScale();
+      if (targetScale == RelDataType.SCALE_NOT_SPECIFIED) {
+        targetScale = 0;
       }
-      if (targetTimestampPrecision < sourceType.getPrecision()) {
+      if (targetScale < sourceType.getScale()) {
         convert =
             Expressions.call(
                 BuiltInMethod.ROUND_LONG.method,
                 convert,
                 Expressions.constant(
-                    (long) Math.pow(10, 3 - targetTimestampPrecision)));
+                    (long) Math.pow(10, 3 - targetScale)));
       }
       break;
     case INTERVAL_YEAR:
@@ -729,8 +729,8 @@ public class RexToLixTranslator {
     }
     return nullAs.handle(
         convert(
-            Expressions.call(root, BuiltInMethod.DATA_CONTEXT_GET.method,
-                Expressions.constant("?" + expr.getIndex())),
+            Expressions.call(root, BuiltInMethod.DATA_CONTEXT_GET_BINDABLE_PARAM.method,
+                Expressions.constant(expr.getIndex())),
             storageType));
   }
 
@@ -1017,18 +1017,6 @@ public class RexToLixTranslator {
     } else if (fromType == java.sql.Date.class) {
       if (toBox == Primitive.INT) {
         return Expressions.call(BuiltInMethod.DATE_TO_INT.method, operand);
-      } else {
-        return Expressions.convert_(operand, toType);
-      }
-    } else if (fromType == java.sql.Time.class) {
-      if (toBox == Primitive.INT) {
-        return Expressions.call(BuiltInMethod.TIME_TO_INT.method, operand);
-      } else {
-        return Expressions.convert_(operand, toType);
-      }
-    } else if (fromType == java.sql.Timestamp.class) {
-      if (toBox == Primitive.LONG) {
-        return Expressions.call(BuiltInMethod.TIMESTAMP_TO_LONG.method, operand);
       } else {
         return Expressions.convert_(operand, toType);
       }

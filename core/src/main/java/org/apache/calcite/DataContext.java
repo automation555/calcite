@@ -17,6 +17,7 @@
 package org.apache.calcite;
 
 import org.apache.calcite.adapter.java.JavaTypeFactory;
+import org.apache.calcite.avatica.remote.TypedValue;
 import org.apache.calcite.linq4j.QueryProvider;
 import org.apache.calcite.linq4j.tree.Expressions;
 import org.apache.calcite.linq4j.tree.ParameterExpression;
@@ -28,7 +29,6 @@ import com.google.common.base.CaseFormat;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Modifier;
-import java.util.Locale;
 import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -64,6 +64,14 @@ public interface DataContext {
    */
   Object get(String name);
 
+  default Object getBindableParameterLocalValue(int i) {
+    Object o = get("?" + i);
+    if (o == null) {
+      return null;
+    }
+    return ((TypedValue) o).toLocal();
+  }
+
   /** Variable that may be asked for in a call to {@link DataContext#get}. */
   enum Variable {
     UTC_TIMESTAMP("utcTimestamp", Long.class),
@@ -86,10 +94,6 @@ public interface DataContext {
      * frequently and cease execution (e.g. by returning end of data). */
     CANCEL_FLAG("cancelFlag", AtomicBoolean.class),
 
-    /** Query timeout in milliseconds.
-     * When no timeout is set, the value is 0 or not present. */
-    TIMEOUT("timeout", Long.class),
-
     /** Advisor that suggests completion hints for SQL statements. */
     SQL_ADVISOR("sqlAdvisor", SqlAdvisor.class),
 
@@ -102,33 +106,10 @@ public interface DataContext {
     /** Writer to the standard output (stdout). */
     STDOUT("stdout", OutputStream.class),
 
-    /** Locale in which the current statement is executing.
-     * Affects the behavior of functions such as {@code DAYNAME} and
-     * {@code MONTHNAME}. Required; defaults to the root locale if the
-     * connection does not specify a locale. */
-    LOCALE("locale", Locale.class),
-
     /** Time zone in which the current statement is executing. Required;
      * defaults to the time zone of the JVM if the connection does not specify a
      * time zone. */
-    TIME_ZONE("timeZone", TimeZone.class),
-
-    /** The query user.
-     *
-     * <p>Default value is "sa". */
-    USER("user", String.class),
-
-    /** The system user.
-     *
-     * <p>Default value is "user.name" from
-     * {@link System#getProperty(String)}. */
-    SYSTEM_USER("systemUser", String.class),
-
-    /** The sql mode.
-     *
-     * <p>Default value is "" from
-     * {@link System#getProperty(String)}. */
-    SQL_MODE("sqlMode", String.class);
+    TIME_ZONE("timeZone", TimeZone.class);
 
     public final String camelName;
     public final Class clazz;
