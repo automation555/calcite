@@ -25,6 +25,7 @@ import org.apache.calcite.adapter.enumerable.MatchUtils;
 import org.apache.calcite.adapter.enumerable.SourceSorter;
 import org.apache.calcite.adapter.java.ReflectiveSchema;
 import org.apache.calcite.adapter.jdbc.JdbcSchema;
+import org.apache.calcite.avatica.util.ByteString;
 import org.apache.calcite.avatica.util.DateTimeUtils;
 import org.apache.calcite.avatica.util.TimeUnitRange;
 import org.apache.calcite.interpreter.Context;
@@ -188,8 +189,8 @@ public enum BuiltInMethod {
   EMITTER_EMIT(Enumerables.Emitter.class, "emit", List.class, List.class,
       List.class, int.class, Consumer.class),
   MERGE_JOIN(EnumerableDefaults.class, "mergeJoin", Enumerable.class,
-      Enumerable.class, Function1.class, Function1.class, Function2.class,
-      boolean.class, boolean.class),
+      Enumerable.class, Function1.class, Function1.class, Predicate2.class, Function2.class,
+      JoinType.class, Comparator.class),
   SLICE0(Enumerables.class, "slice0", Enumerable.class),
   SEMI_JOIN(EnumerableDefaults.class, "semiJoin", Enumerable.class,
       Enumerable.class, Function1.class, Function1.class,
@@ -223,7 +224,6 @@ public enum BuiltInMethod {
       Comparator.class),
   UNION(ExtendedEnumerable.class, "union", Enumerable.class),
   CONCAT(ExtendedEnumerable.class, "concat", Enumerable.class),
-  EXTENDED_CAST(ExtendedEnumerable.class, "extendedCast", Class.class),
   REPEAT_UNION(EnumerableDefaults.class, "repeatUnion", Enumerable.class,
       Enumerable.class, int.class, boolean.class, EqualityComparer.class),
   LAZY_COLLECTION_SPOOL(EnumerableDefaults.class, "lazyCollectionSpool", Collection.class,
@@ -327,6 +327,7 @@ public enum BuiltInMethod {
   MD5(SqlFunctions.class, "md5", String.class),
   SHA1(SqlFunctions.class, "sha1", String.class),
   COMPRESS(CompressionFunctions.class, "compress", String.class),
+  UNCOMPRESS(CompressionFunctions.class, "uncompress", ByteString.class),
   EXTRACT_VALUE(XmlFunctions.class, "extractValue", String.class, String.class),
   XML_TRANSFORM(XmlFunctions.class, "xmlTransform", String.class, String.class),
   EXTRACT_XML(XmlFunctions.class, "extractXml", String.class, String.class, String.class),
@@ -371,6 +372,7 @@ public enum BuiltInMethod {
       int.class),
   CHAR_LENGTH(SqlFunctions.class, "charLength", String.class),
   STRING_CONCAT(SqlFunctions.class, "concat", String.class, String.class),
+  MULTI_STRING_CONCAT(SqlFunctions.class, "concat", String[].class),
   FLOOR_DIV(DateTimeUtils.class, "floorDiv", long.class, long.class),
   FLOOR_MOD(DateTimeUtils.class, "floorMod", long.class, long.class),
   ADD_MONTHS(SqlFunctions.class, "addMonths", long.class, int.class),
