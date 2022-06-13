@@ -49,7 +49,6 @@ import org.apache.calcite.rel.rules.JoinCommuteRule;
 import org.apache.calcite.rel.rules.JoinPushThroughJoinRule;
 import org.apache.calcite.rel.rules.JoinToMultiJoinRule;
 import org.apache.calcite.rel.rules.LoptOptimizeJoinRule;
-import org.apache.calcite.rel.rules.MatchRule;
 import org.apache.calcite.rel.rules.MultiJoinOptimizeBushyRule;
 import org.apache.calcite.rel.rules.ProjectMergeRule;
 import org.apache.calcite.rel.rules.SemiJoinRule;
@@ -87,6 +86,7 @@ public class Programs {
       ImmutableSet.of(
           EnumerableRules.ENUMERABLE_JOIN_RULE,
           EnumerableRules.ENUMERABLE_MERGE_JOIN_RULE,
+          EnumerableRules.ENUMERABLE_SEMI_JOIN_RULE,
           EnumerableRules.ENUMERABLE_CORRELATE_RULE,
           EnumerableRules.ENUMERABLE_PROJECT_RULE,
           EnumerableRules.ENUMERABLE_FILTER_RULE,
@@ -99,11 +99,9 @@ public class Programs {
           EnumerableRules.ENUMERABLE_TABLE_MODIFICATION_RULE,
           EnumerableRules.ENUMERABLE_VALUES_RULE,
           EnumerableRules.ENUMERABLE_WINDOW_RULE,
-          EnumerableRules.ENUMERABLE_MATCH_RULE,
           SemiJoinRule.PROJECT,
           SemiJoinRule.JOIN,
           TableScanRule.INSTANCE,
-          MatchRule.INSTANCE,
           CalciteSystemProperty.COMMUTE.value()
               ? JoinAssociateRule.INSTANCE
               : ProjectMergeRule.INSTANCE,
@@ -246,10 +244,9 @@ public class Programs {
 
   public static Program subQuery(RelMetadataProvider metadataProvider) {
     final HepProgramBuilder builder = HepProgram.builder();
-    builder.addRuleCollection(
-        ImmutableList.of(SubQueryRemoveRule.FILTER,
-            SubQueryRemoveRule.PROJECT,
-            SubQueryRemoveRule.JOIN));
+    builder.addRuleCollection(ImmutableList.of((RelOptRule) SubQueryRemoveRule.FILTER,
+        SubQueryRemoveRule.PROJECT,
+        SubQueryRemoveRule.JOIN));
     return of(builder.build(), true, metadataProvider);
   }
 
@@ -295,7 +292,7 @@ public class Programs {
         program1,
 
         // Second planner pass to do physical "tweaks". This the first time
-        // that EnumerableCalc is introduced.
+        // that EnumerableCalcRel is introduced.
         calc(metadataProvider));
   }
 
@@ -386,3 +383,5 @@ public class Programs {
     }
   }
 }
+
+// End Programs.java
