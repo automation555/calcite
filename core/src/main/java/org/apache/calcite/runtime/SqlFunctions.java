@@ -1072,9 +1072,10 @@ public class SqlFunctions {
     return b0 & b1;
   }
 
-  /** Helper function for implementing <code>BITCOUNT</code> */
-  public static long bitCount(long b) {
-    return Long.bitCount(b);
+  // ~
+  /** Helper function for implementing <code>BIT_NOT</code> */
+  public static long bitNot(long b) {
+    return ~b;
   }
 
   // |

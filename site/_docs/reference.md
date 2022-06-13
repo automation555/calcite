@@ -2294,7 +2294,7 @@ semantics.
 | C | Operator syntax                                | Description
 |:- |:-----------------------------------------------|:-----------
 | p | expr :: type                                   | Casts *expr* to *type*
-| m | BIT_COUNT(integer)                             | Returns the bitwise COUNT of non-null *integer*
+| m | BIT_NOT(value)                                 | Returns the bitwise NOT of non-null *numeric*
 | o | CHR(integer) | Returns the character having the binary equivalent to *integer* as a CHAR value
 | m o p | CONCAT(string [, string ]*)                | Concatenates two or more strings
 | p | CONVERT_TIMEZONE(tz1, tz2, datetime)           | Converts the timezone of *datetime* from *tz1* to *tz2*

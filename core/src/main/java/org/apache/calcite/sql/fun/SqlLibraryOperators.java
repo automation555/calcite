@@ -256,9 +256,9 @@ public abstract class SqlLibraryOperators {
           SqlFunctionCategory.STRING);
 
   @LibraryOperator(libraries = {MYSQL})
-  public static final SqlFunction BITCOUNT =
+  public static final SqlFunction BIT_NOT =
       new SqlFunction(
-          "BIT_COUNT",
+          "BIT_NOT",
           SqlKind.OTHER_FUNCTION,
           ReturnTypes.ARG0,
           null,
