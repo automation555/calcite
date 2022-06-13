@@ -17,9 +17,9 @@
 package org.apache.calcite.rel.rules;
 
 import org.apache.calcite.plan.Contexts;
+import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptUtil;
-import org.apache.calcite.plan.RelRule;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
@@ -35,10 +35,9 @@ import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RelBuilderFactory;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-import org.immutables.value.Value;
-
 import java.util.List;
+import java.util.function.BiPredicate;
+import java.util.function.Predicate;
 
 /**
  * Planner rule that permutes the inputs to a
@@ -49,27 +48,54 @@ import java.util.List;
  *
  * <p>To preserve the order of columns in the output row, the rule adds a
  * {@link org.apache.calcite.rel.core.Project}.
- *
- * @see CoreRules#JOIN_COMMUTE
- * @see CoreRules#JOIN_COMMUTE_OUTER
  */
-@Value.Enclosing
-public class JoinCommuteRule
-    extends RelRule<JoinCommuteRule.Config>
-    implements TransformationRule {
+public class JoinCommuteRule extends RelOptRule implements TransformationRule {
+  //~ Static fields/initializers ---------------------------------------------
 
-  /** Creates a JoinCommuteRule. */
-  protected JoinCommuteRule(Config config) {
-    super(config);
-  }
+  /** @deprecated Use {@link CoreRules#JOIN_COMMUTE}. */
+  @Deprecated // to be removed before 1.25
+  public static final JoinCommuteRule INSTANCE = CoreRules.JOIN_COMMUTE;
 
-  @Deprecated // to be removed before 2.0
+  /** @deprecated Use {@link CoreRules#JOIN_COMMUTE_OUTER}. */
+  @Deprecated // to be removed before 1.25
+  public static final JoinCommuteRule SWAP_OUTER = CoreRules.JOIN_COMMUTE_OUTER;
+
+  /**
+   * A predicate for the left and right children of the join is required to
+   * prevent endless firing of the rule.
+   * <p>
+   *   The swap for the left and right children should happen only if the predicate yields true.
+   *   The predicate must form a partial order. That means for different a and b,
+   *   if pred(a, b) = true, then we must have pred(b, a) = false; and vice versa.
+   *  </p>
+   *  <p>
+   *  Here we just give a sample implementation of the predicate.
+   *  </p>
+   */
+  private static final BiPredicate<RelNode, RelNode> DEFAULT_JOIN_CHILDREN_PREDICATE =
+      (left, right) -> left.getId() < right.getId();
+
+  private final boolean swapOuter;
+
+  //~ Constructors -----------------------------------------------------------
+
+  /**
+   * Creates a JoinCommuteRule.
+   */
   public JoinCommuteRule(Class<? extends Join> clazz,
       RelBuilderFactory relBuilderFactory, boolean swapOuter) {
-    this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-        .as(Config.class)
-        .withOperandFor(clazz)
-        .withSwapOuter(swapOuter));
+    // FIXME Enable this rule for joins with system fields
+    super(
+        operandJ(clazz, null,
+            (Predicate<Join>) j -> j.getLeft().getId() != j.getRight().getId()
+                && j.getSystemFieldList().isEmpty()
+                && DEFAULT_JOIN_CHILDREN_PREDICATE.test(j.getLeft(), j.getRight()), any()),
+        relBuilderFactory, null);
+    this.swapOuter = swapOuter;
+  }
+
+  JoinCommuteRule(boolean swapOuter) {
+    this(LogicalJoin.class, RelFactories.LOGICAL_BUILDER, swapOuter);
   }
 
   @Deprecated // to be removed before 2.0
@@ -87,13 +113,13 @@ public class JoinCommuteRule
   //~ Methods ----------------------------------------------------------------
 
   @Deprecated // to be removed before 2.0
-  public static @Nullable RelNode swap(Join join) {
+  public static RelNode swap(Join join) {
     return swap(join, false,
         RelFactories.LOGICAL_BUILDER.create(join.getCluster(), null));
   }
 
   @Deprecated // to be removed before 2.0
-  public static @Nullable RelNode swap(Join join, boolean swapOuterJoins) {
+  public static RelNode swap(Join join, boolean swapOuterJoins) {
     return swap(join, swapOuterJoins,
         RelFactories.LOGICAL_BUILDER.create(join.getCluster(), null));
   }
@@ -108,7 +134,7 @@ public class JoinCommuteRule
    * @param relBuilder        Builder for relational expressions
    * @return swapped join if swapping possible; else null
    */
-  public static @Nullable RelNode swap(Join join, boolean swapOuterJoins,
+  public static RelNode swap(Join join, boolean swapOuterJoins,
       RelBuilder relBuilder) {
     final JoinRelType joinType = join.getJoinType();
     if (!swapOuterJoins && joinType != JoinRelType.INNER) {
@@ -126,7 +152,7 @@ public class JoinCommuteRule
     // swap.  This way, we will generate one semijoin for the original
     // join, and one for the swapped join, and no more.  This
     // doesn't prevent us from seeing any new combinations assuming
-    // that the planner tries the desired order (semi-joins after swaps).
+    // that the planner tries the desired order (semijoins after swaps).
     Join newJoin =
         join.copy(join.getTraitSet(), condition, join.getRight(),
             join.getLeft(), joinType.swap(), join.isSemiJoinDone());
@@ -137,47 +163,20 @@ public class JoinCommuteRule
         .build();
   }
 
-  @Override public boolean matches(RelOptRuleCall call) {
+  public boolean matches(RelOptRuleCall call) {
     Join join = call.rel(0);
     // SEMI and ANTI join cannot be swapped.
-    if (!join.getJoinType().projectsRight()) {
-      return false;
-    }
-
-    // Suppress join with "true" condition (that is, cartesian joins).
-    return config.isAllowAlwaysTrueCondition()
-        || !join.getCondition().isAlwaysTrue();
+    return join.getJoinType().projectsRight();
   }
 
-  @Override public void onMatch(final RelOptRuleCall call) {
+  public void onMatch(final RelOptRuleCall call) {
     Join join = call.rel(0);
 
-    final RelNode swapped = swap(join, config.isSwapOuter(), call.builder());
+    final RelNode swapped = swap(join, this.swapOuter, call.builder());
     if (swapped == null) {
       return;
     }
-
-    // The result is either a Project or, if the project is trivial, a
-    // raw Join.
-    final Join newJoin =
-        swapped instanceof Join
-            ? (Join) swapped
-            : (Join) swapped.getInput(0);
-
     call.transformTo(swapped);
-
-    // We have converted join='a join b' into swapped='select
-    // a0,a1,a2,b0,b1 from b join a'. Now register that project='select
-    // b0,b1,a0,a1,a2 from (select a0,a1,a2,b0,b1 from b join a)' is the
-    // same as 'b join a'. If we didn't do this, the swap join rule
-    // would fire on the new join, ad infinitum.
-    final RelBuilder relBuilder = call.builder();
-    final List<RexNode> exps =
-        RelOptUtil.createSwappedJoinExprs(newJoin, join, false);
-    relBuilder.push(swapped)
-        .project(exps, newJoin.getRowType().getFieldNames());
-
-    call.getPlanner().ensureRegistered(relBuilder.build(), newJoin);
   }
 
   //~ Inner Classes ----------------------------------------------------------
@@ -224,46 +223,5 @@ public class JoinCommuteRule
           + ", leftFieldCount=" + leftFields.size()
           + ", rightFieldCount=" + rightFields.size());
     }
-  }
-
-  /** Rule configuration. */
-  @Value.Immutable
-  public interface Config extends RelRule.Config {
-    Config DEFAULT = ImmutableJoinCommuteRule.Config.of()
-        .withOperandFor(LogicalJoin.class)
-        .withSwapOuter(false);
-
-    @Override default JoinCommuteRule toRule() {
-      return new JoinCommuteRule(this);
-    }
-
-    /** Defines an operand tree for the given classes. */
-    default Config withOperandFor(Class<? extends Join> joinClass) {
-      return withOperandSupplier(b ->
-          b.operand(joinClass)
-              // FIXME Enable this rule for joins with system fields
-              .predicate(j ->
-                  j.getLeft().getId() != j.getRight().getId()
-                      && j.getSystemFieldList().isEmpty())
-              .anyInputs())
-          .as(Config.class);
-    }
-
-    /** Whether to swap outer joins; default false. */
-    @Value.Default default boolean isSwapOuter() {
-      return false;
-    }
-
-    /** Sets {@link #isSwapOuter()}. */
-    Config withSwapOuter(boolean swapOuter);
-
-    /** Whether to emit the new join tree if the join condition is {@code TRUE}
-     * (that is, cartesian joins); default true. */
-    @Value.Default default boolean isAllowAlwaysTrueCondition() {
-      return true;
-    }
-
-    /** Sets {@link #isAllowAlwaysTrueCondition()}. */
-    Config withAllowAlwaysTrueCondition(boolean allowAlwaysTrueCondition);
   }
 }
