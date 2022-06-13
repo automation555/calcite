@@ -24,8 +24,10 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Collect;
 import org.apache.calcite.rel.type.RelDataType;
-import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.util.BuiltInMethod;
+
+import static org.apache.calcite.sql.SqlKind.MULTISET_VALUE_CONSTRUCTOR;
 
 /** Implementation of {@link org.apache.calcite.rel.core.Collect} in
  * {@link org.apache.calcite.adapter.enumerable.EnumerableConvention enumerable calling convention}. */
@@ -39,20 +41,21 @@ public class EnumerableCollect extends Collect implements EnumerableRel {
    * @param traitSet  Trait set
    * @param input     Input relational expression
    * @param rowType   Row type
+   * @param sqlKind   SqlKind
    */
   public EnumerableCollect(RelOptCluster cluster, RelTraitSet traitSet,
-      RelNode input, RelDataType rowType) {
-    super(cluster, traitSet, input, rowType);
+      RelNode input, RelDataType rowType, SqlKind sqlKind) {
+    super(cluster, traitSet, input, rowType, sqlKind);
     assert getConvention() instanceof EnumerableConvention;
     assert getConvention() == input.getConvention();
   }
 
   @Deprecated // to be removed before 2.0
   public EnumerableCollect(RelOptCluster cluster, RelTraitSet traitSet,
-      RelNode input, String fieldName) {
+      RelNode input, String fieldName, SqlKind sqlKind) {
     this(cluster, traitSet, input,
-        deriveRowType(cluster.getTypeFactory(), SqlTypeName.MULTISET, fieldName,
-            input.getRowType()));
+        deriveRowType(cluster.getTypeFactory(), MULTISET_VALUE_CONSTRUCTOR, fieldName,
+            input.getRowType()), sqlKind);
   }
 
   /**
@@ -61,16 +64,16 @@ public class EnumerableCollect extends Collect implements EnumerableRel {
    * @param input          Input relational expression
    * @param rowType        Row type
    */
-  public static Collect create(RelNode input, RelDataType rowType) {
+  public static Collect create(RelNode input, RelDataType rowType, SqlKind sqlKind) {
     final RelOptCluster cluster = input.getCluster();
     final RelTraitSet traitSet =
         cluster.traitSet().replace(EnumerableConvention.INSTANCE);
-    return new EnumerableCollect(cluster, traitSet, input, rowType);
+    return new EnumerableCollect(cluster, traitSet, input, rowType, sqlKind);
   }
 
   @Override public EnumerableCollect copy(RelTraitSet traitSet,
       RelNode newInput) {
-    return new EnumerableCollect(getCluster(), traitSet, newInput, rowType());
+    return new EnumerableCollect(getCluster(), traitSet, newInput, rowType(), sqlKind);
   }
 
   @Override public Result implement(EnumerableRelImplementor implementor, Prefer pref) {
@@ -91,15 +94,25 @@ public class EnumerableCollect extends Collect implements EnumerableRel {
     Expression child_ =
         builder.append(
             "child", result.block);
-    // In the internal representation of multisets , every element must be a record. In case the
-    // result above is a scalar type we have to wrap it around a physical type capable of
-    // representing records. For this reason the following conversion is necessary.
-    // REVIEW zabetak January 7, 2019: If we can ensure that the input to this operator
-    // has the correct physical type (e.g., respecting the Prefer.ARRAY above) then this conversion
-    // can be removed.
-    Expression conv_ =
-        builder.append(
-            "converted", result.physType.convertTo(child_, JavaRowFormat.ARRAY));
+
+    Expression conv_;
+    switch (sqlKind) {
+    case ARRAY_QUERY_CONSTRUCTOR:
+    case MULTISET_QUERY_CONSTRUCTOR:
+      conv_ = child_;
+      break;
+    default:
+      // In the internal representation of multisets , every element must be a record. In case the
+      // result above is a scalar type we have to wrap it around a physical type capable of
+      // representing records. For this reason the following conversion is necessary.
+      // REVIEW zabetak January 7, 2019: If we can ensure that the input to this operator
+      // has the correct physical type (e.g., respecting the Prefer.ARRAY above) then this
+      // conversion can be removed.
+      conv_ =
+          builder.append(
+              "converted", result.physType.convertTo(child_, JavaRowFormat.ARRAY));
+    }
+
     Expression list_ =
         builder.append("list",
             Expressions.call(conv_,

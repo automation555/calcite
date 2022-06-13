@@ -45,6 +45,6 @@ class EnumerableCollectRule extends ConverterRule {
     return EnumerableCollect.create(
         convert(input,
             input.getTraitSet().replace(EnumerableConvention.INSTANCE)),
-        collect.getRowType());
+        collect.getRowType(), collect.sqlKind);
   }
 }

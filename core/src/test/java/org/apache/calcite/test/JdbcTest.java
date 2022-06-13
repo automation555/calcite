@@ -1152,6 +1152,27 @@ public class JdbcTest {
             CalciteAssert.checkResultContains("EnumerableCorrelate"));
   }
 
+  @Test void testConvertFunc() {
+    CalciteAssert.that()
+        .with(CalciteAssert.Config.FOODMART_CLONE)
+        .query("select convert(cast(\"employee_id\" as varchar), utf8, latin1) as alia\n"
+            + "from \"employee\"\n"
+            + "limit 3")
+        .returns("ALIA=1\n"
+            + "ALIA=2\n"
+            + "ALIA=4\n");
+
+    CalciteAssert.that()
+        .with(CalciteAssert.Config.FOODMART_CLONE)
+        .query("select \"employee_id\"\n"
+            + "from \"employee\"\n"
+            + "where convert(cast(\"employee_id\" as varchar), utf8, latin1) <> 1"
+            + "limit 3")
+        .returns("employee_id=2\n"
+            + "employee_id=4\n"
+            + "employee_id=5\n");
+  }
+
   /** Just short of bushy. */
   @Test void testAlmostBushy() {
     CalciteAssert.that()
@@ -1770,6 +1791,7 @@ public class JdbcTest {
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-35">[CALCITE-35]
    * Support parenthesized sub-clause in JOIN</a>. */
+  @Disabled
   @Test void testJoinJoin() {
     CalciteAssert.that()
         .with(CalciteAssert.Config.FOODMART_CLONE)
@@ -1794,22 +1816,24 @@ public class JdbcTest {
             + " or \"promotion\".\"media_type\" = 'Sunday Paper'\n"
             + " or \"promotion\".\"media_type\" = 'Street Handout')\n"
             + " and (\"product_class\".\"product_family\" = 'Drink')\n"
-            + " and (\"customer\".\"country\" = 'USA'\n"
-            + "   and \"customer\".\"state_province\" = 'WA'\n"
-            + "   and \"customer\".\"city\" = 'Bellingham')\n"
+            + " and (\"customer\".\"country\" = 'USA' and \"customer\".\"state_province\""
+            + " = 'WA' and \"customer\".\"city\" = 'Bellingham')\n"
             + "group by \"product_class\".\"product_family\",\n"
             + "   \"product_class\".\"product_department\",\n"
             + "   \"customer\".\"country\",\n"
             + "   \"customer\".\"state_province\",\n"
             + "   \"customer\".\"city\"\n"
-            + "order by \"product_class\".\"product_family\" asc nulls first,\n"
-            + "   \"product_class\".\"product_department\" asc nulls first,\n"
-            + "   \"customer\".\"country\" asc nulls first,\n"
-            + "   \"customer\".\"state_province\" asc nulls first,\n"
-            + "   \"customer\".\"city\" asc nulls first")
-        .returnsUnordered(
-            "c0=Drink; c1=Alcoholic Beverages; c2=USA; c3=WA; c4=Bellingham",
-            "c0=Drink; c1=Dairy; c2=USA; c3=WA; c4=Bellingham");
+            + "order by ISNULL(\"product_class\".\"product_family\") ASC,   \"product_class\".\"product_family\" ASC,\n"
+            + "   ISNULL(\"product_class\".\"product_department\") ASC,   \"product_class\".\"product_department\" ASC,\n"
+            + "   ISNULL(\"customer\".\"country\") ASC,   \"customer\".\"country\" ASC,\n"
+            + "   ISNULL(\"customer\".\"state_province\") ASC,   \"customer\".\"state_province\" ASC,\n"
+            + "   ISNULL(\"customer\".\"city\") ASC,   \"customer\".\"city\" ASC")
+        .returns("+-------+---------------------+-----+------+------------+\n"
+            + "| c0    | c1                  | c2  | c3   | c4         |\n"
+            + "+-------+---------------------+-----+------+------------+\n"
+            + "| Drink | Alcoholic Beverages | USA | WA   | Bellingham |\n"
+            + "| Drink | Dairy               | USA | WA   | Bellingham |\n"
+            + "+-------+---------------------+-----+------+------------+");
   }
 
   /** Four-way join. Used to take 80 seconds. */
@@ -5427,28 +5451,6 @@ public class JdbcTest {
         });
   }
 
-  /**
-   * Test case for <a href="https://issues.apache.org/jira/browse/CALCITE-5048">[CALCITE-5048]
-   * Query with parameterized LIMIT and correlated sub-query throws AssertionError "not a
-   * literal"</a>.
-   */
-  @Test void testDynamicParameterInLimitOffset() {
-    CalciteAssert.hr()
-        .query("SELECT * FROM \"hr\".\"emps\" AS a "
-            + "WHERE \"deptno\" = "
-            + "(SELECT MAX(\"deptno\") "
-            + "FROM \"hr\".\"emps\" AS b "
-            + "WHERE a.\"empid\" = b.\"empid\""
-            + ") ORDER BY \"salary\" LIMIT ? OFFSET ?")
-        .explainContains("EnumerableLimit(offset=[?1], fetch=[?0])")
-        .consumesPreparedStatement(p -> {
-          p.setInt(1, 2);
-          p.setInt(2, 1);
-        })
-        .returns("empid=200; deptno=20; name=Eric; salary=8000.0; commission=500\n"
-            + "empid=100; deptno=10; name=Bill; salary=10000.0; commission=1000\n");
-  }
-
   /** Tests a JDBC connection that provides a model (a single schema based on
    * a JDBC database). */
   @Test void testModel() {
@@ -6632,13 +6634,6 @@ public class JdbcTest {
         "select * from \"employee\" where \"full_name\" = _UTF16'\u82f1\u56fd'")
         .throws_(
             "Cannot apply = to the two different charsets ISO-8859-1 and UTF-16LE");
-
-    // The CONVERT function (what SQL:2011 calls "character transliteration") is
-    // not implemented yet. See
-    // https://issues.apache.org/jira/browse/CALCITE-111.
-    with.query("select * from \"employee\"\n"
-        + "where convert(\"full_name\" using UTF16) = _UTF16'\u82f1\u56fd'")
-        .throws_("Column 'UTF16' not found in any table");
   }
 
   /** Tests metadata for the MySQL lexical scheme. */
@@ -7746,13 +7741,14 @@ public class JdbcTest {
         + "  pattern (up s)\n"
         + "  define up as up.\"empid\" = 100)";
     final String convert = ""
-        + "LogicalMatch(partition=[[]], order=[[0 DESC]], "
+        + "LogicalProject(C=[$0], EMPID=[$1], TWO=[$2])\n"
+        + "  LogicalMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID, TWO]], allRows=[false], "
         + "after=[FLAG(SKIP TO NEXT ROW)], pattern=[('UP', 'S')], "
         + "isStrictStarts=[false], isStrictEnds=[false], subsets=[[]], "
         + "patternDefinitions=[[=(CAST(PREV(UP.$0, 0)):INTEGER NOT NULL, 100)]], "
         + "inputFields=[[empid, deptno, name, salary, commission]])\n"
-        + "  LogicalTableScan(table=[[hr, emps]])\n";
+        + "    LogicalTableScan(table=[[hr, emps]])\n";
     final String plan = "PLAN="
         + "EnumerableMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID, TWO]], allRows=[false], "
@@ -7778,13 +7774,14 @@ public class JdbcTest {
         + "  pattern (s up)\n"
         + "  define up as up.\"commission\" < prev(up.\"commission\"))";
     final String convert = ""
-        + "LogicalMatch(partition=[[]], order=[[0 DESC]], "
+        + "LogicalProject(C=[$0], EMPID=[$1])\n"
+        + "  LogicalMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID]], allRows=[false], "
         + "after=[FLAG(SKIP TO NEXT ROW)], pattern=[('S', 'UP')], "
         + "isStrictStarts=[false], isStrictEnds=[false], subsets=[[]], "
         + "patternDefinitions=[[<(PREV(UP.$4, 0), PREV(UP.$4, 1))]], "
         + "inputFields=[[empid, deptno, name, salary, commission]])\n"
-        + "  LogicalTableScan(table=[[hr, emps]])\n";
+        + "    LogicalTableScan(table=[[hr, emps]])\n";
     final String plan = "PLAN="
         + "EnumerableMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID]], allRows=[false], "

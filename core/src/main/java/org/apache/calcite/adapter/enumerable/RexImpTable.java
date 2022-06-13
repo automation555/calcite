@@ -184,6 +184,7 @@ import static org.apache.calcite.sql.fun.SqlStdOperatorTable.CLASSIFIER;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.COALESCE;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.COLLECT;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.CONCAT;
+import static org.apache.calcite.sql.fun.SqlStdOperatorTable.CONVERT;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.COS;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.COT;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.COUNT;
@@ -241,7 +242,6 @@ import static org.apache.calcite.sql.fun.SqlStdOperatorTable.JSON_EXISTS;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.JSON_OBJECT;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.JSON_OBJECTAGG;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.JSON_QUERY;
-import static org.apache.calcite.sql.fun.SqlStdOperatorTable.JSON_TYPE_OPERATOR;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.JSON_VALUE;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.JSON_VALUE_EXPRESSION;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.LAG;
@@ -373,7 +373,8 @@ public class RexImpTable {
         NullPolicy.STRICT);
     defineMethod(OCTET_LENGTH, BuiltInMethod.OCTET_LENGTH.method,
         NullPolicy.STRICT);
-    map.put(CONCAT, new ConcatImplementor());
+    defineMethod(CONCAT, BuiltInMethod.STRING_CONCAT.method,
+        NullPolicy.STRICT);
     defineMethod(CONCAT_FUNCTION, BuiltInMethod.MULTI_STRING_CONCAT.method,
         NullPolicy.STRICT);
     defineMethod(CONCAT2, BuiltInMethod.STRING_CONCAT.method, NullPolicy.STRICT);
@@ -386,6 +387,7 @@ public class RexImpTable {
     defineMethod(SOUNDEX, BuiltInMethod.SOUNDEX.method, NullPolicy.STRICT);
     defineMethod(DIFFERENCE, BuiltInMethod.DIFFERENCE.method, NullPolicy.STRICT);
     defineMethod(REVERSE, BuiltInMethod.REVERSE.method, NullPolicy.STRICT);
+    defineMethod(CONVERT, BuiltInMethod.CONVERT.method, NullPolicy.STRICT);
 
     map.put(TRIM, new TrimImplementor());
 
@@ -393,6 +395,8 @@ public class RexImpTable {
     map.put(AND, new LogicalAndImplementor());
     map.put(OR, new LogicalOrImplementor());
     map.put(NOT, new LogicalNotImplementor());
+
+    map.put(CONVERT, new ConvertImplementor());
 
     // comparisons
     defineBinary(LESS_THAN, LessThan, NullPolicy.STRICT, "lt");
@@ -576,8 +580,6 @@ public class RexImpTable {
 
     // Json Operators
     defineMethod(JSON_VALUE_EXPRESSION,
-        BuiltInMethod.JSON_VALUE_EXPRESSION.method, NullPolicy.STRICT);
-    defineMethod(JSON_TYPE_OPERATOR,
         BuiltInMethod.JSON_VALUE_EXPRESSION.method, NullPolicy.STRICT);
     defineMethod(JSON_EXISTS, BuiltInMethod.JSON_EXISTS.method, NullPolicy.ARG0);
     map.put(JSON_VALUE,
@@ -2698,29 +2700,6 @@ public class RexImpTable {
     }
   }
 
-  /** Implementor for a array or string concat. */
-  private static class ConcatImplementor extends AbstractRexCallImplementor {
-    private ArrayConcatImplementor arrayConcatImplementor =
-        new ArrayConcatImplementor();
-    private MethodImplementor stringConcatImplementor
-        = new MethodImplementor(BuiltInMethod.STRING_CONCAT.method, NullPolicy.STRICT, false);
-    ConcatImplementor() {
-      super(NullPolicy.STRICT, false);
-    }
-
-    @Override String getVariableName() {
-      return "concat";
-    }
-
-    @Override Expression implementSafe(RexToLixTranslator translator, RexCall call,
-        List<Expression> argValueList) {
-      if (call.type.getSqlTypeName() == SqlTypeName.ARRAY) {
-        return arrayConcatImplementor.implementSafe(translator, call, argValueList);
-      }
-      return stringConcatImplementor.implementSafe(translator, call, argValueList);
-    }
-  }
-
   /** Implementor for a value-constructor. */
   private static class ValueConstructorImplementor
       extends AbstractRexCallImplementor {
@@ -3414,6 +3393,30 @@ public class RexImpTable {
     @Override Expression implementSafe(final RexToLixTranslator translator,
         final RexCall call, final List<Expression> argValueList) {
       return Expressions.call(BuiltInMethod.NOT.method, argValueList);
+    }
+  }
+
+  /**
+   * Implementor for the {@code CONVERT} function.
+   *
+   * <p>If argument[0] is null, result is null.
+   */
+  private static class ConvertImplementor extends AbstractRexCallImplementor {
+    ConvertImplementor() {
+      super(NullPolicy.STRICT, false);
+    }
+
+    @Override String getVariableName() {
+      return "convert";
+    }
+
+    @Override Expression implementSafe(RexToLixTranslator translator, RexCall call,
+                                       List<Expression> argValueList) {
+      final RexNode arg0 = call.getOperands().get(0);
+      if (SqlTypeUtil.isNull(arg0.getType())) {
+        return argValueList.get(0);
+      }
+      return Expressions.call(BuiltInMethod.CONVERT.method, argValueList);
     }
   }
 

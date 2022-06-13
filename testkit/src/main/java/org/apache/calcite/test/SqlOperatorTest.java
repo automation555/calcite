@@ -805,36 +805,36 @@ public class SqlOperatorTest {
     final SqlOperatorFixture f = fixture();
     f.setFor(SqlStdOperatorTable.CAST, VmName.EXPAND);
 
-    f.checkFails("cast(1.25 as int)", "INTEGER", true);
-    f.checkFails("cast(1.25E0 as int)", "INTEGER", true);
+    f.checkCastToScalarOkay("1.25", "INTEGER", "1");
+    f.checkCastToScalarOkay("1.25E0", "INTEGER", "1");
     if (!f.brokenTestsEnabled()) {
       return;
     }
-    f.checkFails("cast(1.5 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(5E-1 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(1.75 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(1.75E0 as int)", OUT_OF_RANGE_MESSAGE, true);
+    f.checkCastToScalarOkay("1.5", "INTEGER", "2");
+    f.checkCastToScalarOkay("5E-1", "INTEGER", "1");
+    f.checkCastToScalarOkay("1.75", "INTEGER", "2");
+    f.checkCastToScalarOkay("1.75E0", "INTEGER", "2");
 
-    f.checkFails("cast(-1.25 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(-1.25E0 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(-1.5 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(-5E-1 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(-1.75 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(-1.75E0 as int)", OUT_OF_RANGE_MESSAGE, true);
+    f.checkCastToScalarOkay("-1.25", "INTEGER", "-1");
+    f.checkCastToScalarOkay("-1.25E0", "INTEGER", "-1");
+    f.checkCastToScalarOkay("-1.5", "INTEGER", "-2");
+    f.checkCastToScalarOkay("-5E-1", "INTEGER", "-1");
+    f.checkCastToScalarOkay("-1.75", "INTEGER", "-2");
+    f.checkCastToScalarOkay("-1.75E0", "INTEGER", "-2");
 
-    f.checkFails("cast(1.23454 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(1.23454E0 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(1.23455 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(5E-5 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(1.99995 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(1.99995E0 as int)", OUT_OF_RANGE_MESSAGE, true);
+    f.checkCastToScalarOkay("1.23454", "DECIMAL(8, 4)", "1.2345");
+    f.checkCastToScalarOkay("1.23454E0", "DECIMAL(8, 4)", "1.2345");
+    f.checkCastToScalarOkay("1.23455", "DECIMAL(8, 4)", "1.2346");
+    f.checkCastToScalarOkay("5E-5", "DECIMAL(8, 4)", "0.0001");
+    f.checkCastToScalarOkay("1.99995", "DECIMAL(8, 4)", "2.0000");
+    f.checkCastToScalarOkay("1.99995E0", "DECIMAL(8, 4)", "2.0000");
 
-    f.checkFails("cast(-1.23454 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(-1.23454E0 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(-1.23455 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(-5E-5 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(-1.99995 as int)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast(-1.99995E0 as int)", OUT_OF_RANGE_MESSAGE, true);
+    f.checkCastToScalarOkay("-1.23454", "DECIMAL(8, 4)", "-1.2345");
+    f.checkCastToScalarOkay("-1.23454E0", "DECIMAL(8, 4)", "-1.2345");
+    f.checkCastToScalarOkay("-1.23455", "DECIMAL(8, 4)", "-1.2346");
+    f.checkCastToScalarOkay("-5E-5", "DECIMAL(8, 4)", "-0.0001");
+    f.checkCastToScalarOkay("-1.99995", "DECIMAL(8, 4)", "-2.0000");
+    f.checkCastToScalarOkay("-1.99995E0", "DECIMAL(8, 4)", "-2.0000");
 
     // 9.99 round to 10.0, should give out of range error
     f.checkFails("cast(9.99 as decimal(2,1))", OUT_OF_RANGE_MESSAGE,
@@ -845,15 +845,15 @@ public class SqlOperatorTest {
     final SqlOperatorFixture f = fixture();
     f.setFor(SqlStdOperatorTable.CAST, VmName.EXPAND);
 
-    f.checkFails("cast( cast(1.25 as double) as integer)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast( cast(-1.25 as double) as integer)", OUT_OF_RANGE_MESSAGE, true);
+    f.checkScalarExact("cast( cast(1.25 as double) as integer)", 1);
+    f.checkScalarExact("cast( cast(-1.25 as double) as integer)", -1);
     if (!f.brokenTestsEnabled()) {
       return;
     }
-    f.checkFails("cast( cast(1.75 as double) as integer)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast( cast(-1.75 as double) as integer)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast( cast(1.5 as double) as integer)", OUT_OF_RANGE_MESSAGE, true);
-    f.checkFails("cast( cast(-1.5 as double) as integer)", OUT_OF_RANGE_MESSAGE, true);
+    f.checkScalarExact("cast( cast(1.75 as double) as integer)", 2);
+    f.checkScalarExact("cast( cast(-1.75 as double) as integer)", -2);
+    f.checkScalarExact("cast( cast(1.5 as double) as integer)", 2);
+    f.checkScalarExact("cast( cast(-1.5 as double) as integer)", -2);
   }
 
   @Test void testCastApproxNumericLimits() {
@@ -1235,16 +1235,6 @@ public class SqlOperatorTest {
     f.checkBoolean("cast(cast('false' as varchar(10)) as boolean)", false);
     f.checkFails("cast(cast('blah' as varchar(10)) as boolean)",
         INVALID_CHAR_MESSAGE, true);
-  }
-
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-4861">[CALCITE-4861]
-   * Optimisation of chained cast calls can lead to unexpected behaviour.</a>.
-   */
-  @Test void testChainedCast() {
-    final SqlOperatorFixture f = fixture();
-    f.checkFails("CAST(CAST(CAST(123456 AS TINYINT) AS INT) AS BIGINT)",
-        "Value out of range. Value:\"123456\"", true);
   }
 
   @Test void testCase() {
@@ -1776,15 +1766,6 @@ public class SqlOperatorTest {
     f.checkNull(" cast(null as ANY) || cast(null as ANY) ");
     f.checkString("cast('a' as varchar) || cast('b' as varchar) "
         + "|| cast('c' as varchar)", "abc", "VARCHAR NOT NULL");
-
-    f.checkScalar("array[1, 2] || array[2, 3]", "[1, 2, 2, 3]",
-        "INTEGER NOT NULL ARRAY NOT NULL");
-    f.checkScalar("array[1, 2] || array[2, null]", "[1, 2, 2, null]",
-        "INTEGER ARRAY NOT NULL");
-    f.checkScalar("array['hello', 'world'] || array['!'] || "
-            + "array[cast(null as char)]",
-        "[hello, world, !, null]", "CHAR(5) ARRAY NOT NULL");
-    f.checkNull("cast(null as integer array) || array[1]");
   }
 
   @Test void testConcatFunc() {
@@ -2641,7 +2622,7 @@ public class SqlOperatorTest {
     checkNullOperand(f1, "<>");
   }
 
-  private static void checkNullOperand(SqlOperatorFixture f, String op) {
+  private void checkNullOperand(SqlOperatorFixture f, String op) {
     f.checkBoolean("1 " + op + " null", null);
     f.checkBoolean("null " + op + " -3", null);
     f.checkBoolean("null " + op + " null", null);
@@ -3449,6 +3430,20 @@ public class SqlOperatorTest {
   @Test void testConvertFunc() {
     final SqlOperatorFixture f = fixture();
     f.setFor(SqlStdOperatorTable.CONVERT, VM_FENNEL, VM_JAVA);
+    f.checkFails("convert('a', utf8, utf10)", "UTF10", false);
+    f.checkFails("select ^convert(col, latin1, utf8)^\n"
+                    + "from (select 1 as col\n"
+                    + " from (values(true)))",
+            "Invalid type 'INTEGER NOT NULL' in 'CONVERT' function\\. Only 'CHARACTER' type is supported",
+            false);
+    f.check("select convert(col, latin1, utf8)\n"
+                    + "from (select 'a' as col\n"
+                    + " from (values(true)))",
+            SqlTests.ANY_TYPE_CHECKER, 'a');
+
+    f.checkType("convert('a', utf16, gbk)", "CHAR(1) NOT NULL");
+    f.checkType("convert(null, utf16, gbk)", "NULL");
+    f.checkType("convert(cast(1 as varchar(2)), utf8, latin1)", "VARCHAR(2) NOT NULL");
   }
 
   @Test void testTranslateFunc() {
@@ -4413,7 +4408,7 @@ public class SqlOperatorTest {
     f.checkString("json_object('foo': 100)",
         "{\"foo\":100}", "VARCHAR(2000) NOT NULL");
     f.checkString("json_object('foo': json_object('foo': 'bar'))",
-        "{\"foo\":{\"foo\":\"bar\"}}", "VARCHAR(2000) NOT NULL");
+        "{\"foo\":\"{\\\"foo\\\":\\\"bar\\\"}\"}", "VARCHAR(2000) NOT NULL");
     f.checkString("json_object('foo': json_object('foo': 'bar') format json)",
         "{\"foo\":{\"foo\":\"bar\"}}", "VARCHAR(2000) NOT NULL");
   }
@@ -4444,7 +4439,7 @@ public class SqlOperatorTest {
   @Test void testJsonValueExpressionOperator() {
     final SqlOperatorFixture f = fixture();
     f.checkScalar("'{}' format json", "{}", "ANY NOT NULL");
-    f.checkScalar("'[1, 2, 3]' format json", "[1,2,3]", "ANY NOT NULL");
+    f.checkScalar("'[1, 2, 3]' format json", "[1, 2, 3]", "ANY NOT NULL");
     f.checkNull("cast(null as varchar) format json");
     f.checkScalar("'null' format json", "null", "ANY NOT NULL");
     f.enableTypeCoercion(false)
@@ -4468,7 +4463,7 @@ public class SqlOperatorTest {
     f.checkString("json_array(100)",
         "[100]", "VARCHAR(2000) NOT NULL");
     f.checkString("json_array(json_array('foo'))",
-        "[[\"foo\"]]", "VARCHAR(2000) NOT NULL");
+        "[\"[\\\"foo\\\"]\"]", "VARCHAR(2000) NOT NULL");
     f.checkString("json_array(json_array('foo') format json)",
         "[[\"foo\"]]", "VARCHAR(2000) NOT NULL");
   }
@@ -7254,9 +7249,9 @@ public class SqlOperatorTest {
     f.checkFails("^floor('abcde' to minute)^",
         "(?s)Cannot apply 'FLOOR' to arguments .*", false);
     f.checkFails("floor(timestamp '2015-02-19 12:34:56.78' to ^microsecond^)",
-        "'MICROSECOND' is not a valid datetime format", false);
+        "(?s)Encountered \"microsecond\" at .*", false);
     f.checkFails("floor(timestamp '2015-02-19 12:34:56.78' to ^nanosecond^)",
-        "'NANOSECOND' is not a valid datetime format", false);
+        "(?s)Encountered \"nanosecond\" at .*", false);
     f.checkScalar("floor(time '12:34:56' to minute)",
         "12:34:00", "TIME(0) NOT NULL");
     f.checkScalar("floor(timestamp '2015-02-19 12:34:56.78' to second)",
@@ -7295,9 +7290,9 @@ public class SqlOperatorTest {
     f.checkFails("^ceil('abcde' to minute)^",
         "(?s)Cannot apply 'CEIL' to arguments .*", false);
     f.checkFails("ceil(timestamp '2015-02-19 12:34:56.78' to ^microsecond^)",
-        "'MICROSECOND' is not a valid datetime format", false);
+        "(?s)Encountered \"microsecond\" at .*", false);
     f.checkFails("ceil(timestamp '2015-02-19 12:34:56.78' to ^nanosecond^)",
-        "'NANOSECOND' is not a valid datetime format", false);
+        "(?s)Encountered \"nanosecond\" at .*", false);
     f.checkScalar("ceil(time '12:34:56' to minute)",
         "12:35:00", "TIME(0) NOT NULL");
     f.checkScalar("ceil(time '12:59:56' to minute)",
