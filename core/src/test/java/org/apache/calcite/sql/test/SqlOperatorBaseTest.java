@@ -93,6 +93,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.PI;
+import static org.apache.calcite.util.DateTimeStringUtils.getDateFormatter;
 
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -324,15 +325,23 @@ public abstract class SqlOperatorBaseTest {
     tester.setFor(null);
   }
 
-  protected SqlTester oracleTester() {
+  private SqlTester oracleTester() {
+    return libraryTester(SqlLibrary.ORACLE);
+  }
+
+  private SqlTester bigQueryTester() {
+    return libraryTester(SqlLibrary.BIG_QUERY);
+  }
+
+  protected SqlTester libraryTester(SqlLibrary library) {
     return tester.withOperatorTable(
             SqlLibraryOperatorTableFactory.INSTANCE
-                .getOperatorTable(SqlLibrary.STANDARD, SqlLibrary.ORACLE))
+                .getOperatorTable(SqlLibrary.STANDARD, library))
         .withConnectionFactory(
             CalciteAssert.EMPTY_CONNECTION_FACTORY
                 .with(new CalciteAssert
                     .AddSchemaSpecPostProcessor(CalciteAssert.SchemaSpec.HR))
-                .with(CalciteConnectionProperty.FUN, "oracle"));
+                .with(CalciteConnectionProperty.FUN, library.fun));
   }
 
   protected SqlTester oracleTester(SqlConformance conformance) {
@@ -1990,6 +1999,9 @@ public abstract class SqlOperatorBaseTest {
     tester.checkScalar("{fn TIMESTAMPDIFF(HOUR,"
         + " TIMESTAMP '2014-03-29 12:34:56',"
         + " TIMESTAMP '2014-03-29 12:34:56')}", "0", "INTEGER NOT NULL");
+    tester.checkScalar("{fn TIMESTAMPDIFF(MONTH,"
+        + " TIMESTAMP '2019-09-01 00:00:00',"
+        + " TIMESTAMP '2020-03-01 00:00:00')}", "6", "INTEGER NOT NULL");
 
     if (Bug.CALCITE_2539_FIXED) {
       tester.checkFails("{fn WEEK(DATE '2014-12-10')}",
@@ -4644,6 +4656,10 @@ public abstract class SqlOperatorBaseTest {
   }
 
   @Test void testJsonExists() {
+    // default pathmode the default is: strict mode
+    tester.checkBoolean("json_exists('{\"foo\":\"bar\"}', "
+        + "'$.foo')", Boolean.TRUE);
+
     tester.checkBoolean("json_exists('{\"foo\":\"bar\"}', "
         + "'strict $.foo' false on error)", Boolean.TRUE);
     tester.checkBoolean("json_exists('{\"foo\":\"bar\"}', "
@@ -4690,6 +4706,15 @@ public abstract class SqlOperatorBaseTest {
   }
 
   @Test void testJsonValue() {
+    if (false) {
+      tester.checkFails("json_value('{\"foo\":100}', 'lax $.foo1' error on empty)",
+          "(?s).*Empty result of JSON_VALUE function is not allowed.*",
+          true);
+    }
+
+    // default pathmode the default is: strict mode
+    tester.checkString("json_value('{\"foo\":100}', '$.foo')",
+        "100", "VARCHAR(2000)");
     // type casting test
     tester.checkString("json_value('{\"foo\":100}', 'strict $.foo')",
         "100", "VARCHAR(2000)");
@@ -4769,6 +4794,10 @@ public abstract class SqlOperatorBaseTest {
   }
 
   @Test void testJsonQuery() {
+    // default pathmode the default is: strict mode
+    tester.checkString("json_query('{\"foo\":100}', '$' null on empty)",
+        "{\"foo\":100}", "VARCHAR(2000)");
+
     // lax test
     tester.checkString("json_query('{\"foo\":100}', 'lax $' null on empty)",
         "{\"foo\":100}", "VARCHAR(2000)");
@@ -4975,6 +5004,10 @@ public abstract class SqlOperatorBaseTest {
         "2", "INTEGER");
     tester.checkString("json_length('[1, 2, {\"a\": 3}]')",
         "3", "INTEGER");
+
+    // default pathmode the default is: strict mode
+    tester.checkString("json_length('{\"foo\":100}', '$')",
+        "1", "INTEGER");
 
     // lax test
     tester.checkString("json_length('{}', 'lax $')",
@@ -5227,27 +5260,7 @@ public abstract class SqlOperatorBaseTest {
         "07000000789c4bad48cc2dc84905000bc002ed", "VARBINARY NOT NULL");
   }
 
-  @Test public void testUncompress() {
-    SqlTester sqlTester = tester(SqlLibrary.MYSQL);
-    sqlTester.checkNull("UNCOMPRESS(NULL)");
-    sqlTester.checkString("UNCOMPRESS(x'')", "", "VARCHAR");
-    sqlTester.checkNull("UNCOMPRESS('string')");
-
-    sqlTester.checkNull("UNCOMPRESS(x'1233')");
-
-    sqlTester.checkString("UNCOMPRESS(COMPRESS('test'))",
-        "test", "VARCHAR");
-
-    sqlTester.checkString("UNCOMPRESS(x'10000000789c4b4c44050033980611')",
-        "aaaaaaaaaaaaaaaa", "VARCHAR");
-
-    sqlTester.checkString("UNCOMPRESS(x'06000000789c2b4ecc2dc849050008de0283' )",
-        "sample", "VARCHAR");
-    sqlTester.checkString("UNCOMPRESS(x'07000000789c4bad48cc2dc84905000bc002ed')",
-        "example", "VARCHAR");
-  }
-
-  @Test public void testExtractValue() {
+  @Test void testExtractValue() {
     SqlTester mySqlTester = tester(SqlLibrary.MYSQL);
     mySqlTester.checkNull("ExtractValue(NULL, '//b')");
     mySqlTester.checkNull("ExtractValue('', NULL)");
@@ -5608,6 +5621,28 @@ public abstract class SqlOperatorBaseTest {
     tester.setFor(SqlStdOperatorTable.RAND_INTEGER);
     tester.checkScalar("rand_integer(1, 11)", 4, "INTEGER NOT NULL");
     tester.checkScalar("rand_integer(2, 11)", 1, "INTEGER NOT NULL");
+  }
+
+  /** Tests {@code UNIX_SECONDS} and other datetime functions from BigQuery. */
+  @Test void testUnixSecondsFunc() {
+    SqlTester tester = bigQueryTester();
+    tester.setFor(SqlLibraryOperators.UNIX_SECONDS);
+    tester.checkScalar("unix_seconds(timestamp '1970-01-01 00:00:00')", 0,
+        "BIGINT NOT NULL");
+    tester.checkNull("unix_seconds(cast(null as timestamp))");
+    tester.checkNull("unix_millis(cast(null as timestamp))");
+    tester.checkNull("unix_micros(cast(null as timestamp))");
+    tester.checkScalar("timestamp_seconds(0)", "1970-01-01 00:00:00",
+        "TIMESTAMP(0) NOT NULL");
+    tester.checkNull("timestamp_seconds(cast(null as bigint))");
+    tester.checkNull("timestamp_millis(cast(null as bigint))");
+    tester.checkNull("timestamp_micros(cast(null as bigint))");
+    tester.checkScalar("date_from_unix_date(0)", "1970-01-01", "DATE NOT NULL");
+
+    // Have to quote the "DATE" function because we're not using the Babel
+    // parser. In the regular parser, DATE is a reserved keyword.
+    tester.checkNull("\"DATE\"(null)");
+    tester.checkScalar("\"DATE\"('1985-12-06')", "1985-12-06", "DATE NOT NULL");
   }
 
   @Test void testAbsFunc() {
@@ -6438,8 +6473,7 @@ public abstract class SqlOperatorBaseTest {
   }
 
   private static String toTimeString(TimeZone tz, Calendar cal) {
-    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:", Locale.ROOT);
-    sdf.setTimeZone(tz);
+    SimpleDateFormat sdf = getDateFormatter("yyyy-MM-dd HH:", tz);
     return sdf.format(cal.getTime());
   }
 
@@ -8303,6 +8337,14 @@ public abstract class SqlOperatorBaseTest {
         + "timestamp '2014-02-24 12:42:25', "
         + "timestamp '2016-02-24 12:42:25')",
         "24", "INTEGER NOT NULL");
+    tester.checkScalar("timestampdiff(MONTH, "
+        + "timestamp '2019-09-01 00:00:00', "
+        + "timestamp '2020-03-01 00:00:00')",
+        "6", "INTEGER NOT NULL");
+    tester.checkScalar("timestampdiff(MONTH, "
+        + "timestamp '2019-09-01 00:00:00', "
+        + "timestamp '2016-08-01 00:00:00')",
+        "-37", "INTEGER NOT NULL");
     tester.checkScalar("timestampdiff(QUARTER, "
         + "timestamp '2014-02-24 12:42:25', "
         + "timestamp '2016-02-24 12:42:25')",
@@ -8324,6 +8366,12 @@ public abstract class SqlOperatorBaseTest {
     tester.checkScalar(
         "timestampdiff(MONTH, date '2016-03-15', date '2016-06-14')",
         "2",
+        "INTEGER NOT NULL");
+    tester.checkScalar("timestampdiff(MONTH, date '2019-09-01', date '2020-03-01')",
+        "6",
+        "INTEGER NOT NULL");
+    tester.checkScalar("timestampdiff(MONTH, date '2019-09-01', date '2016-08-01')",
+        "-37",
         "INTEGER NOT NULL");
     tester.checkScalar(
         "timestampdiff(DAY, date '2016-06-15', date '2016-06-14')",
@@ -8472,8 +8520,8 @@ public abstract class SqlOperatorBaseTest {
         false);
     tester.checkType("sum('name')", "DECIMAL(19, 19)");
     checkAggType(tester, "sum(1)", "INTEGER NOT NULL");
-    checkAggType(tester, "sum(1.2)", "DECIMAL(2, 1) NOT NULL");
-    checkAggType(tester, "sum(DISTINCT 1.5)", "DECIMAL(2, 1) NOT NULL");
+    checkAggType(tester, "sum(1.2)", "DECIMAL(19, 1) NOT NULL");
+    checkAggType(tester, "sum(DISTINCT 1.5)", "DECIMAL(19, 1) NOT NULL");
     tester.checkFails(
         "^sum()^",
         "Invalid number of arguments to function 'SUM'. Was expecting 1 arguments",
@@ -9087,15 +9135,77 @@ public abstract class SqlOperatorBaseTest {
         0d);
   }
 
-  @Test void testBitAndFunc() {
+  @Test public void testBitAndScalarFunc() {
+    final SqlTester tester1 = tester(SqlLibrary.SNOWFLAKE);
+    tester1.setFor(SqlLibraryOperators.BITAND);
+
+    tester1.checkFails(
+        "^bitand(1)^",
+        "Invalid number of arguments to function 'BITAND'. Was expecting 2 arguments",
+        false);
+    tester1.checkScalar(
+        "bitand(CAST(2 AS TINYINT), CAST(3 AS TINYINT))",
+        "2",
+        "TINYINT NOT NULL");
+    tester1.checkScalar(
+        "bitand(CAST(3 AS SMALLINT), CAST(4 AS SMALLINT))",
+        "0",
+        "SMALLINT NOT NULL");
+    tester1.checkScalar(
+        "bitand(CAST(-2 AS INTEGER), CAST(3 AS INTEGER))",
+        "2",
+        "INTEGER NOT NULL");
+    tester1.checkScalar(
+        "bitand(CAST(-3 AS BIGINT), CAST(-4 AS BIGINT))",
+        "-4",
+        "BIGINT NOT NULL");
+    tester1.checkScalar(
+        "bitand(CAST(-3 AS INTEGER), CAST(-4 AS BIGINT))",
+        "-4",
+        "BIGINT NOT NULL");
+    tester1.checkScalar(
+        "bitand(CAST(x'03' AS BINARY(1)), CAST(x'12' AS BINARY(1)))",
+        "02",
+        "BINARY(1) NOT NULL");
+    tester1.checkScalar("bitand(CAST(x'ABCDEF12' AS BINARY(4)), CAST(x'123456AB' AS BINARY(4)))",
+        "02044602",
+        "BINARY(4) NOT NULL");
+    tester1.checkScalar(
+        "bitand(CAST(x'ABCDEF12' AS VARBINARY(4)), CAST(x'123456AB' AS VARBINARY(4)))",
+        "02044602",
+        "VARBINARY(4) NOT NULL");
+    tester1.checkScalar(
+        "bitand(CAST(x'ABCDEF12' AS VARBINARY), CAST(x'123456AB' AS VARBINARY))",
+        "02044602",
+        "VARBINARY NOT NULL");
+    tester1.checkScalar(
+        "bitand(CAST(1234 AS BIGINT), CAST(x'123456AB' AS VARBINARY))",
+        "00000482",
+        "VARBINARY NOT NULL");
+
+    tester1.checkScalar(
+        "bitand(CAST(x'123456AB' AS VARBINARY), CAST(1234 AS BIGINT))",
+        "00000482",
+        "VARBINARY NOT NULL");
+    tester1.checkNull(
+        "bitand(CAST(null AS TINYINT), 1)");
+    tester1.checkFails(
+        "bitand(CAST(x'03' AS BINARY(1)), CAST(x'ABCDEF12' AS BINARY(4)))",
+        "Different length for bitwise operands: the first: 1, the second: 4",
+        true);
+  }
+
+  @Test public void testBitAndAggFunc() {
     tester.setFor(SqlStdOperatorTable.BIT_AND, VM_FENNEL, VM_JAVA);
     tester.checkFails("bit_and(^*^)", "Unknown identifier '\\*'", false);
     tester.checkType("bit_and(1)", "INTEGER");
     tester.checkType("bit_and(CAST(2 AS TINYINT))", "TINYINT");
     tester.checkType("bit_and(CAST(2 AS SMALLINT))", "SMALLINT");
     tester.checkType("bit_and(distinct CAST(2 AS BIGINT))", "BIGINT");
+    tester.checkType("bit_and(CAST(x'02' AS BINARY(1)))", "BINARY(1)");
     tester.checkFails("^bit_and(1.2)^",
-        "Cannot apply 'BIT_AND' to arguments of type 'BIT_AND\\(<DECIMAL\\(2, 1\\)>\\)'\\. Supported form\\(s\\): 'BIT_AND\\(<INTEGER>\\)'",
+        "Cannot apply 'BIT_AND' to arguments of type 'BIT_AND\\(<DECIMAL\\(2, 1\\)>\\)'\\. Supported form\\(s\\): 'BIT_AND\\(<INTEGER>\\)'\n"
+            + "'BIT_AND\\(<BINARY>\\)'",
         false);
     tester.checkFails(
         "^bit_and()^",
@@ -9106,18 +9216,37 @@ public abstract class SqlOperatorBaseTest {
         "Invalid number of arguments to function 'BIT_AND'. Was expecting 1 arguments",
         false);
     final String[] values = {"3", "2", "2"};
-    tester.checkAgg("bit_and(x)", values, 2, 0);
+    tester.checkAgg("bit_and(x)", values, "2", 0);
+    final String[] binaryValues = {
+        "CAST(x'03' AS BINARY)",
+        "cast(x'02' as BINARY)",
+        "cast(x'02' AS BINARY)",
+        "cast(null AS BINARY)"};
+    tester.checkAgg("bit_and(x)", binaryValues, "02", 0);
+    tester.checkAgg("bit_and(x)", new String[]{"CAST(x'02' AS BINARY)"}, "02", 0);
+
+    tester.checkAggFails(
+        "bit_and(x)",
+        new String[]{"CAST(x'0201' AS VARBINARY)", "CAST(x'02' AS VARBINARY)"},
+        "Error while executing SQL"
+          +  " \"SELECT bit_and\\(x\\)"
+          +  " FROM \\(SELECT CAST\\(x'0201' AS VARBINARY\\) AS x FROM \\(VALUES \\(1\\)\\)"
+          + " UNION ALL SELECT CAST\\(x'02' AS VARBINARY\\) AS x FROM \\(VALUES \\(1\\)\\)\\)\":"
+          + " Different length for bitwise operands: the first: 2, the second: 1",
+        true);
   }
 
-  @Test void testBitOrFunc() {
+  @Test public void testBitOrAggFunc() {
     tester.setFor(SqlStdOperatorTable.BIT_OR, VM_FENNEL, VM_JAVA);
     tester.checkFails("bit_or(^*^)", "Unknown identifier '\\*'", false);
     tester.checkType("bit_or(1)", "INTEGER");
     tester.checkType("bit_or(CAST(2 AS TINYINT))", "TINYINT");
     tester.checkType("bit_or(CAST(2 AS SMALLINT))", "SMALLINT");
     tester.checkType("bit_or(distinct CAST(2 AS BIGINT))", "BIGINT");
+    tester.checkType("bit_or(CAST(x'02' AS BINARY(1)))", "BINARY(1)");
     tester.checkFails("^bit_or(1.2)^",
-        "Cannot apply 'BIT_OR' to arguments of type 'BIT_OR\\(<DECIMAL\\(2, 1\\)>\\)'\\. Supported form\\(s\\): 'BIT_OR\\(<INTEGER>\\)'",
+        "Cannot apply 'BIT_OR' to arguments of type 'BIT_OR\\(<DECIMAL\\(2, 1\\)>\\)'\\. Supported form\\(s\\): 'BIT_OR\\(<INTEGER>\\)'\n"
+            + "'BIT_OR\\(<BINARY>\\)'",
         false);
     tester.checkFails(
         "^bit_or()^",
@@ -9129,17 +9258,26 @@ public abstract class SqlOperatorBaseTest {
         false);
     final String[] values = {"1", "2", "2"};
     tester.checkAgg("bit_or(x)", values, 3, 0);
+    final String[] binaryValues = {
+        "CAST(x'01' AS BINARY)",
+        "cast(x'02' as BINARY)",
+        "cast(x'02' AS BINARY)",
+        "cast(null AS BINARY)"};
+    tester.checkAgg("bit_or(x)", binaryValues, "03", 0);
+    tester.checkAgg("bit_or(x)", new String[]{"CAST(x'02' AS BINARY)"}, "02", 0);
   }
 
-  @Test void testBitXorFunc() {
+  @Test public void testBitXorAggFunc() {
     tester.setFor(SqlStdOperatorTable.BIT_XOR, VM_FENNEL, VM_JAVA);
     tester.checkFails("bit_xor(^*^)", "Unknown identifier '\\*'", false);
     tester.checkType("bit_xor(1)", "INTEGER");
     tester.checkType("bit_xor(CAST(2 AS TINYINT))", "TINYINT");
     tester.checkType("bit_xor(CAST(2 AS SMALLINT))", "SMALLINT");
     tester.checkType("bit_xor(distinct CAST(2 AS BIGINT))", "BIGINT");
+    tester.checkType("bit_xor(CAST(x'02' AS BINARY(1)))", "BINARY(1)");
     tester.checkFails("^bit_xor(1.2)^",
-        "Cannot apply 'BIT_XOR' to arguments of type 'BIT_XOR\\(<DECIMAL\\(2, 1\\)>\\)'\\. Supported form\\(s\\): 'BIT_XOR\\(<INTEGER>\\)'",
+        "Cannot apply 'BIT_XOR' to arguments of type 'BIT_XOR\\(<DECIMAL\\(2, 1\\)>\\)'\\. Supported form\\(s\\): 'BIT_XOR\\(<INTEGER>\\)'\n"
+            + "'BIT_XOR\\(<BINARY>\\)'",
         false);
     tester.checkFails(
         "^bit_xor()^",
@@ -9151,6 +9289,15 @@ public abstract class SqlOperatorBaseTest {
         false);
     final String[] values = {"1", "2", "1"};
     tester.checkAgg("bit_xor(x)", values, 2, 0);
+    final String[] binaryValues = {
+        "CAST(x'01' AS BINARY)",
+        "cast(x'02' as BINARY)",
+        "cast(x'01' AS BINARY)",
+        "cast(null AS BINARY)"};
+    tester.checkAgg("bit_xor(x)", binaryValues, "02", 0);
+    tester.checkAgg("bit_xor(x)", new String[]{"CAST(x'02' AS BINARY)"}, "02", 0);
+    tester.checkAgg("bit_xor(distinct(x))",
+        new String[]{"CAST(x'02' AS BINARY)", "CAST(x'02' AS BINARY)"}, "02", 0);
   }
 
   /**
@@ -9325,7 +9472,6 @@ public abstract class SqlOperatorBaseTest {
       // to raise an error and due to the big number of operands they accept
       // they increase significantly the running time of the method.
       operatorsToSkip.add(SqlStdOperatorTable.JSON_VALUE);
-      operatorsToSkip.add(SqlStdOperatorTable.JSON_VALUE_ANY);
       operatorsToSkip.add(SqlStdOperatorTable.JSON_QUERY);
     }
     // Skip since ClassCastException is raised in SqlOperator#unparse
@@ -9375,7 +9521,7 @@ public abstract class SqlOperatorBaseTest {
               || s.matches("MOD\\(.*, 0\\)")) {
             continue;
           }
-          final Strong.Policy policy = Strong.policy(op.kind);
+          final Strong.Policy policy = Strong.policy(op);
           try {
             if (nullCount > 0 && policy == Strong.Policy.ANY) {
               tester.checkNull(s);

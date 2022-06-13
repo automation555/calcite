@@ -186,25 +186,25 @@ public abstract class OperandTypes {
   public static SqlOperandTypeChecker variadic(
       final SqlOperandCountRange range) {
     return new SqlOperandTypeChecker() {
-      @Override public boolean checkOperandTypes(
+      public boolean checkOperandTypes(
           SqlCallBinding callBinding,
           boolean throwOnFailure) {
         return range.isValidCount(callBinding.getOperandCount());
       }
 
-      @Override public SqlOperandCountRange getOperandCountRange() {
+      public SqlOperandCountRange getOperandCountRange() {
         return range;
       }
 
-      @Override public String getAllowedSignatures(SqlOperator op, String opName) {
+      public String getAllowedSignatures(SqlOperator op, String opName) {
         return opName + "(...)";
       }
 
-      @Override public boolean isOptional(int i) {
+      public boolean isOptional(int i) {
         return false;
       }
 
-      @Override public Consistency getConsistency() {
+      public Consistency getConsistency() {
         return Consistency.NONE;
       }
     };
@@ -238,6 +238,18 @@ public abstract class OperandTypes {
 
   public static final SqlSingleOperandTypeChecker EXACT_NUMERIC_EXACT_NUMERIC =
       family(SqlTypeFamily.EXACT_NUMERIC, SqlTypeFamily.EXACT_NUMERIC);
+
+  public static final SqlSingleOperandTypeChecker INTEGER_INTEGER =
+      family(SqlTypeFamily.INTEGER, SqlTypeFamily.INTEGER);
+
+  public static final SqlSingleOperandTypeChecker BINARY_BINARY =
+      family(SqlTypeFamily.BINARY, SqlTypeFamily.BINARY);
+
+  public static final SqlSingleOperandTypeChecker INTEGER_BINARY =
+      family(SqlTypeFamily.INTEGER, SqlTypeFamily.BINARY);
+
+  public static final SqlSingleOperandTypeChecker BINARY_INTEGER =
+      family(SqlTypeFamily.BINARY, SqlTypeFamily.INTEGER);
 
   public static final SqlSingleOperandTypeChecker BINARY =
       family(SqlTypeFamily.BINARY);
@@ -288,6 +300,7 @@ public abstract class OperandTypes {
 
   public static final SqlSingleOperandTypeChecker ARRAY =
       family(SqlTypeFamily.ARRAY);
+
   /** Checks that returns whether a value is a multiset or an array.
    * Cf Java, where list and set are collections but a map is not. */
   public static final SqlSingleOperandTypeChecker COLLECTION =
@@ -318,7 +331,7 @@ public abstract class OperandTypes {
   public static final SqlSingleOperandTypeChecker POSITIVE_INTEGER_LITERAL =
       new FamilyOperandTypeChecker(ImmutableList.of(SqlTypeFamily.INTEGER),
           i -> false) {
-        @Override public boolean checkSingleOperandType(
+        public boolean checkSingleOperandType(
             SqlCallBinding callBinding,
             SqlNode node,
             int iFormalOperand,
@@ -340,7 +353,7 @@ public abstract class OperandTypes {
           }
 
           final SqlLiteral arg = (SqlLiteral) node;
-          final BigDecimal value = arg.getValueAs(BigDecimal.class);
+          final BigDecimal value = (BigDecimal) arg.getValue();
           if (value.compareTo(BigDecimal.ZERO) < 0
               || hasFractionalPart(value)) {
             if (throwOnFailure) {
@@ -369,49 +382,6 @@ public abstract class OperandTypes {
       };
 
   /**
-   * Operand type-checking strategy type must be a numeric non-NULL
-   * literal in the range 0 and 1 inclusive.
-   */
-  public static final SqlSingleOperandTypeChecker UNIT_INTERVAL_NUMERIC_LITERAL =
-      new FamilyOperandTypeChecker(ImmutableList.of(SqlTypeFamily.NUMERIC),
-          i -> false) {
-        @Override public boolean checkSingleOperandType(
-            SqlCallBinding callBinding,
-            SqlNode node,
-            int iFormalOperand,
-            boolean throwOnFailure) {
-          if (!LITERAL.checkSingleOperandType(
-              callBinding,
-              node,
-              iFormalOperand,
-              throwOnFailure)) {
-            return false;
-          }
-
-          if (!super.checkSingleOperandType(
-              callBinding,
-              node,
-              iFormalOperand,
-              throwOnFailure)) {
-            return false;
-          }
-
-          final SqlLiteral arg = (SqlLiteral) node;
-          final BigDecimal value = arg.getValueAs(BigDecimal.class);
-          if (value.compareTo(BigDecimal.ZERO) < 0
-              || value.compareTo(BigDecimal.ONE) > 0) {
-            if (throwOnFailure) {
-              throw callBinding.newError(
-                  RESOURCE.argumentMustBeNumericLiteralInRange(
-                      callBinding.getOperator().getName(), 0, 1));
-            }
-            return false;
-          }
-          return true;
-        }
-      };
-
-  /**
    * Operand type-checking strategy where two operands must both be in the
    * same type family.
    */
@@ -434,18 +404,6 @@ public abstract class OperandTypes {
    */
   public static final SqlOperandTypeChecker SAME_VARIADIC =
       new SameOperandTypeChecker(-1);
-
-  /**
-   * Operand type-checking strategy where any positive number of operands must all be
-   * in the same type family.
-   */
-  public static final SqlOperandTypeChecker AT_LEAST_ONE_SAME_VARIADIC =
-      new SameOperandTypeChecker(-1) {
-        @Override public SqlOperandCountRange
-        getOperandCountRange() {
-          return SqlOperandCountRanges.from(1);
-        }
-      };
 
   /**
    * Operand type-checking strategy where operand types must allow ordered
@@ -496,15 +454,6 @@ public abstract class OperandTypes {
   public static final SqlSingleOperandTypeChecker STRING_INTEGER =
       family(SqlTypeFamily.STRING, SqlTypeFamily.INTEGER);
 
-  public static final SqlSingleOperandTypeChecker STRING_INTEGER_INTEGER =
-      family(SqlTypeFamily.STRING, SqlTypeFamily.INTEGER,
-          SqlTypeFamily.INTEGER);
-
-  public static final SqlSingleOperandTypeChecker STRING_INTEGER_OPTIONAL_INTEGER =
-      family(
-          ImmutableList.of(SqlTypeFamily.STRING, SqlTypeFamily.INTEGER,
-              SqlTypeFamily.INTEGER), i -> i == 2);
-
   /** Operand type-checking strategy where the first operand is a character or
    * binary string (CHAR, VARCHAR, BINARY or VARBINARY), and the second operand
    * is INTEGER. */
@@ -518,10 +467,6 @@ public abstract class OperandTypes {
    */
   public static final SqlSingleOperandTypeChecker STRING_SAME_SAME_INTEGER =
       OperandTypes.and(STRING_STRING_INTEGER, SAME_SAME_INTEGER);
-
-  public static final SqlSingleOperandTypeChecker STRING_SAME_SAME_OR_ARRAY_SAME_SAME =
-      or(STRING_SAME_SAME,
-          and(OperandTypes.SAME_SAME, family(SqlTypeFamily.ARRAY, SqlTypeFamily.ARRAY)));
 
   public static final SqlSingleOperandTypeChecker ANY =
       family(SqlTypeFamily.ANY);
@@ -599,7 +544,7 @@ public abstract class OperandTypes {
           ImmutableList.of(SqlTypeFamily.DATETIME, SqlTypeFamily.DATETIME,
               SqlTypeFamily.DATETIME_INTERVAL),
           i -> false) {
-        @Override public boolean checkOperandTypes(
+        public boolean checkOperandTypes(
             SqlCallBinding callBinding,
             boolean throwOnFailure) {
           if (!super.checkOperandTypes(callBinding, throwOnFailure)) {
@@ -642,13 +587,16 @@ public abstract class OperandTypes {
       this.typeNamePredicate = predicate;
     }
 
-    @Override public boolean checkSingleOperandType(
+    public boolean checkSingleOperandType(
         SqlCallBinding callBinding,
         SqlNode node,
         int iFormalOperand,
         boolean throwOnFailure) {
       assert 0 == iFormalOperand;
-      RelDataType type = SqlTypeUtil.deriveType(callBinding, node);
+      RelDataType type =
+          callBinding.getValidator().deriveType(
+              callBinding.getScope(),
+              node);
       boolean validationError = false;
       if (!type.isStruct()) {
         validationError = true;
@@ -668,7 +616,7 @@ public abstract class OperandTypes {
       return !validationError;
     }
 
-    @Override public boolean checkOperandTypes(
+    public boolean checkOperandTypes(
         SqlCallBinding callBinding,
         boolean throwOnFailure) {
       return checkSingleOperandType(
@@ -678,15 +626,15 @@ public abstract class OperandTypes {
           throwOnFailure);
     }
 
-    @Override public SqlOperandCountRange getOperandCountRange() {
+    public SqlOperandCountRange getOperandCountRange() {
       return SqlOperandCountRanges.of(1);
     }
 
-    @Override public boolean isOptional(int i) {
+    public boolean isOptional(int i) {
       return false;
     }
 
-    @Override public Consistency getConsistency() {
+    public Consistency getConsistency() {
       return Consistency.NONE;
     }
   }
@@ -721,13 +669,16 @@ public abstract class OperandTypes {
 
   public static final SqlOperandTypeChecker RECORD_TO_SCALAR =
       new SqlSingleOperandTypeChecker() {
-        @Override public boolean checkSingleOperandType(
+        public boolean checkSingleOperandType(
             SqlCallBinding callBinding,
             SqlNode node,
             int iFormalOperand,
             boolean throwOnFailure) {
           assert 0 == iFormalOperand;
-          RelDataType type = SqlTypeUtil.deriveType(callBinding, node);
+          RelDataType type =
+              callBinding.getValidator().deriveType(
+                  callBinding.getScope(),
+                  node);
           boolean validationError = false;
           if (!type.isStruct()) {
             validationError = true;
@@ -741,7 +692,7 @@ public abstract class OperandTypes {
           return !validationError;
         }
 
-        @Override public boolean checkOperandTypes(
+        public boolean checkOperandTypes(
             SqlCallBinding callBinding,
             boolean throwOnFailure) {
           return checkSingleOperandType(
@@ -751,20 +702,20 @@ public abstract class OperandTypes {
               throwOnFailure);
         }
 
-        @Override public SqlOperandCountRange getOperandCountRange() {
+        public SqlOperandCountRange getOperandCountRange() {
           return SqlOperandCountRanges.of(1);
         }
 
-        @Override public String getAllowedSignatures(SqlOperator op, String opName) {
+        public String getAllowedSignatures(SqlOperator op, String opName) {
           return SqlUtil.getAliasedSignature(op, opName,
               ImmutableList.of("RECORDTYPE(SINGLE FIELD)"));
         }
 
-        @Override public boolean isOptional(int i) {
+        public boolean isOptional(int i) {
           return false;
         }
 
-        @Override public Consistency getConsistency() {
+        public Consistency getConsistency() {
           return Consistency.NONE;
         }
       };
@@ -779,10 +730,11 @@ public abstract class OperandTypes {
    * </ul> */
   private static class PeriodOperandTypeChecker
       implements SqlSingleOperandTypeChecker {
-    @Override public boolean checkSingleOperandType(SqlCallBinding callBinding,
+    public boolean checkSingleOperandType(SqlCallBinding callBinding,
         SqlNode node, int iFormalOperand, boolean throwOnFailure) {
       assert 0 == iFormalOperand;
-      RelDataType type = SqlTypeUtil.deriveType(callBinding, node);
+      RelDataType type =
+          callBinding.getValidator().deriveType(callBinding.getScope(), node);
       boolean valid = false;
       if (type.isStruct() && type.getFieldList().size() == 2) {
         final RelDataType t0 = type.getFieldList().get(0).getType();
@@ -805,27 +757,27 @@ public abstract class OperandTypes {
       return valid;
     }
 
-    @Override public boolean checkOperandTypes(SqlCallBinding callBinding,
+    public boolean checkOperandTypes(SqlCallBinding callBinding,
         boolean throwOnFailure) {
       return checkSingleOperandType(callBinding, callBinding.operand(0), 0,
           throwOnFailure);
     }
 
-    @Override public SqlOperandCountRange getOperandCountRange() {
+    public SqlOperandCountRange getOperandCountRange() {
       return SqlOperandCountRanges.of(1);
     }
 
-    @Override public String getAllowedSignatures(SqlOperator op, String opName) {
+    public String getAllowedSignatures(SqlOperator op, String opName) {
       return SqlUtil.getAliasedSignature(op, opName,
           ImmutableList.of("PERIOD (DATETIME, INTERVAL)",
               "PERIOD (DATETIME, DATETIME)"));
     }
 
-    @Override public boolean isOptional(int i) {
+    public boolean isOptional(int i) {
       return false;
     }
 
-    @Override public Consistency getConsistency() {
+    public Consistency getConsistency() {
       return Consistency.NONE;
     }
   }

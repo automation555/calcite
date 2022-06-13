@@ -580,6 +580,7 @@ GRANTED,
 **HAVING**,
 HIERARCHY,
 **HOLD**,
+HOP,
 **HOUR**,
 HOURS,
 **IDENTITY**,
@@ -1775,9 +1776,9 @@ and `LISTAGG`).
 | ANY_VALUE( [ ALL &#124; DISTINCT ] value)     | Returns one of the values of *value* across all input values; this is NOT specified in the SQL standard
 | SOME(condition)                               | Returns true if any condition is true.
 | EVERY(condition)                              | Returns true if all conditions are true.
-| BIT_AND( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise AND of all non-null input values, or null if none
-| BIT_OR( [ ALL &#124; DISTINCT ] value)        | Returns the bitwise OR of all non-null input values, or null if none
-| BIT_XOR( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise XOR of all non-null input values, or null if none
+| BIT_AND( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise AND of all non-null input values, or null if none; integer and binary types are supported
+| BIT_OR( [ ALL &#124; DISTINCT ] value)        | Returns the bitwise OR of all non-null input values, or null if none; integer and binary types are supported
+| BIT_XOR( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise XOR of all non-null input values, or null if none; integer and binary types are supported
 | STDDEV_POP( [ ALL &#124; DISTINCT ] numeric)  | Returns the population standard deviation of *numeric* across all input values
 | STDDEV_SAMP( [ ALL &#124; DISTINCT ] numeric) | Returns the sample standard deviation of *numeric* across all input values
 | STDDEV( [ ALL &#124; DISTINCT ] numeric)      | Synonym for `STDDEV_SAMP`
@@ -1865,8 +1866,8 @@ Not implemented:
 |:-------------------- |:-----------
 | DESCRIPTOR(name [, name ]*) | DESCRIPTOR appears as an argument in a function to indicate a list of names. The interpretation of names is left to the function.
 
-### Table-valued functions.
-Table-valued functions occur in the `FROM` clause.
+### Table functions
+Table functions occur in the `FROM` clause.
 
 #### TUMBLE
 In streaming queries, TUMBLE assigns a window for each row of a relation based on a timestamp column. An assigned window
@@ -1875,14 +1876,94 @@ is named as "fixed windowing".
 
 | Operator syntax      | Description
 |:-------------------- |:-----------
-| TUMBLE(table, DESCRIPTOR(column_name), interval [, time ]) | Indicates a tumbling window of *interval* for *datetime*, optionally aligned at *time*. Tumbling is applied on table in which there is a watermarked column specified by descriptor.
+| TUMBLE(data, DESCRIPTOR(timecol), size [, offset ]) | Indicates a tumbling window of *size* interval for *timecol*, optionally aligned at *offset*.
 
 Here is an example:
-`SELECT * FROM TABLE(TUMBLE(TABLE orders, DESCRIPTOR(rowtime), INTERVAL '1' MINUTE))`,
+```SQL
+SELECT * FROM TABLE(
+  TUMBLE(
+    TABLE orders,
+    DESCRIPTOR(rowtime),
+    INTERVAL '1' MINUTE));
+
+-- or with the named params
+-- note: the DATA param must be the first
+SELECT * FROM TABLE(
+  TUMBLE(
+    DATA => TABLE orders,
+    TIMECOL => DESCRIPTOR(rowtime),
+    SIZE => INTERVAL '1' MINUTE));
+```
 will apply tumbling with 1 minute window size on rows from table orders. rowtime is the
 watermarked column of table orders that tells data completeness.
 
+#### HOP
+In streaming queries, HOP assigns windows that cover rows within the interval of *size* and shifting every *slide* based
+on a timestamp column. Windows assigned could have overlapping so hopping sometime is named as "sliding windowing".
+
+
+| Operator syntax      | Description
+|:-------------------- |:-----------
+| HOP(data, DESCRIPTOR(timecol), slide, size [, offset ]) | Indicates a hopping window for *timecol*, covering rows within the interval of *size*, shifting every *slide* and optionally aligned at *offset*.
+
+Here is an example:
+```SQL
+SELECT * FROM TABLE(
+  HOP(
+    TABLE orders,
+    DESCRIPTOR(rowtime),
+    INTERVAL '2' MINUTE,
+    INTERVAL '5' MINUTE));
+
+-- or with the named params
+-- note: the DATA param must be the first
+SELECT * FROM TABLE(
+  HOP(
+    DATA => TABLE orders,
+    TIMECOL => DESCRIPTOR(rowtime),
+    SLIDE => INTERVAL '2' MINUTE,
+    SIZE => INTERVAL '5' MINUTE));
+```
+will apply hopping with 5-minute interval size on rows from table orders and shifting every 2 minutes. rowtime is the
+watermarked column of table orders that tells data completeness.
+
+#### SESSION
+In streaming queries, SESSION assigns windows that cover rows based on *datetime*. Within a session window, distances
+of rows are less than *interval*. Session window is applied per *key*.
+
+
+| Operator syntax      | Description
+|:-------------------- |:-----------
+| session(data, DESCRIPTOR(timecol), DESCRIPTOR(key), size) | Indicates a session window of *size* interval for *timecol*. Session window is applied per *key*.
+
+Here is an example:
+```SQL
+SELECT * FROM TABLE(
+  SESSION(
+    TABLE orders,
+    DESCRIPTOR(rowtime),
+    DESCRIPTOR(product),
+    INTERVAL '20' MINUTE));
+
+-- or with the named params
+-- note: the DATA param must be the first
+SELECT * FROM TABLE(
+  SESSION(
+    DATA => TABLE orders,
+    TIMECOL => DESCRIPTOR(rowtime),
+    KEY => DESCRIPTOR(product),
+    SIZE => INTERVAL '20' MINUTE));
+```
+will apply session with 20-minute inactive gap on rows from table orders. rowtime is the
+watermarked column of table orders that tells data completeness. Session is applied per product.
+
+**Note**: The `Tumble`, `Hop` and `Session` window table functions assign
+each row in the original table to a window. The output table has all
+the same columns as the original table plus two additional columns `window_start`
+and `window_end`, which repesent the start and end of the window interval, respectively.
+
 ### Grouped window functions
+**warning**: grouped window functions are deprecated.
 
 Grouped window functions occur in the `GROUP BY` clause and define a key value
 that represents a window containing several rows.
@@ -1932,7 +2013,9 @@ In the "C" (for "compatibility") column, "o" indicates that the function
 implements the OpenGIS Simple Features Implementation Specification for SQL,
 [version 1.2.1](https://www.opengeospatial.org/standards/sfs);
 "p" indicates that the function is a
-[PostGIS](https://www.postgis.net/docs/reference.html) extension to OpenGIS.
+[PostGIS](https://www.postgis.net/docs/reference.html) extension to OpenGIS;
+"h" indicates that the function is an
+[H2GIS](http://www.h2gis.org/docs/dev/functions/) extension.
 
 #### Geometry conversion functions (2D)
 
@@ -1974,6 +2057,9 @@ Not implemented:
 
 | C | Operator syntax      | Description
 |:- |:-------------------- |:-----------
+| p | ST_MakeEnvelope(xMin, yMin, xMax, yMax  [, srid ]) | Creates a rectangular POLYGON
+| h | ST_MakeGrid(geom, deltaX, deltaY) | Calculates a regular grid of POLYGONs based on *geom*
+| h | ST_MakeGridPoints(geom, deltaX, deltaY) | Calculates a regular grid of points based on *geom*
 | o | ST_MakeLine(point1 [, point ]*) | Creates a line-string from the given POINTs (or MULTIPOINTs)
 | p | ST_MakePoint(x, y [, z ]) | Alias for `ST_Point`
 | o | ST_Point(x, y [, z ]) | Constructs a point from two or three coordinates
@@ -1984,9 +2070,6 @@ Not implemented:
 * ST_Expand(geom, distance) Expands *geom*'s envelope
 * ST_Expand(geom, deltaX, deltaY) Expands *geom*'s envelope
 * ST_MakeEllipse(point, width, height) Constructs an ellipse
-* ST_MakeEnvelope(xMin, yMin, xMax, yMax  [, srid ]) Creates a rectangular POLYGON
-* ST_MakeGrid(geom, deltaX, deltaY) Calculates a regular grid of POLYGONs based on *geom*
-* ST_MakeGridPoints(geom, deltaX, deltaY) Calculates a regular grid of points based on *geom*
 * ST_MakePolygon(lineString [, hole ]*) Creates a POLYGON from *lineString* with the given holes (which are required to be closed LINESTRINGs)
 * ST_MinimumDiameter(geom) Returns the minimum diameter of *geom*
 * ST_MinimumRectangle(geom) Returns the minimum rectangle enclosing *geom*
@@ -2310,9 +2393,11 @@ To enable an operator table, set the
 connect string parameter.
 
 The 'C' (compatibility) column contains value
+'b' for BigQuery ('fun=bigquery' in the connect string),
 'm' for MySQL ('fun=mysql' in the connect string),
 'o' for Oracle ('fun=oracle' in the connect string),
 'p' for PostgreSQL ('fun=postgresql' in the connect string).
+'s' for Snowflake ('fun=snowflake' in the connect string).
 
 One operator name may correspond to multiple SQL dialects, but with different
 semantics.
@@ -2327,6 +2412,8 @@ semantics.
 | m | COMPRESS(string)                               | Compresses a string using zlib compression and returns the result as a binary string.
 | p | CONVERT_TIMEZONE(tz1, tz2, datetime)           | Converts the timezone of *datetime* from *tz1* to *tz2*
 | m | DAYNAME(datetime)                              | Returns the name, in the connection's locale, of the weekday in *datetime*; for example, it returns '星期日' for both DATE '2020-02-10' and TIMESTAMP '2020-02-10 10:10:10'
+| b | DATE(string)                                   | Equivalent to `CAST(string AS DATE)`
+| b | DATE_FROM_UNIX_DATE(integer)                   | Returns the DATE that is *integer* days after 1970-01-01
 | o | DECODE(value, value1, result1 [, valueN, resultN ]* [, default ]) | Compares *value* to each *valueN* value one by one; if *value* is equal to a *valueN*, returns the corresponding *resultN*, else returns *default*, or NULL if *default* is not specified
 | p | DIFFERENCE(string, string)                     | Returns a measure of the similarity of two strings, namely the number of character positions that their `SOUNDEX` values have in common: 4 if the `SOUNDEX` values are same and 0 if the `SOUNDEX` values are totally different
 | o | EXTRACT(xml, xpath, [, namespaces ])           | Returns the xml fragment of the element or elements matched by the XPath expression. The optional namespace value that specifies a default mapping or namespace mapping for prefixes, which is used when evaluating the XPath expression
@@ -2358,13 +2445,20 @@ semantics.
 | m o p | SOUNDEX(string)                            | Returns the phonetic representation of *string*; throws if *string* is encoded with multi-byte encoding such as UTF-8
 | m | SPACE(integer)                                 | Returns a string of *integer* spaces; returns an empty string if *integer* is less than 1
 | o | SUBSTR(string, position [, substringLength ]) | Returns a portion of *string*, beginning at character *position*, *substringLength* characters long. SUBSTR calculates lengths using characters as defined by the input character set
-| m | STRCMP(string, string)                         | Returns 0 if both of the strings are same and returns -1 when the first argument is smaller than the second and 1 when the second one is smaller the first one.
+| m | STRCMP(string, string)                         | Returns 0 if both of the strings are same and returns -1 when the first argument is smaller than the second and 1 when the second one is smaller than the first one
 | o | TANH(numeric)                                  | Returns the hyperbolic tangent of *numeric*
+| b | TIMESTAMP_MICROS(integer)                      | Returns the TIMESTAMP that is *integer* microseconds after 1970-01-01 00:00:00
+| b | TIMESTAMP_MILLIS(integer)                      | Returns the TIMESTAMP that is *integer* milliseconds after 1970-01-01 00:00:00
+| b | TIMESTAMP_SECONDS(integer)                     | Returns the TIMESTAMP that is *integer* seconds after 1970-01-01 00:00:00
 | o p | TO_DATE(string, format)                      | Converts *string* to a date using the format *format*
 | o p | TO_TIMESTAMP(string, format)                 | Converts *string* to a timestamp using the format *format*
 | o p | TRANSLATE(expr, fromString, toString)        | Returns *expr* with all occurrences of each character in *fromString* replaced by its corresponding character in *toString*. Characters in *expr* that are not in *fromString* are not replaced
-| m | UNCOMPRESS(binary)                             | UnCompresses binary using zlib decompression and returns the result as a string.
-| o | XMLTRANSFORM(xml, xslt)                        | Returns a string after applying xslt to supplied xml.
+| b | UNIX_MICROS(timestamp)                         | Returns the number of microseconds since 1970-01-01 00:00:00
+| b | UNIX_MILLIS(timestamp)                         | Returns the number of milliseconds since 1970-01-01 00:00:00
+| b | UNIX_SECONDS(timestamp)                        | Returns the number of seconds since 1970-01-01 00:00:00
+| b | UNIX_DATE(date)                                | Returns the number of days since 1970-01-01
+| o | XMLTRANSFORM(xml, xslt)                        | Returns a string after applying xslt to supplied XML
+| s | BITAND(value0, value1)                         | Returns bitwise and of input values
 
 Note:
 

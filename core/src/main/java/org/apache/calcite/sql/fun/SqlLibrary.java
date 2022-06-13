@@ -22,8 +22,6 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -50,9 +48,6 @@ public enum SqlLibrary {
   /** A collection of operators that are in Google BigQuery but not in standard
    * SQL. */
   BIG_QUERY("b", "bigquery"),
-  /** A collection of operators that are in Apache Hive but not in standard
-   * SQL. */
-  HIVE("h", "hive"),
   /** A collection of operators that are in MySQL but not in standard SQL. */
   MYSQL("m", "mysql"),
   /** A collection of operators that are in Oracle but not in standard SQL. */
@@ -60,9 +55,9 @@ public enum SqlLibrary {
   /** A collection of operators that are in PostgreSQL but not in standard
    * SQL. */
   POSTGRESQL("p", "postgresql"),
-  /** A collection of operators that are in Apache Spark but not in standard
+  /** A collection of operators that are in Snowflake but not in standard
    * SQL. */
-  SPARK("s", "spark");
+  SNOWFLAKE("s", "snowflake");
 
   /** Abbreviation for the library used in SQL reference. */
   public final String abbrev;
@@ -72,8 +67,8 @@ public enum SqlLibrary {
   public final String fun;
 
   SqlLibrary(String abbrev, String fun) {
-    this.abbrev = Objects.requireNonNull(abbrev, "abbrev");
-    this.fun = Objects.requireNonNull(fun, "fun");
+    this.abbrev = Objects.requireNonNull(abbrev);
+    this.fun = Objects.requireNonNull(fun);
     Preconditions.checkArgument(
         fun.equals(name().toLowerCase(Locale.ROOT).replace("_", "")));
   }
@@ -81,7 +76,7 @@ public enum SqlLibrary {
   /** Looks up a value.
    * Returns null if not found.
    * You can use upper- or lower-case name. */
-  public static @Nullable SqlLibrary of(String name) {
+  public static SqlLibrary of(String name) {
     return MAP.get(name);
   }
 
@@ -89,9 +84,7 @@ public enum SqlLibrary {
   public static List<SqlLibrary> parse(String libraryNameList) {
     final ImmutableList.Builder<SqlLibrary> list = ImmutableList.builder();
     for (String libraryName : libraryNameList.split(",")) {
-      SqlLibrary library = Objects.requireNonNull(
-          SqlLibrary.of(libraryName), () -> "library does not exist: " + libraryName);
-      list.add(library);
+      list.add(SqlLibrary.of(libraryName));
     }
     return list.build();
   }
