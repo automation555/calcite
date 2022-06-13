@@ -40,7 +40,6 @@ import org.apache.calcite.sql.validate.SqlDelegatingConformance;
 import org.apache.calcite.sql.validate.SqlMonotonicity;
 import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
-import org.apache.calcite.test.catalog.CountingFactory;
 import org.apache.calcite.util.Bug;
 import org.apache.calcite.util.ImmutableBitSet;
 
@@ -4788,7 +4787,8 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
   }
 
   @Test public void testStarAliasFails() {
-    checkFails("select emp.^*^ AS x from emp", "(?s).*Encountered \"AS\" at line 1, column 14.*");
+    sql("select emp.^*^ AS x from emp")
+        .fails("Unknown field '\\*'");
   }
 
   @Test public void testNonLocalStar() {
@@ -8854,14 +8854,14 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
    * check for default value only when target field is null. */
   @Test public void testInsertShouldNotCheckForDefaultValue() {
     final int c =
-        CountingFactory.THREAD_CALL_COUNT.get().get();
+        MockCatalogReader.CountingFactory.THREAD_CALL_COUNT.get().get();
     final SqlTester pragmaticTester =
         tester.withConformance(SqlConformanceEnum.PRAGMATIC_2003);
     final String sql1 = "insert into emp values(1, 'nom', 'job', 0, "
         + "timestamp '1970-01-01 00:00:00', 1, 1, 1, false)";
     pragmaticTester.checkQuery(sql1);
     assertThat("Should not check for default value if column is in INSERT",
-        CountingFactory.THREAD_CALL_COUNT.get().get(), is(c));
+        MockCatalogReader.CountingFactory.THREAD_CALL_COUNT.get().get(), is(c));
 
     // Now add a list of target columns, keeping the query otherwise the same.
     final String sql2 = "insert into emp (empno, ename, job, mgr, hiredate,\n"
@@ -8870,7 +8870,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + "  timestamp '1970-01-01 00:00:00', 1, 1, 1, false)";
     pragmaticTester.checkQuery(sql2);
     assertThat("Should not check for default value if column is in INSERT",
-        CountingFactory.THREAD_CALL_COUNT.get().get(), is(c));
+        MockCatalogReader.CountingFactory.THREAD_CALL_COUNT.get().get(), is(c));
 
     // Now remove SLACKER, which is NOT NULL, from the target list.
     final String sql3 = "insert into ^emp^ (empno, ename, job, mgr, hiredate,\n"
@@ -8881,7 +8881,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         "Column 'SLACKER' has no default value and does not allow NULLs");
     assertThat("Should not check for default value, even if if column is missing"
             + "from INSERT and nullable",
-        CountingFactory.THREAD_CALL_COUNT.get().get(),
+        MockCatalogReader.CountingFactory.THREAD_CALL_COUNT.get().get(),
         is(c));
 
     // Now remove DEPTNO, which has a default value, from the target list.
@@ -8893,7 +8893,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + "  timestamp '1970-01-01 00:00:00', 1, 1, false)";
     pragmaticTester.checkQuery(sql4);
     assertThat("Missing DEFAULT column generates a call to factory",
-        CountingFactory.THREAD_CALL_COUNT.get().get(),
+        MockCatalogReader.CountingFactory.THREAD_CALL_COUNT.get().get(),
         is(c));
   }
 
@@ -10666,6 +10666,33 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     // The error should say it happened in 'ON' instead
     sql("select * from emp_r join dept_r on (^emp_r.slackingmin^ = dept_r.slackingmin)")
             .fails(onError);
+  }
+
+  @Test public void testSelectForUpdate() {
+    sql("select empno from emp\n"
+        + "for update")
+        .ok();
+
+    sql("select empno from emp\n"
+        + "for update of ^badref^")
+        .fails("Column 'BADREF' not found in any table");
+
+    sql("select empno from emp\n"
+        + "for update of emp.empno")
+        .ok();
+
+    sql("select empno from emp\n"
+        + "for update of empno")
+        .ok();
+
+    sql("select empno from emp\n"
+        + "for update of emp.^badref^")
+        .fails("Column 'BADREF' not found in table 'EMP'");
+
+//    sql("select empno from emp\n"
+//        + "for update of emp")
+//        .ok();
+
   }
 }
 

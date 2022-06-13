@@ -48,7 +48,8 @@ public class SqlSelect extends SqlCall {
   SqlNodeList orderBy;
   SqlNode offset;
   SqlNode fetch;
-  SqlNodeList hints;
+  SqlNode updatability;
+  SqlMatchRecognize matchRecognize;
 
   //~ Constructors -----------------------------------------------------------
 
@@ -63,7 +64,7 @@ public class SqlSelect extends SqlCall {
       SqlNodeList orderBy,
       SqlNode offset,
       SqlNode fetch,
-      SqlNodeList hints) {
+      SqlNode updatability) {
     super(pos);
     this.keywordList = Objects.requireNonNull(keywordList != null
         ? keywordList : new SqlNodeList(pos));
@@ -77,7 +78,7 @@ public class SqlSelect extends SqlCall {
     this.orderBy = orderBy;
     this.offset = offset;
     this.fetch = fetch;
-    this.hints = hints;
+    this.updatability = updatability;
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -92,7 +93,7 @@ public class SqlSelect extends SqlCall {
 
   @Override public List<SqlNode> getOperandList() {
     return ImmutableNullableList.of(keywordList, selectList, from, where,
-        groupBy, having, windowDecls, orderBy, offset, fetch, hints);
+        groupBy, having, windowDecls, orderBy, offset, fetch, updatability);
   }
 
   @Override public void setOperand(int i, SqlNode operand) {
@@ -128,7 +129,7 @@ public class SqlSelect extends SqlCall {
       fetch = operand;
       break;
     case 10:
-      hints = (SqlNodeList) operand;
+      updatability = operand;
       break;
     default:
       throw new AssertionError(i);
@@ -172,6 +173,14 @@ public class SqlSelect extends SqlCall {
 
   public void setHaving(SqlNode having) {
     this.having = having;
+  }
+
+  public SqlNode getUpdatability() {
+    return updatability;
+  }
+
+  public void setUpdatability(SqlNode updatability) {
+    this.updatability = updatability;
   }
 
   public final SqlNodeList getSelectList() {
@@ -218,17 +227,12 @@ public class SqlSelect extends SqlCall {
     this.fetch = fetch;
   }
 
-  public void setHints(SqlNodeList hints) {
-    this.hints = hints;
+  public SqlMatchRecognize getMatchRecognize() {
+    return matchRecognize;
   }
 
-  public SqlNodeList getHints() {
-    return this.hints;
-  }
-
-  public boolean hasHints() {
-    // The hints may be passed as null explicitly.
-    return this.hints != null && this.hints.size() > 0;
+  public void setMatchRecognize(SqlMatchRecognize matchRecognize) {
+    this.matchRecognize = matchRecognize;
   }
 
   public void validate(SqlValidator validator, SqlValidatorScope scope) {
@@ -262,3 +266,5 @@ public class SqlSelect extends SqlCall {
     return getModifierNode(targetKeyWord) != null;
   }
 }
+
+// End SqlSelect.java

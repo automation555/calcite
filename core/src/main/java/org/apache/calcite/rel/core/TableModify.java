@@ -19,16 +19,13 @@ package org.apache.calcite.rel.core;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptPlanner;
-import org.apache.calcite.plan.RelOptSchema;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.prepare.Prepare;
-import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.SingleRel;
-import org.apache.calcite.rel.externalize.RelEnumTypes;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
@@ -38,12 +35,8 @@ import org.apache.calcite.sql.type.SqlTypeUtil;
 
 import com.google.common.base.Preconditions;
 
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.util.List;
-
-import static java.util.Objects.requireNonNull;
+import java.util.Objects;
 
 /**
  * Relational expression that modifies a table.
@@ -65,7 +58,7 @@ public abstract class TableModify extends SingleRel {
    * Enumeration of supported modification operations.
    */
   public enum Operation {
-    INSERT, UPDATE, DELETE, MERGE
+    INSERT, UPDATE, DELETE, MERGE, LOCK
   }
 
   //~ Instance fields --------------------------------------------------------
@@ -80,9 +73,9 @@ public abstract class TableModify extends SingleRel {
    */
   protected final RelOptTable table;
   private final Operation operation;
-  private final @Nullable List<String> updateColumnList;
-  private final @Nullable List<RexNode> sourceExpressionList;
-  private @MonotonicNonNull RelDataType inputRowType;
+  private final List<String> updateColumnList;
+  private final List<RexNode> sourceExpressionList;
+  private RelDataType inputRowType;
   private final boolean flattened;
 
   //~ Constructors -----------------------------------------------------------
@@ -114,8 +107,8 @@ public abstract class TableModify extends SingleRel {
       Prepare.CatalogReader catalogReader,
       RelNode input,
       Operation operation,
-      @Nullable List<String> updateColumnList,
-      @Nullable List<RexNode> sourceExpressionList,
+      List<String> updateColumnList,
+      List<RexNode> sourceExpressionList,
       boolean flattened) {
     super(cluster, traitSet, input);
     this.table = table;
@@ -124,40 +117,18 @@ public abstract class TableModify extends SingleRel {
     this.updateColumnList = updateColumnList;
     this.sourceExpressionList = sourceExpressionList;
     if (operation == Operation.UPDATE) {
-      requireNonNull(updateColumnList, "updateColumnList");
-      requireNonNull(sourceExpressionList, "sourceExpressionList");
+      Objects.requireNonNull(updateColumnList);
+      Objects.requireNonNull(sourceExpressionList);
       Preconditions.checkArgument(sourceExpressionList.size()
           == updateColumnList.size());
     } else {
-      if (operation == Operation.MERGE) {
-        requireNonNull(updateColumnList, "updateColumnList");
-      } else {
-        Preconditions.checkArgument(updateColumnList == null);
-      }
+      Preconditions.checkArgument(updateColumnList == null);
       Preconditions.checkArgument(sourceExpressionList == null);
     }
-    RelOptSchema relOptSchema = table.getRelOptSchema();
-    if (relOptSchema != null) {
-      cluster.getPlanner().registerSchema(relOptSchema);
+    if (table.getRelOptSchema() != null) {
+      cluster.getPlanner().registerSchema(table.getRelOptSchema());
     }
     this.flattened = flattened;
-  }
-
-  /**
-   * Creates a TableModify by parsing serialized output.
-   */
-  protected TableModify(RelInput input) {
-    this(input.getCluster(),
-        input.getTraitSet(),
-        input.getTable("table"),
-        (Prepare.CatalogReader) requireNonNull(
-            input.getTable("table").getRelOptSchema(),
-            "relOptSchema"),
-        input.getInput(),
-        requireNonNull(input.getEnum("operation", Operation.class), "operation"),
-        input.getStringList("updateColumnList"),
-        input.getExpressionList("sourceExpressionList"),
-        input.getBoolean("flattened", false));
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -166,15 +137,15 @@ public abstract class TableModify extends SingleRel {
     return catalogReader;
   }
 
-  @Override public RelOptTable getTable() {
+  public RelOptTable getTable() {
     return table;
   }
 
-  public @Nullable List<String> getUpdateColumnList() {
+  public List<String> getUpdateColumnList() {
     return updateColumnList;
   }
 
-  public @Nullable List<RexNode> getSourceExpressionList() {
+  public List<RexNode> getSourceExpressionList() {
     return sourceExpressionList;
   }
 
@@ -218,14 +189,12 @@ public abstract class TableModify extends SingleRel {
     final RelDataType rowType = table.getRowType();
     switch (operation) {
     case UPDATE:
-      assert updateColumnList != null : "updateColumnList must not be null for " + operation;
       inputRowType =
           typeFactory.createJoinType(rowType,
               getCatalogReader().createTypeFromProjection(rowType,
                   updateColumnList));
       break;
     case MERGE:
-      assert updateColumnList != null : "updateColumnList must not be null for " + operation;
       inputRowType =
           typeFactory.createJoinType(
               typeFactory.createJoinType(rowType, rowType),
@@ -251,17 +220,19 @@ public abstract class TableModify extends SingleRel {
   @Override public RelWriter explainTerms(RelWriter pw) {
     return super.explainTerms(pw)
         .item("table", table.getQualifiedName())
-        .item("operation", RelEnumTypes.fromEnum(getOperation()))
+        .item("operation", getOperation())
         .itemIf("updateColumnList", updateColumnList, updateColumnList != null)
         .itemIf("sourceExpressionList", sourceExpressionList,
             sourceExpressionList != null)
         .item("flattened", flattened);
   }
 
-  @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
+  @Override public RelOptCost computeSelfCost(RelOptPlanner planner,
       RelMetadataQuery mq) {
     // REVIEW jvs 21-Apr-2006:  Just for now...
     double rowCount = mq.getRowCount(this);
     return planner.getCostFactory().makeCost(rowCount, 0, 0);
   }
 }
+
+// End TableModify.java
