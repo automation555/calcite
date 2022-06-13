@@ -306,6 +306,50 @@ public abstract class RelOptUtil {
   }
 
   /**
+   * Transforms a join condition over two inputs to a correlated condition over the right input.
+   *
+   * Replaces references on the left relation with correlating variables and shifts references on
+   * the right relation as needed to be able to put the condition over the right relation.
+   *
+   * For example, given:
+   * <pre>{@code
+   * Join(condition=[($0, $9)])
+   *   Scan(table=[DEPT])
+   *   Scan(table=[EMP])
+   * }</pre>
+   * Returning the {@link RexNode} from the filter condition of:
+   * <pre>{@code
+   * Correlate(correlation=[$cor0])
+   *   Scan(table=[DEPT])
+   *   Filter(condition=[=($cor0.EMPNO, $7)])
+   *     Scan(table=[EMP])
+   * }</pre>
+   *
+   * {@link RexInputRef} to field accesses of {@link RexCorrelVariable}.
+   * @param left Rel fields to be correlated
+   * @param id id to correlate
+   * @param right Rel field to be shifted to the right
+   * @param rexNode expression to be rewritten
+   * @return An expression
+   */
+  public static RexNode transformJoinConditionToCorrelate(RexBuilder rexBuilder,
+      RelNode left, CorrelationId id, RelNode right, RexNode rexNode) {
+    final RelDataType leftRowType = left.getRowType();
+    final int leftCount = leftRowType.getFieldCount();
+    RexShuttle shuttle = new RexShuttle() {
+      @Override public RexNode visitInputRef(RexInputRef inputRef) {
+        if (inputRef.getIndex() < leftCount) {
+          final RexNode v = rexBuilder.makeCorrel(leftRowType, id);
+          return rexBuilder.makeFieldAccess(v, inputRef.getIndex());
+        } else {
+          return rexBuilder.makeInputRef(right, inputRef.getIndex() - leftCount);
+        }
+      }
+    };
+    return shuttle.apply(rexNode);
+  }
+
+  /**
    * Sets a {@link RelVisitor} going on a given relational expression, and
    * returns the result.
    */
@@ -1387,6 +1431,41 @@ public abstract class RelOptUtil {
         }
       }
 
+      if ((rangeOp == null)
+          && ((leftKey == null) || (rightKey == null))) {
+        // no equality join keys found yet:
+        // try transforming the condition to
+        // equality "join" conditions, e.g.
+        //     f(LHS) > 0 ===> ( f(LHS) > 0 ) = TRUE,
+        // and make the RHS produce TRUE, but only if we're strictly
+        // looking for equi-joins
+        final ImmutableBitSet projRefs = InputFinder.bits(condition);
+        leftKey = null;
+        rightKey = null;
+
+        boolean foundInput = false;
+        for (int i = 0; i < inputs.size() && !foundInput; i++) {
+          if (inputsRange[i].contains(projRefs)) {
+            leftInput = i;
+            leftFields = inputs.get(leftInput).getRowType().getFieldList();
+
+            leftKey = condition.accept(
+                new RelOptUtil.RexInputConverter(
+                    rexBuilder,
+                    leftFields,
+                    leftFields,
+                    adjustments));
+
+            rightKey = rexBuilder.makeLiteral(true);
+
+            // effectively performing an equality comparison
+            kind = SqlKind.EQUALS;
+
+            foundInput = true;
+          }
+        }
+      }
+
       if ((leftKey != null) && (rightKey != null)) {
         // found suitable join keys
         // add them to key list, ensuring that if there is a
@@ -2017,14 +2096,14 @@ public abstract class RelOptUtil {
 
   @Experimental
   public static void registerDefaultRules(RelOptPlanner planner,
-      boolean enableMaterializations, boolean enableBindable) {
+      boolean enableMaterialziations, boolean enableBindable) {
     if (CalciteSystemProperty.ENABLE_COLLATION_TRAIT.value()) {
       registerAbstractRelationalRules(planner);
     }
     registerAbstractRules(planner);
     registerBaseRules(planner);
 
-    if (enableMaterializations) {
+    if (enableMaterialziations) {
       registerMaterializationRules(planner);
     }
     if (enableBindable) {
@@ -2800,6 +2879,9 @@ public abstract class RelOptUtil {
       // REVIEW - are there any expressions that need special handling
       // and therefore cannot be pushed?
 
+      // filters can be pushed to the left child if the left child
+      // does not generate NULLs and the only columns referenced in
+      // the filter originate from the left child
       if (pushLeft && leftBitmap.contains(inputBits)) {
         // ignore filters that always evaluate to true
         if (!filter.isAlwaysTrue()) {
@@ -2820,10 +2902,18 @@ public abstract class RelOptUtil {
           leftFilters.add(shiftedFilter);
         }
         filtersToRemove.add(filter);
+
+        // filters can be pushed to the right child if the right child
+        // does not generate NULLs and the only columns referenced in
+        // the filter originate from the right child
       } else if (pushRight && rightBitmap.contains(inputBits)) {
         if (!filter.isAlwaysTrue()) {
           // adjust the field references in the filter to reflect
-          // that fields in the right now shift over to the left
+          // that fields in the right now shift over to the left;
+          // since we never push filters to a NULL generating
+          // child, the types of the source should match the dest
+          // so we don't need to explicitly pass the destination
+          // fields to RexInputConverter
           final RexNode shiftedFilter =
               shiftFilter(
                   nSysFields + nFieldsLeft,
