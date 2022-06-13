@@ -61,8 +61,6 @@ import org.apache.calcite.sql.type.InferTypes;
 import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlOperandCountRanges;
-import org.apache.calcite.sql.type.SqlReturnTypeInference;
-import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.util.ReflectiveSqlOperatorTable;
 import org.apache.calcite.sql.validate.SqlConformance;
@@ -105,58 +103,58 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
   // INTERSECT -> *
   // which explains the different precedence values
   public static final SqlSetOperator UNION =
-      new SqlSetOperator("UNION", SqlKind.UNION, 12, false);
+      new SqlSetOperator("UNION", SqlKind.UNION, 14, false);
 
   public static final SqlSetOperator UNION_ALL =
-      new SqlSetOperator("UNION ALL", SqlKind.UNION, 12, true);
+      new SqlSetOperator("UNION ALL", SqlKind.UNION, 14, true);
 
   public static final SqlSetOperator EXCEPT =
-      new SqlSetOperator("EXCEPT", SqlKind.EXCEPT, 12, false);
+      new SqlSetOperator("EXCEPT", SqlKind.EXCEPT, 14, false);
 
   public static final SqlSetOperator EXCEPT_ALL =
-      new SqlSetOperator("EXCEPT ALL", SqlKind.EXCEPT, 12, true);
+      new SqlSetOperator("EXCEPT ALL", SqlKind.EXCEPT, 14, true);
 
   public static final SqlSetOperator INTERSECT =
-      new SqlSetOperator("INTERSECT", SqlKind.INTERSECT, 14, false);
+      new SqlSetOperator("INTERSECT", SqlKind.INTERSECT, 18, false);
 
   public static final SqlSetOperator INTERSECT_ALL =
-      new SqlSetOperator("INTERSECT ALL", SqlKind.INTERSECT, 14, true);
+      new SqlSetOperator("INTERSECT ALL", SqlKind.INTERSECT, 18, true);
 
   /**
    * The {@code MULTISET UNION DISTINCT} operator.
    */
   public static final SqlMultisetSetOperator MULTISET_UNION_DISTINCT =
-      new SqlMultisetSetOperator("MULTISET UNION DISTINCT", 12, false);
+      new SqlMultisetSetOperator("MULTISET UNION DISTINCT", 14, false);
 
   /**
    * The {@code MULTISET UNION [ALL]} operator.
    */
   public static final SqlMultisetSetOperator MULTISET_UNION =
-      new SqlMultisetSetOperator("MULTISET UNION ALL", 12, true);
+      new SqlMultisetSetOperator("MULTISET UNION ALL", 14, true);
 
   /**
    * The {@code MULTISET EXCEPT DISTINCT} operator.
    */
   public static final SqlMultisetSetOperator MULTISET_EXCEPT_DISTINCT =
-      new SqlMultisetSetOperator("MULTISET EXCEPT DISTINCT", 12, false);
+      new SqlMultisetSetOperator("MULTISET EXCEPT DISTINCT", 14, false);
 
   /**
    * The {@code MULTISET EXCEPT [ALL]} operator.
    */
   public static final SqlMultisetSetOperator MULTISET_EXCEPT =
-      new SqlMultisetSetOperator("MULTISET EXCEPT ALL", 12, true);
+      new SqlMultisetSetOperator("MULTISET EXCEPT ALL", 14, true);
 
   /**
    * The {@code MULTISET INTERSECT DISTINCT} operator.
    */
   public static final SqlMultisetSetOperator MULTISET_INTERSECT_DISTINCT =
-      new SqlMultisetSetOperator("MULTISET INTERSECT DISTINCT", 14, false);
+      new SqlMultisetSetOperator("MULTISET INTERSECT DISTINCT", 18, false);
 
   /**
    * The {@code MULTISET INTERSECT [ALL]} operator.
    */
   public static final SqlMultisetSetOperator MULTISET_INTERSECT =
-      new SqlMultisetSetOperator("MULTISET INTERSECT ALL", 14, true);
+      new SqlMultisetSetOperator("MULTISET INTERSECT ALL", 18, true);
 
   //-------------------------------------------------------------
   //                   BINARY OPERATORS
@@ -250,7 +248,7 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
   public static final SqlInternalOperator EXTEND = new SqlExtendOperator();
 
   /**
-   * String and array-to-array concatenation operator, '<code>||</code>'.
+   * String concatenation operator, '<code>||</code>'.
    *
    * @see SqlLibraryOperators#CONCAT_FUNCTION
    */
@@ -260,19 +258,9 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
           SqlKind.OTHER,
           60,
           true,
-          ReturnTypes.ARG0.andThen((opBinding, typeToTransform) -> {
-            SqlReturnTypeInference returnType =
-                typeToTransform.getSqlTypeName().getFamily() == SqlTypeFamily.ARRAY
-                    ? ReturnTypes.LEAST_RESTRICTIVE
-                    : ReturnTypes.DYADIC_STRING_SUM_PRECISION_NULLABLE;
-
-            return requireNonNull(returnType.inferReturnType(opBinding),
-                "inferred CONCAT element type");
-          }),
+          ReturnTypes.DYADIC_STRING_SUM_PRECISION_NULLABLE,
           null,
-          OperandTypes.STRING_SAME_SAME_OR_ARRAY_SAME_SAME
-      );
-
+          OperandTypes.STRING_SAME_SAME);
 
   /**
    * Arithmetic division operator, '<code>/</code>'.
@@ -854,9 +842,6 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
   public static final SqlPostfixOperator JSON_VALUE_EXPRESSION =
       new SqlJsonValueExpressionOperator();
 
-  public static final SqlJsonTypeOperator JSON_TYPE_OPERATOR =
-      new SqlJsonTypeOperator();
-
 
   //-------------------------------------------------------------
   //                   PREFIX OPERATORS
@@ -865,26 +850,6 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
       new SqlPrefixOperator(
           "EXISTS",
           SqlKind.EXISTS,
-          40,
-          ReturnTypes.BOOLEAN,
-          null,
-          OperandTypes.ANY) {
-        @Override public boolean argumentMustBeScalar(int ordinal) {
-          return false;
-        }
-
-        @Override public boolean validRexOperands(int count, Litmus litmus) {
-          if (count != 0) {
-            return litmus.fail("wrong operand count {} for {}", count, this);
-          }
-          return litmus.succeed();
-        }
-      };
-
-  public static final SqlPrefixOperator UNIQUE =
-      new SqlPrefixOperator(
-          "UNIQUE",
-          SqlKind.UNIQUE,
           40,
           ReturnTypes.BOOLEAN,
           null,
@@ -1164,6 +1129,12 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
    */
   public static final SqlAggFunction BIT_XOR =
       new SqlBitOpAggFunction(SqlKind.BIT_XOR);
+
+  /**
+   * <code>EXISTS_AGG</code> aggregate function.
+   */
+  public static final SqlAggFunction EXISTS_AGG =
+      new SqlExistsAggFunction();
 
   //-------------------------------------------------------------
   // WINDOW Aggregate Functions
@@ -2637,7 +2608,8 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
 
   /** Creates a copy of a call with a new operator. */
   private static SqlCall copy(SqlCall call, SqlOperator operator) {
-    return new SqlBasicCall(operator, call.getOperandList(),
+    final List<SqlNode> list = call.getOperandList();
+    return new SqlBasicCall(operator, list.toArray(new SqlNode[0]),
         call.getParserPosition());
   }
 

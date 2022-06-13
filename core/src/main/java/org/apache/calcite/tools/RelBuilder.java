@@ -70,7 +70,6 @@ import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexCallBinding;
 import org.apache.calcite.rex.RexCorrelVariable;
-import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexExecutor;
 import org.apache.calcite.rex.RexFieldCollation;
 import org.apache.calcite.rex.RexInputRef;
@@ -143,7 +142,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
-import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
@@ -176,7 +174,7 @@ public class RelBuilder {
   protected final RelOptCluster cluster;
   protected final @Nullable RelOptSchema relOptSchema;
   private final Deque<Frame> stack = new ArrayDeque<>();
-  private RexSimplify simplifier;
+  private final RexSimplify simplifier;
   private final Config config;
   private final RelOptTable.ViewExpander viewExpander;
   private RelFactories.Struct struct;
@@ -359,11 +357,6 @@ public class RelBuilder {
     return this;
   }
 
-  /** Returns the size of the stack. */
-  public int size() {
-    return stack.size();
-  }
-
   /** Returns the final relational expression.
    *
    * <p>Throws if the stack is empty.
@@ -429,27 +422,6 @@ public class RelBuilder {
     } finally {
       stack.pop();
     }
-  }
-
-  /** Performs an action with a temporary simplifier. */
-  public <E> E withSimplifier(
-      BiFunction<RelBuilder, RexSimplify, RexSimplify> simplifierTransform,
-      Function<RelBuilder, E> fn) {
-    final RexSimplify previousSimplifier = this.simplifier;
-    try {
-      this.simplifier = simplifierTransform.apply(this, previousSimplifier);
-      return fn.apply(this);
-    } finally {
-      this.simplifier = previousSimplifier;
-    }
-  }
-
-  /** Performs an action using predicates of
-   * the {@link #peek() current node} to simplify. */
-  public <E> E withPredicates(RelMetadataQuery mq,
-      Function<RelBuilder, E> fn) {
-    final RelOptPredicateList predicates = mq.getPulledUpPredicates(peek());
-    return withSimplifier((r, s) -> s.withPredicates(predicates), fn);
   }
 
   // Methods that return scalar expressions
@@ -1311,6 +1283,16 @@ public class RelBuilder {
   }
 
   // CHECKSTYLE: IGNORE 1
+  /** @deprecated Use {@link #groupKey(ImmutableBitSet)}
+   * or {@link #groupKey(ImmutableBitSet, Iterable)}. */
+  @Deprecated // to be removed before 2.0
+  public GroupKey groupKey(ImmutableBitSet groupSet,
+      @Nullable ImmutableList<ImmutableBitSet> groupSets) {
+    return groupKey_(groupSet, groupSets == null
+        ? ImmutableList.of(groupSet) : ImmutableList.copyOf(groupSets));
+  }
+
+  // CHECKSTYLE: IGNORE 1
   /** @deprecated Use {@link #groupKey(ImmutableBitSet, Iterable)}. */
   @Deprecated // to be removed before 2.0
   public GroupKey groupKey(ImmutableBitSet groupSet, boolean indicator,
@@ -1963,8 +1945,13 @@ public class RelBuilder {
 
     // Simplify expressions.
     if (config.simplify()) {
+      final RexShuttle shuttle =
+          RexUtil.searchShuttle(getRexBuilder(), null, 2);
       for (int i = 0; i < nodeList.size(); i++) {
-        nodeList.set(i, simplifier.simplifyPreservingType(nodeList.get(i)));
+        final RexNode node0 = nodeList.get(i);
+        final RexNode node1 = simplifier.simplifyPreservingType(node0);
+        final RexNode node2 = node1.accept(shuttle);
+        nodeList.set(i, node2);
       }
     }
 
@@ -2727,7 +2714,7 @@ public class RelBuilder {
     RelNode seed = tableSpool(Spool.Type.LAZY, Spool.Type.LAZY, finder.relOptTable).build();
     RelNode repeatUnion =
         struct.repeatUnionFactory.createRepeatUnion(seed, iterative, all,
-            iterationLimit, finder.relOptTable);
+            iterationLimit);
     return push(repeatUnion);
   }
 
@@ -2809,7 +2796,7 @@ public class RelBuilder {
       }
       final ImmutableBitSet requiredColumns = RelOptUtil.correlationColumns(id, right.rel);
       join =
-          struct.correlateFactory.createCorrelate(left.rel, right.rel, ImmutableList.of(), id,
+          struct.correlateFactory.createCorrelate(left.rel, right.rel, id,
               requiredColumns, joinType);
     } else {
       RelNode join0 =
@@ -2854,7 +2841,7 @@ public class RelBuilder {
     Frame left = stack.pop();
 
     final RelNode correlate =
-        struct.correlateFactory.createCorrelate(left.rel, right.rel, ImmutableList.of(),
+        struct.correlateFactory.createCorrelate(left.rel, right.rel,
             correlationId, ImmutableBitSet.of(requiredOrdinals), joinType);
 
     final ImmutableList.Builder<Field> fields = ImmutableList.builder();
@@ -3214,37 +3201,12 @@ public class RelBuilder {
    */
   public RelBuilder sortLimit(int offset, int fetch,
       Iterable<? extends RexNode> nodes) {
-    final @Nullable RexNode offsetNode = offset <= 0 ? null : literal(offset);
-    final @Nullable RexNode fetchNode = fetch < 0 ? null : literal(fetch);
-    return sortLimit(offsetNode, fetchNode, nodes);
-  }
-
-  /** Creates a {@link Sort} by a list of expressions, with limitNode and offsetNode.
-   *
-   * @param offsetNode RexLiteral means number of rows to skip is deterministic,
-   *                   RexDynamicParam means number of rows to skip is dynamic.
-   * @param fetchNode  RexLiteral means maximum number of rows to fetch is deterministic,
-   *                   RexDynamicParam mean maximum number is dynamic.
-   * @param nodes      Sort expressions
-   */
-  public RelBuilder sortLimit(@Nullable RexNode offsetNode, @Nullable RexNode fetchNode,
-      Iterable<? extends RexNode> nodes) {
-    if (offsetNode != null) {
-      if (!(offsetNode instanceof RexLiteral || offsetNode instanceof RexDynamicParam)) {
-        throw new IllegalArgumentException("OFFSET node must be RexLiteral or RexDynamicParam");
-      }
-    }
-    if (fetchNode != null) {
-      if (!(fetchNode instanceof RexLiteral || fetchNode instanceof RexDynamicParam)) {
-        throw new IllegalArgumentException("FETCH node must be RexLiteral or RexDynamicParam");
-      }
-    }
-
     final Registrar registrar = new Registrar(fields(), ImmutableList.of());
     final List<RelFieldCollation> fieldCollations =
         registrar.registerFieldCollations(nodes);
-    final int fetch = fetchNode instanceof RexLiteral
-        ? RexLiteral.intValue(fetchNode) : -1;
+
+    final RexNode offsetNode = offset <= 0 ? null : literal(offset);
+    final RexNode fetchNode = fetch < 0 ? null : literal(fetch);
     if (offsetNode == null && fetch == 0 && config.simplifyLimit()) {
       return empty();
     }
@@ -3836,12 +3798,17 @@ public class RelBuilder {
    *   {@link CorrelationId} is present and the {@link JoinRelType} is FULL or RIGHT.
    */
   private static boolean checkIfCorrelated(Set<CorrelationId> variablesSet,
-      JoinRelType joinType, RelNode leftNode, RelNode rightRel) {
-    if (variablesSet.size() != 1) {
+      JoinRelType joinType, RelNode leftRel, RelNode rightRel) {
+    if (variablesSet.isEmpty()) {
       return false;
+    } else if (variablesSet.size() != 1) {
+      String idsString = variablesSet.stream()
+          .map(Object::toString)
+          .collect(Collectors.joining(", "));
+      throw new IllegalArgumentException("multiple correlate ids not supported: " + idsString);
     }
     CorrelationId id = Iterables.getOnlyElement(variablesSet);
-    if (!RelOptUtil.notContainsCorrelation(leftNode, id, Litmus.IGNORE)) {
+    if (!RelOptUtil.notContainsCorrelation(leftRel, id, Litmus.IGNORE)) {
       throw new IllegalArgumentException("variable " + id
           + " must not be used by left input to correlation");
     }
@@ -3850,9 +3817,8 @@ public class RelBuilder {
     case FULL:
       throw new IllegalArgumentException("Correlated " + joinType + " join is not supported");
     default:
-      return !RelOptUtil.correlationColumns(
-          Iterables.getOnlyElement(variablesSet),
-          rightRel).isEmpty();
+      Set<CorrelationId> rightIds = RelOptUtil.getVariablesUsed(rightRel);
+      return 0 != Sets.intersection(rightIds, variablesSet).size();
     }
   }
 

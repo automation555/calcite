@@ -157,9 +157,6 @@ public enum SqlKind {
   /** A dynamic parameter. */
   DYNAMIC_PARAM,
 
-  /** The DISTINCT keyword of the GROUP BY clause. */
-  GROUP_BY_DISTINCT,
-
   /**
    * ORDER BY clause.
    *
@@ -638,12 +635,6 @@ public enum SqlKind {
   /** {@code EXTRACT} function. */
   EXTRACT,
 
-  /** {@code ARRAY_CONCAT} function (BigQuery semantics). */
-  ARRAY_CONCAT,
-
-  /** {@code ARRAY_REVERSE} function (BigQuery semantics). */
-  ARRAY_REVERSE,
-
   /** {@code REVERSE} function (SQL Server, MySQL). */
   REVERSE,
 
@@ -676,9 +667,6 @@ public enum SqlKind {
 
   /** {@code JSON_OBJECTAGG} aggregate function. */
   JSON_OBJECTAGG,
-
-  /** {@code JSON} type function. */
-  JSON_TYPE,
 
   /** {@code UNNEST} operator. */
   UNNEST,
@@ -885,6 +873,9 @@ public enum SqlKind {
 
   /** The {@code BIT_XOR} aggregate function. */
   BIT_XOR,
+
+  /** The {@code EXISTS_AGG} aggregate function. */
+  EXISTS_AGG,
 
   /** The {@code ROW_NUMBER} window function. */
   ROW_NUMBER,
@@ -1096,7 +1087,7 @@ public enum SqlKind {
           CUME_DIST, JSON_ARRAYAGG, JSON_OBJECTAGG, BIT_AND, BIT_OR, BIT_XOR,
           LISTAGG, STRING_AGG, ARRAY_AGG, ARRAY_CONCAT_AGG, GROUP_CONCAT, COUNTIF,
           PERCENTILE_CONT, PERCENTILE_DISC,
-          INTERSECTION, ANY_VALUE);
+          INTERSECTION, ANY_VALUE, EXISTS_AGG);
 
   /**
    * Category consisting of all DML operators.
