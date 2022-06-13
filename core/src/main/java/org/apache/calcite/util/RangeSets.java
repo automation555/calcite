@@ -23,16 +23,15 @@ import com.google.common.collect.RangeSet;
 import com.google.common.collect.TreeRangeSet;
 
 import java.util.Iterator;
-import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
 /** Utilities for Guava {@link com.google.common.collect.RangeSet}. */
-@SuppressWarnings({"BetaApi", "UnstableApiUsage"})
+@SuppressWarnings({"UnstableApiUsage"})
 public class RangeSets {
   private RangeSets() {}
 
-  @SuppressWarnings({"BetaApi", "rawtypes"})
+  @SuppressWarnings("rawtypes")
   private static final ImmutableRangeSet ALL =
       ImmutableRangeSet.of().complement();
 
@@ -127,17 +126,6 @@ public class RangeSets {
         && range.hasUpperBound()
         && range.lowerEndpoint().equals(range.upperEndpoint())
         && !range.isEmpty();
-  }
-
-  /** Returns whether a range set is a single open interval. */
-  public static <C extends Comparable<C>> boolean isOpenInterval(RangeSet<C> rangeSet) {
-    if (rangeSet.isEmpty()) {
-      return false;
-    }
-    final Set<Range<C>> ranges = rangeSet.asRanges();
-    final Range<C> range = ranges.iterator().next();
-    return ranges.size() == 1
-        && (!range.hasLowerBound() || !range.hasUpperBound());
   }
 
   /** Returns the number of ranges in a range set that are points.
@@ -319,7 +307,7 @@ public class RangeSets {
    *
    * @param <C> Value type
    * @param <C2> Output value type */
-  private abstract static
+  abstract static
       class CopyingHandler<C extends Comparable<C>, C2 extends Comparable<C2>>
       implements RangeSets.Handler<C, Range<C2>> {
     abstract C2 convert(C c);
@@ -378,17 +366,17 @@ public class RangeSets {
     }
 
     @Override public void all() {
-      sb.append("(-\u221e..+\u221e)");
+      sb.append("(-\u221e\u2025+\u221e)");
     }
 
     @Override public void atLeast(C lower) {
       sb.append('[');
       valuePrinter.accept(sb, lower);
-      sb.append("..+\u221e)");
+      sb.append("\u2025+\u221e)");
     }
 
     @Override public void atMost(C upper) {
-      sb.append("(-\u221e..");
+      sb.append("(-\u221e\u2025");
       valuePrinter.accept(sb, upper);
       sb.append("]");
     }
@@ -396,11 +384,11 @@ public class RangeSets {
     @Override public void greaterThan(C lower) {
       sb.append('(');
       valuePrinter.accept(sb, lower);
-      sb.append("..+\u221e)");
+      sb.append("\u2025+\u221e)");
     }
 
     @Override public void lessThan(C upper) {
-      sb.append("(-\u221e..");
+      sb.append("(-\u221e\u2025");
       valuePrinter.accept(sb, upper);
       sb.append(")");
     }
@@ -412,7 +400,7 @@ public class RangeSets {
     @Override public void closed(C lower, C upper) {
       sb.append('[');
       valuePrinter.accept(sb, lower);
-      sb.append("..");
+      sb.append('\u2025');
       valuePrinter.accept(sb, upper);
       sb.append(']');
     }
@@ -420,7 +408,7 @@ public class RangeSets {
     @Override public void closedOpen(C lower, C upper) {
       sb.append('[');
       valuePrinter.accept(sb, lower);
-      sb.append("..");
+      sb.append('\u2025');
       valuePrinter.accept(sb, upper);
       sb.append(')');
     }
@@ -428,7 +416,7 @@ public class RangeSets {
     @Override public void openClosed(C lower, C upper) {
       sb.append('(');
       valuePrinter.accept(sb, lower);
-      sb.append("..");
+      sb.append('\u2025');
       valuePrinter.accept(sb, upper);
       sb.append(']');
     }
@@ -436,7 +424,7 @@ public class RangeSets {
     @Override public void open(C lower, C upper) {
       sb.append('(');
       valuePrinter.accept(sb, lower);
-      sb.append("..");
+      sb.append('\u2025');
       valuePrinter.accept(sb, upper);
       sb.append(')');
     }

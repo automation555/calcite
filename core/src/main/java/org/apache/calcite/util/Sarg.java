@@ -17,19 +17,21 @@
 package org.apache.calcite.util;
 
 import org.apache.calcite.linq4j.Ord;
-import org.apache.calcite.rex.RexUnknownAs;
+import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 
+import com.google.common.collect.DiscreteDomain;
 import com.google.common.collect.ImmutableRangeSet;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Range;
 import com.google.common.collect.RangeSet;
+import com.google.common.collect.TreeRangeSet;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
+import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
 import java.util.function.BiConsumer;
-
-import static java.util.Objects.requireNonNull;
+import java.util.stream.Collectors;
 
 /** Set of values (or ranges) that are the target of a search.
  *
@@ -65,108 +67,195 @@ import static java.util.Objects.requireNonNull;
  *
  * @see SqlStdOperatorTable#SEARCH
  */
-@SuppressWarnings({"BetaApi", "type.argument.type.incompatible", "UnstableApiUsage"})
 public class Sarg<C extends Comparable<C>> implements Comparable<Sarg<C>> {
   public final RangeSet<C> rangeSet;
-  public final RexUnknownAs nullAs;
+  public final boolean containsNull;
   public final int pointCount;
+  public final RelDataType type;
 
-  /** Returns FALSE for all null and not-null values.
+  /**
+   * Handler to transform long ranges back to ranges with the original type.
    *
-   * <p>{@code SEARCH(x, FALSE)} is equivalent to {@code FALSE}. */
-  private static final SpecialSarg FALSE =
-      new SpecialSarg(ImmutableRangeSet.of(), RexUnknownAs.FALSE,
-          "Sarg[FALSE]", 2);
+   * <p>
+   * Some special processing is applied to the lower bound,
+   * because negative infinity could be replaced with Long.MIN_VALUE when canonizing
+   * the range boundaries. This problem does not exist for the positive infinity,
+   * because the Guava library gives different implementations for
+   * Cut#BelowAll#canonical and Cut#AboveAll#canonical methods.
+   * </p>
+   */
+  private final RangeSets.CopyingHandler<Long, C>
+      fromLongHandler = new RangeSets.CopyingHandler<Long, C>() {
+        @Override C convert(Long value) {
+          return (C) BigDecimal.valueOf(value);
+        }
 
-  /** Returns TRUE for all not-null values, FALSE for null.
-   *
-   * <p>{@code SEARCH(x, IS_NOT_NULL)} is equivalent to
-   * {@code x IS NOT NULL}. */
-  private static final SpecialSarg IS_NOT_NULL =
-      new SpecialSarg(ImmutableRangeSet.of().complement(), RexUnknownAs.FALSE,
-          "Sarg[IS NOT NULL]", 3);
+        @Override public Range<C> atLeast(Long lower) {
+          if (lower.equals(DiscreteDomain.longs().minValue())) {
+            return Range.all();
+          }
+          return super.atLeast(lower);
+        }
 
-  /** Returns FALSE for all not-null values, TRUE for null.
-   *
-   * <p>{@code SEARCH(x, IS_NULL)} is equivalent to {@code x IS NULL}. */
-  private static final SpecialSarg IS_NULL =
-      new SpecialSarg(ImmutableRangeSet.of(), RexUnknownAs.TRUE,
-          "Sarg[IS NULL]", 4);
+        @Override public Range<C> greaterThan(Long lower) {
+          if (lower.equals(DiscreteDomain.longs().minValue())) {
+            return Range.all();
+          }
+          return super.greaterThan(lower);
+        }
 
-  /** Returns TRUE for all null and not-null values.
-   *
-   * <p>{@code SEARCH(x, TRUE)} is equivalent to {@code TRUE}. */
-  private static final SpecialSarg TRUE =
-      new SpecialSarg(ImmutableRangeSet.of().complement(), RexUnknownAs.TRUE,
-          "Sarg[TRUE]", 5);
+        @Override public Range<C> closed(Long lower, Long upper) {
+          if (lower.equals(DiscreteDomain.longs().minValue())) {
+            return (Range<C>) Range.atMost(BigDecimal.valueOf(upper));
+          }
+          return super.closed(lower, upper);
+        }
 
-  /** Returns FALSE for all not-null values, UNKNOWN for null.
-   *
-   * <p>{@code SEARCH(x, NOT_EQUAL)} is equivalent to {@code x <> x}. */
-  private static final SpecialSarg NOT_EQUAL =
-      new SpecialSarg(ImmutableRangeSet.of(), RexUnknownAs.UNKNOWN,
-          "Sarg[<>]", 6);
+        @Override public Range<C> closedOpen(Long lower, Long upper) {
+          if (lower.equals(DiscreteDomain.longs().minValue())) {
+            return (Range<C>) Range.lessThan(BigDecimal.valueOf(upper));
+          }
+          return super.closedOpen(lower, upper);
+        }
 
-  /** Returns TRUE for all not-null values, UNKNOWN for null.
-   *
-   * <p>{@code SEARCH(x, EQUAL)} is equivalent to {@code x = x}. */
-  private static final SpecialSarg EQUAL =
-      new SpecialSarg(ImmutableRangeSet.of().complement(), RexUnknownAs.UNKNOWN,
-          "Sarg[=]", 7);
+        @Override public Range<C> openClosed(Long lower, Long upper) {
+          if (lower.equals(DiscreteDomain.longs().minValue())) {
+            return (Range<C>) Range.atMost(BigDecimal.valueOf(upper));
+          }
+          return super.openClosed(lower, upper);
+        }
 
-  private Sarg(ImmutableRangeSet<C> rangeSet, RexUnknownAs nullAs) {
-    this.rangeSet = requireNonNull(rangeSet, "rangeSet");
-    this.nullAs = requireNonNull(nullAs, "nullAs");
+        @Override public Range<C> open(Long lower, Long upper) {
+          if (lower.equals(DiscreteDomain.longs().minValue())) {
+            return (Range<C>) Range.lessThan(BigDecimal.valueOf(upper));
+          }
+          return super.open(lower, upper);
+        }
+      };
+
+  static final Range<Long> EMPTY_RANGE = Range.closedOpen(0L, 0L);
+
+  /**
+   * Transform a range to one with closed boundaries.
+   * This normalizes the range, making subsequent operations easier.
+   */
+  private final RangeSets.CopyingHandler<Long, Long>
+      closeRangeHandler = new RangeSets.CopyingHandler<Long, Long>() {
+
+        @Override Long convert(Long value) {
+          return value;
+        }
+
+        @Override public Range<Long> greaterThan(Long lower) {
+          return Range.atLeast(lower + 1);
+        }
+
+        @Override public Range<Long> lessThan(Long upper) {
+          return Range.atMost(upper - 1);
+        }
+
+        @Override public Range<Long> closedOpen(Long lower, Long upper) {
+          if (lower > upper - 1) {
+            return EMPTY_RANGE;
+          }
+          return Range.closed(lower, upper - 1);
+        }
+
+        @Override public Range<Long> openClosed(Long lower, Long upper) {
+          if (lower + 1 > upper) {
+            return EMPTY_RANGE;
+          }
+          return Range.closed(lower + 1, upper);
+        }
+
+        @Override public Range<Long> open(Long lower, Long upper) {
+          if (lower + 1 > upper - 1) {
+            return EMPTY_RANGE;
+          }
+          return Range.closed(lower + 1, upper - 1);
+        }
+      };
+
+  private Sarg(ImmutableRangeSet<C> rangeSet, boolean containsNull, RelDataType type) {
+    this.type = type;
+    this.rangeSet = simplifyRangeSet(Objects.requireNonNull(rangeSet));
+    this.containsNull = containsNull;
     this.pointCount = RangeSets.countPoints(rangeSet);
   }
 
-  @Deprecated // to be removed before 2.0
+  /**
+   * Creates a search argument.
+   * <p>
+   *   Please note that we need a type argument here,
+   *   because for some discrete types, we can simplify the Sarg by
+   *   merging the underling ranges.
+   * </p>
+   */
   public static <C extends Comparable<C>> Sarg<C> of(boolean containsNull,
-      RangeSet<C> rangeSet) {
-    return of(containsNull ? RexUnknownAs.TRUE : RexUnknownAs.UNKNOWN,
-        rangeSet);
+      RangeSet<C> rangeSet, RelDataType type) {
+    return new Sarg<>(ImmutableRangeSet.copyOf(rangeSet), containsNull, type);
   }
 
-  /** Creates a search argument. */
-  public static <C extends Comparable<C>> Sarg<C> of(RexUnknownAs nullAs,
-      RangeSet<C> rangeSet) {
-    if (rangeSet.isEmpty()) {
-      switch (nullAs) {
-      case FALSE:
-        return FALSE;
-      case TRUE:
-        return IS_NULL;
-      default:
-        return NOT_EQUAL;
-      }
+  RangeSet<C> simplifyRangeSet(RangeSet<C> rangeSet) {
+    if (!isDiscreteType(type)) {
+      // nothing to do for non-discrete types.
+      return rangeSet;
     }
-    if (rangeSet.equals(RangeSets.rangeSetAll())) {
-      switch (nullAs) {
-      case FALSE:
-        return IS_NOT_NULL;
-      case TRUE:
-        return TRUE;
-      default:
-        return EQUAL;
-      }
+
+    // transform to long ranges, so range merging can be performed
+    List<Range<Long>> longRanges =  rangeSet.asRanges().stream()
+        .map(r -> RangeSets.copy(r, v -> ((BigDecimal) v).longValue()))
+        .map(r -> RangeSets.map(r, closeRangeHandler)).collect(Collectors.toList());
+
+    // calculate cost of the original range set.
+    SargCost sc = new SargCost();
+    double originalCost = sc.getCost(longRanges);
+
+    // perform range merging
+    RangeSet<Long> longRangeSet = TreeRangeSet.create();
+    longRanges.forEach(r -> longRangeSet.add(r.canonical(DiscreteDomain.longs())));
+
+    // calculate the cost of the new range set.
+    List<Range<Long>> newLongRanges = longRangeSet.asRanges().stream()
+        .map(r -> RangeSets.map(r, closeRangeHandler)).collect(Collectors.toList());
+    double newCost = sc.getCost(newLongRanges);
+
+    if (originalCost <= newCost) {
+      // the new range set is more expensive
+      return rangeSet;
     }
-    return new Sarg<>(ImmutableRangeSet.copyOf(rangeSet), nullAs);
+
+    // transform back to ranges of the original type.
+    RangeSet<C> newRangeSet = TreeRangeSet.create();
+    newLongRanges.forEach(r -> newRangeSet.add(RangeSets.map(r, fromLongHandler)));
+    return newRangeSet;
+  }
+
+  boolean isDiscreteType(RelDataType type) {
+    switch (type.getSqlTypeName()) {
+    case TINYINT:
+    case SMALLINT:
+    case INTEGER:
+    case BIGINT:
+      return true;
+    default:
+      return false;
+    }
   }
 
   /**
    * {@inheritDoc}
    *
-   * <p>Produces a similar result to {@link RangeSet},
-   * but adds "; NULL AS FALSE" or "; NULL AS TRUE" to indicate {@link #nullAs},
-   * and simplifies point ranges.
+   * <p>Produces a similar result to {@link RangeSet}, but adds ", null"
+   * if nulls are matched, and simplifies point ranges. For example,
+   * the Sarg that allows the range set
    *
-   * <p>For example, the Sarg that allows the range set
+   * <blockquote>{@code [[7&#x2025;7], [9&#x2025;9],
+   * (10&#x2025;+&infin;)]}</blockquote>
    *
-   * <blockquote>{@code [[7..7], [9..9], (10..+∞)]}</blockquote>
+   * and also null is printed as
    *
-   * <p>and also null is printed as
-   *
-   * <blockquote>{@code Sarg[7, 9, (10..+∞); NULL AS TRUE]}</blockquote>
+   * <blockquote>{@code Sarg[7, 9, (10&#x2025;+&infin;), null]}</blockquote>
    */
   @Override public String toString() {
     final StringBuilder sb = new StringBuilder();
@@ -186,16 +275,10 @@ public class Sarg<C extends Comparable<C>> implements Comparable<Sarg<C>> {
       }
       RangeSets.forEach(r, printer);
     });
-    switch (nullAs) {
-    case FALSE:
-      return sb.append("; NULL AS FALSE]");
-    case TRUE:
-      return sb.append("; NULL AS TRUE]");
-    case UNKNOWN:
-      return sb.append("]");
-    default:
-      throw new AssertionError();
+    if (containsNull) {
+      sb.append(", null");
     }
+    return sb.append("]");
   }
 
   @Override public int compareTo(Sarg<C> o) {
@@ -203,31 +286,18 @@ public class Sarg<C extends Comparable<C>> implements Comparable<Sarg<C>> {
   }
 
   @Override public int hashCode() {
-    return RangeSets.hashCode(rangeSet) * 31 + nullAs.ordinal();
+    return RangeSets.hashCode(rangeSet) * 31 + (containsNull ? 2 : 3);
   }
 
-  @Override public boolean equals(@Nullable Object o) {
+  @Override public boolean equals(Object o) {
     return o == this
         || o instanceof Sarg
-        && nullAs == ((Sarg) o).nullAs
-        && rangeSet.equals(((Sarg) o).rangeSet);
+        && rangeSet.equals(((Sarg) o).rangeSet)
+        && containsNull == ((Sarg) o).containsNull;
   }
 
-  /** Returns whether this Sarg includes all values (including or not including
-   * null). */
-  public boolean isAll() {
-    return false;
-  }
-
-  /** Returns whether this Sarg includes no values (including or not including
-   * null). */
-  public boolean isNone() {
-    return false;
-  }
-
-  /** Returns whether this Sarg is a collection of 1 or more
-   * points (and perhaps an {@code IS NULL} if
-   * {@code nullAs == RexUnknownAs.TRUE}).
+  /** Returns whether this Sarg is a collection of 1 or more points (and perhaps
+   * an {@code IS NULL} if {@link #containsNull}).
    *
    * <p>Such sargs could be translated as {@code ref = value}
    * or {@code ref IN (value1, ...)}. */
@@ -236,107 +306,49 @@ public class Sarg<C extends Comparable<C>> implements Comparable<Sarg<C>> {
   }
 
   /** Returns whether this Sarg, when negated, is a collection of 1 or more
-   * points (and perhaps an {@code IS NULL} if
-   * {@code nullAs == RexUnknownAs.TRUE}).
+   * points (and perhaps an {@code IS NULL} if {@link #containsNull}).
    *
    * <p>Such sargs could be translated as {@code ref <> value}
    * or {@code ref NOT IN (value1, ...)}. */
   public boolean isComplementedPoints() {
     return rangeSet.span().encloses(Range.all())
-        && !rangeSet.equals(RangeSets.rangeSetAll())
         && rangeSet.complement().asRanges().stream()
             .allMatch(RangeSets::isPoint);
   }
 
-  /** Returns a measure of the complexity of this expression.
-   *
-   * <p>It is basically the number of values that need to be checked against
-   * (including NULL).
-   *
-   * <p>Examples:
-   * <ul>
-   *   <li>{@code x = 1}, {@code x <> 1}, {@code x > 1} have complexity 1
-   *   <li>{@code x > 1 or x is null} has complexity 2
-   *   <li>{@code x in (2, 4, 6) or x > 20} has complexity 4
-   *   <li>{@code x between 3 and 8 or x between 10 and 20} has complexity 2
-   * </ul>
+  /**
+   * Utility for evaluating the cost of a Sarg.
    */
-  public int complexity() {
-    int complexity;
-    if (rangeSet.asRanges().size() == 2
-        && rangeSet.complement().asRanges().size() == 1
-        && RangeSets.isPoint(
-            Iterables.getOnlyElement(rangeSet.complement().asRanges()))) {
-      // The complement of a point is a range set with two elements.
-      // For example, "x <> 1" is "[(-inf, 1), (1, inf)]".
-      // We want this to have complexity 1.
-      complexity = 1;
-    } else {
-      complexity = rangeSet.asRanges().size();
-    }
-    if (nullAs == RexUnknownAs.TRUE) {
-      ++complexity;
-    }
-    return complexity;
-  }
+  class SargCost {
+    /**
+     * Cost for a comparison option.
+     */
+    static final double COMPARISON_COST = 1.0;
 
-  /** Returns a Sarg that matches a value if and only this Sarg does not. */
-  public Sarg negate() {
-    return Sarg.of(nullAs.negate(), rangeSet.complement());
-  }
+    /**
+     * Cost of a logical option.
+     */
+    static final double LOGICAL_OP_COST = 0.2;
 
-  /** Sarg whose range is all or none.
-   *
-   * <p>There are only 6 instances: {all, none} * {true, false, unknown}.
-   *
-   * @param <C> Value type */
-  private static class SpecialSarg<C extends Comparable<C>> extends Sarg<C> {
-    final String name;
-    final int ordinal;
-
-    SpecialSarg(ImmutableRangeSet<C> rangeSet, RexUnknownAs nullAs, String name,
-        int ordinal) {
-      super(rangeSet, nullAs);
-      this.name = name;
-      this.ordinal = ordinal;
-      assert rangeSet.isEmpty() == ((ordinal & 1) == 0);
-      assert rangeSet.equals(RangeSets.rangeSetAll()) == ((ordinal & 1) == 1);
+    /**
+     * Gets the cost of a list of range evaluations combined by logical or.
+     */
+    double getCost(Collection<Range<Long>> ranges) {
+      return (ranges.size() - 1) * LOGICAL_OP_COST
+          + ranges.stream().mapToDouble(r -> getCost(r)).sum();
     }
 
-    @Override public boolean equals(@Nullable Object o) {
-      return this == o;
-    }
-
-    @Override public int hashCode() {
-      return ordinal;
-    }
-
-    @Override public boolean isAll() {
-      return (ordinal & 1) == 1;
-    }
-
-    @Override public boolean isNone() {
-      return (ordinal & 1) == 0;
-    }
-
-    @Override public int complexity() {
-      switch (ordinal) {
-      case 2: // Sarg[FALSE]
-        return 0; // for backwards compatibility
-      case 5: // Sarg[TRUE]
-        return 2; // for backwards compatibility
-      default:
-        return 1;
+    /**
+     * Gets the cost for evaluating a single range.
+     */
+    double getCost(Range<Long> range) {
+      if (range == EMPTY_RANGE) {
+        return 0;
+      } else if (RangeSets.isPoint(range)) {
+        return COMPARISON_COST;
+      } else {
+        return 2 * COMPARISON_COST + LOGICAL_OP_COST;
       }
-    }
-
-    @Override public StringBuilder printTo(StringBuilder sb,
-        BiConsumer<StringBuilder, C> valuePrinter) {
-      return sb.append(name);
-    }
-
-    @Override public String toString() {
-      return name;
     }
   }
 }
