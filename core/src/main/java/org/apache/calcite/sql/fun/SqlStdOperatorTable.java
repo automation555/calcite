@@ -47,6 +47,7 @@ import org.apache.calcite.sql.SqlRankFunction;
 import org.apache.calcite.sql.SqlSampleSpec;
 import org.apache.calcite.sql.SqlSessionTableFunction;
 import org.apache.calcite.sql.SqlSetOperator;
+import org.apache.calcite.sql.SqlSetSemanticsTableOperator;
 import org.apache.calcite.sql.SqlSpecialOperator;
 import org.apache.calcite.sql.SqlSyntax;
 import org.apache.calcite.sql.SqlTumbleTableFunction;
@@ -61,8 +62,6 @@ import org.apache.calcite.sql.type.InferTypes;
 import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlOperandCountRanges;
-import org.apache.calcite.sql.type.SqlReturnTypeInference;
-import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.util.ReflectiveSqlOperatorTable;
 import org.apache.calcite.sql.validate.SqlConformance;
@@ -250,7 +249,7 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
   public static final SqlInternalOperator EXTEND = new SqlExtendOperator();
 
   /**
-   * String and array-to-array concatenation operator, '<code>||</code>'.
+   * String concatenation operator, '<code>||</code>'.
    *
    * @see SqlLibraryOperators#CONCAT_FUNCTION
    */
@@ -260,19 +259,9 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
           SqlKind.OTHER,
           60,
           true,
-          ReturnTypes.ARG0.andThen((opBinding, typeToTransform) -> {
-            SqlReturnTypeInference returnType =
-                typeToTransform.getSqlTypeName().getFamily() == SqlTypeFamily.ARRAY
-                    ? ReturnTypes.LEAST_RESTRICTIVE
-                    : ReturnTypes.DYADIC_STRING_SUM_PRECISION_NULLABLE;
-
-            return requireNonNull(returnType.inferReturnType(opBinding),
-                "inferred CONCAT element type");
-          }),
+          ReturnTypes.DYADIC_STRING_SUM_PRECISION_NULLABLE,
           null,
-          OperandTypes.STRING_SAME_SAME_OR_ARRAY_SAME_SAME
-      );
-
+          OperandTypes.STRING_SAME_SAME);
 
   /**
    * Arithmetic division operator, '<code>/</code>'.
@@ -853,9 +842,6 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
 
   public static final SqlPostfixOperator JSON_VALUE_EXPRESSION =
       new SqlJsonValueExpressionOperator();
-
-  public static final SqlJsonTypeOperator JSON_TYPE_OPERATOR =
-      new SqlJsonTypeOperator();
 
 
   //-------------------------------------------------------------
@@ -2562,6 +2548,9 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
           writer.endList(frame);
         }
       };
+
+  /** SetSemanticsTable represents as an input table with set semantics. */
+  public static final SqlSpecialOperator SET_SEMANTICS_TABLE = new SqlSetSemanticsTableOperator();
 
   //~ Methods ----------------------------------------------------------------
 

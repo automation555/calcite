@@ -65,6 +65,7 @@ import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.SqlFunctionCategory;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.SqlOperatorTable;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParseException;
 import org.apache.calcite.sql.parser.SqlParser;
@@ -72,6 +73,7 @@ import org.apache.calcite.sql.test.SqlTests;
 import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.sql.util.ListSqlOperatorTable;
 import org.apache.calcite.sql.util.SqlOperatorTables;
 import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql.validate.SqlValidatorScope;
@@ -95,7 +97,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.apache.calcite.test.Matchers.sortsAs;
+import static org.apache.calcite.test.RelMetadataTestBase.sortsAs;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.equalTo;
@@ -204,13 +206,16 @@ class PlannerTest {
   }
 
   @Test void testValidateUserDefinedAggregate() throws Exception {
+    final SqlStdOperatorTable stdOpTab = SqlStdOperatorTable.instance();
+    SqlOperatorTable opTab =
+        SqlOperatorTables.chain(stdOpTab,
+            new ListSqlOperatorTable(
+                ImmutableList.of(new MyCountAggFunction())));
     final SchemaPlus rootSchema = Frameworks.createRootSchema(true);
     final FrameworkConfig config = Frameworks.newConfigBuilder()
         .defaultSchema(
             CalciteAssert.addSchema(rootSchema, CalciteAssert.SchemaSpec.HR))
-        .operatorTable(
-            SqlOperatorTables.chain(SqlStdOperatorTable.instance(),
-                SqlOperatorTables.of(new MyCountAggFunction())))
+        .operatorTable(opTab)
         .build();
     final Planner planner = Frameworks.getPlanner(config);
     SqlNode parse =

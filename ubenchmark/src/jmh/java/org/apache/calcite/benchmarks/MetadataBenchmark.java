@@ -18,10 +18,9 @@ package org.apache.calcite.benchmarks;
 
 import org.apache.calcite.jdbc.Driver;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.metadata.DefaultRelMetadataProvider;
 import org.apache.calcite.rel.metadata.JaninoRelMetadataProvider;
-import org.apache.calcite.rel.metadata.ProxyingMetadataHandlerProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rel.metadata.lambda.LambdaMetadataSupplier;
 import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.test.CalciteAssert;
 
@@ -46,7 +45,7 @@ import java.util.function.Supplier;
 /**
  * A benchmark to compare metadata retrieval time for a complex query.
  *
- * Compares metadata retrieval performance on a large query
+ * Compares Janino and Lambda-based metadata retrieval systems.
  *
  */
 @Fork(value = 1, jvmArgsPrepend = "-Xmx2048m")
@@ -124,17 +123,17 @@ public class MetadataBenchmark {
   @Benchmark
   public void janinoWithCompile() {
     JaninoRelMetadataProvider.clearStaticCache();
-    test(() ->
-        new RelMetadataQuery(JaninoRelMetadataProvider.of(DefaultRelMetadataProvider.INSTANCE)));
+    test(RelMetadataQuery::instance);
   }
 
   @Benchmark
-  public void proxying() {
-    test(
-        () -> new RelMetadataQuery(
-            new ProxyingMetadataHandlerProvider(
-        DefaultRelMetadataProvider.INSTANCE
-    )));
+  public void lambda() {
+    test(LambdaMetadataSupplier.instance());
+  }
+
+  @Benchmark
+  public void lambdaWithConstruction() {
+    test(new LambdaMetadataSupplier());
   }
 
 }
