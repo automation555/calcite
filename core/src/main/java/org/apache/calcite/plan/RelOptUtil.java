@@ -107,6 +107,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.LinkedHashMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
+import com.google.common.collect.Sets;
 
 import org.checkerframework.checker.initialization.qual.NotOnlyInitialized;
 import org.checkerframework.checker.initialization.qual.UnknownInitialization;
@@ -275,6 +276,22 @@ public abstract class RelOptUtil {
   public static Set<CorrelationId> getVariablesUsed(RelNode rel) {
     CorrelationCollector visitor = new CorrelationCollector();
     rel.accept(visitor);
+    return visitor.vuv.variables;
+  }
+
+  /**
+   * Returns a set of variables used by a relational expression or its
+   * descendants.
+   *
+   * <p>The set may contain "duplicates" (variables with different ids that,
+   * when resolved, will reference the same source relational expression).
+   *
+   * <p>The item type is the same as
+   * {@link org.apache.calcite.rex.RexCorrelVariable#id}.
+   */
+  public static Set<CorrelationId> getVariablesUsed(RexNode rex) {
+    CorrelationCollector visitor = new CorrelationCollector();
+    rex.accept(visitor.vuv);
     return visitor.vuv.variables;
   }
 
@@ -1387,6 +1404,41 @@ public abstract class RelOptUtil {
         }
       }
 
+      if ((rangeOp == null)
+          && ((leftKey == null) || (rightKey == null))) {
+        // no equality join keys found yet:
+        // try transforming the condition to
+        // equality "join" conditions, e.g.
+        //     f(LHS) > 0 ===> ( f(LHS) > 0 ) = TRUE,
+        // and make the RHS produce TRUE, but only if we're strictly
+        // looking for equi-joins
+        final ImmutableBitSet projRefs = InputFinder.bits(condition);
+        leftKey = null;
+        rightKey = null;
+
+        boolean foundInput = false;
+        for (int i = 0; i < inputs.size() && !foundInput; i++) {
+          if (inputsRange[i].contains(projRefs)) {
+            leftInput = i;
+            leftFields = inputs.get(leftInput).getRowType().getFieldList();
+
+            leftKey = condition.accept(
+                new RelOptUtil.RexInputConverter(
+                    rexBuilder,
+                    leftFields,
+                    leftFields,
+                    adjustments));
+
+            rightKey = rexBuilder.makeLiteral(true);
+
+            // effectively performing an equality comparison
+            kind = SqlKind.EQUALS;
+
+            foundInput = true;
+          }
+        }
+      }
+
       if ((leftKey != null) && (rightKey != null)) {
         // found suitable join keys
         // add them to key list, ensuring that if there is a
@@ -2017,14 +2069,14 @@ public abstract class RelOptUtil {
 
   @Experimental
   public static void registerDefaultRules(RelOptPlanner planner,
-      boolean enableMaterializations, boolean enableBindable) {
+      boolean enableMaterialziations, boolean enableBindable) {
     if (CalciteSystemProperty.ENABLE_COLLATION_TRAIT.value()) {
       registerAbstractRelationalRules(planner);
     }
     registerAbstractRules(planner);
     registerBaseRules(planner);
 
-    if (enableMaterializations) {
+    if (enableMaterialziations) {
       registerMaterializationRules(planner);
     }
     if (enableBindable) {
@@ -4348,6 +4400,8 @@ public abstract class RelOptUtil {
       if (fieldAccess.getReferenceExpr() instanceof RexCorrelVariable) {
         final RexCorrelVariable v =
             (RexCorrelVariable) fieldAccess.getReferenceExpr();
+        assert variables.contains(v.id) || !variableFields.containsKey(v.id)
+            : "correlate id used out of scope";
         variableFields.put(v.id, fieldAccess.getField().getIndex());
       }
       return super.visitFieldAccess(fieldAccess);
@@ -4664,6 +4718,8 @@ public abstract class RelOptUtil {
     private final VariableUsedVisitor vuv = new VariableUsedVisitor(this);
 
     @Override public RelNode visit(RelNode other) {
+      assert Sets.intersection(other.getVariablesSet(), vuv.variables).isEmpty()
+          : "correlate id used out of scope";
       other.collectVariablesUsed(vuv.variables);
       other.accept(vuv);
       RelNode result = super.visit(other);
