@@ -16,8 +16,6 @@
  */
 package org.apache.calcite.sql.validate;
 
-import org.apache.calcite.sql.fun.SqlLibrary;
-
 /**
  * Implementation of {@link SqlConformance} that delegates all methods to
  * another object. You can create a sub-class that overrides particular
@@ -79,8 +77,7 @@ public class SqlDelegatingConformance extends SqlAbstractConformance {
     return delegate.allowAliasUnnestItems();
   }
 
-  @Override public SqlLibrary semantics() {
-    return delegate.semantics();
+  @Override public boolean allowSelectTableFunction() {
+    return delegate.allowSelectTableFunction();
   }
-
 }

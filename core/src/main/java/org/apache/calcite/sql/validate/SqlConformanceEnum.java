@@ -16,8 +16,6 @@
  */
 package org.apache.calcite.sql.validate;
 
-import org.apache.calcite.sql.fun.SqlLibrary;
-
 /**
  * Enumeration of built-in SQL compatibility modes.
  */
@@ -79,9 +77,13 @@ public enum SqlConformanceEnum implements SqlConformance {
 
   /** Conformance value that instructs Calcite to use SQL semantics
    * consistent with Microsoft SQL Server version 2008. */
-  SQL_SERVER_2008;
+  SQL_SERVER_2008,
 
-  @Override public boolean isLiberal() {
+  /** Conformance value that instructs Calcite to use SQL semantics
+   * consistent with Hive. */
+  HIVE;
+
+  public boolean isLiberal() {
     switch (this) {
     case BABEL:
       return true;
@@ -90,7 +92,7 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean allowCharLiteralAlias() {
+  public boolean allowCharLiteralAlias() {
     switch (this) {
     case BABEL:
     case BIG_QUERY:
@@ -104,7 +106,7 @@ public enum SqlConformanceEnum implements SqlConformance {
   }
 
 
-  @Override public boolean isGroupByAlias() {
+  public boolean isGroupByAlias() {
     switch (this) {
     case BABEL:
     case LENIENT:
@@ -116,10 +118,9 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean isGroupByOrdinal() {
+  public boolean isGroupByOrdinal() {
     switch (this) {
     case BABEL:
-    case BIG_QUERY:
     case LENIENT:
     case MYSQL_5:
     case PRESTO:
@@ -129,7 +130,7 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean isHavingAlias() {
+  public boolean isHavingAlias() {
     switch (this) {
     case BABEL:
     case LENIENT:
@@ -141,7 +142,7 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean isSortByOrdinal() {
+  public boolean isSortByOrdinal() {
     switch (this) {
     case DEFAULT:
     case BABEL:
@@ -161,7 +162,7 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean isSortByAlias() {
+  public boolean isSortByAlias() {
     switch (this) {
     case DEFAULT:
     case BABEL:
@@ -177,11 +178,11 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean isSortByAliasObscures() {
+  public boolean isSortByAliasObscures() {
     return this == SqlConformanceEnum.STRICT_92;
   }
 
-  @Override public boolean isFromRequired() {
+  public boolean isFromRequired() {
     switch (this) {
     case ORACLE_10:
     case ORACLE_12:
@@ -194,25 +195,7 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean splitQuotedTableName() {
-    switch (this) {
-    case BIG_QUERY:
-      return true;
-    default:
-      return false;
-    }
-  }
-
-  @Override public boolean allowHyphenInUnquotedTableName() {
-    switch (this) {
-    case BIG_QUERY:
-      return true;
-    default:
-      return false;
-    }
-  }
-
-  @Override public boolean isBangEqualAllowed() {
+  public boolean isBangEqualAllowed() {
     switch (this) {
     case LENIENT:
     case BABEL:
@@ -250,7 +233,7 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean isApplyAllowed() {
+  public boolean isApplyAllowed() {
     switch (this) {
     case BABEL:
     case LENIENT:
@@ -262,7 +245,7 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean isInsertSubsetColumnsAllowed() {
+  public boolean isInsertSubsetColumnsAllowed() {
     switch (this) {
     case BABEL:
     case LENIENT:
@@ -275,19 +258,18 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean allowNiladicParentheses() {
+  public boolean allowNiladicParentheses() {
     switch (this) {
     case BABEL:
     case LENIENT:
     case MYSQL_5:
-    case BIG_QUERY:
       return true;
     default:
       return false;
     }
   }
 
-  @Override public boolean allowExplicitRowValueConstructor() {
+  public boolean allowExplicitRowValueConstructor() {
     switch (this) {
     case DEFAULT:
     case LENIENT:
@@ -298,7 +280,7 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean allowExtend() {
+  public boolean allowExtend() {
     switch (this) {
     case BABEL:
     case LENIENT:
@@ -308,7 +290,7 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean isLimitStartCountAllowed() {
+  public boolean isLimitStartCountAllowed() {
     switch (this) {
     case BABEL:
     case LENIENT:
@@ -319,17 +301,7 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean isOffsetLimitAllowed() {
-    switch (this) {
-    case BABEL:
-    case LENIENT:
-      return true;
-    default:
-      return false;
-    }
-  }
-
-  @Override public boolean allowGeometry() {
+  public boolean allowGeometry() {
     switch (this) {
     case BABEL:
     case LENIENT:
@@ -342,7 +314,7 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean shouldConvertRaggedUnionTypesToVarying() {
+  public boolean shouldConvertRaggedUnionTypesToVarying() {
     switch (this) {
     case PRAGMATIC_99:
     case PRAGMATIC_2003:
@@ -358,7 +330,7 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean allowExtendedTrim() {
+  public boolean allowExtendedTrim() {
     switch (this) {
     case BABEL:
     case LENIENT:
@@ -394,26 +366,21 @@ public enum SqlConformanceEnum implements SqlConformance {
     }
   }
 
-  @Override public boolean allowAliasUnnestItems() {
+  @Override public boolean allowSelectTableFunction() {
     switch (this) {
-    case PRESTO:
+    case HIVE:
       return true;
     default:
       return false;
     }
   }
 
-  @Override public SqlLibrary semantics() {
+  @Override public boolean allowAliasUnnestItems() {
     switch (this) {
-    case BIG_QUERY:
-      return SqlLibrary.BIG_QUERY;
-    case MYSQL_5:
-      return SqlLibrary.MYSQL;
-    case ORACLE_12:
-    case ORACLE_10:
-      return SqlLibrary.ORACLE;
+    case PRESTO:
+      return true;
     default:
-      return SqlLibrary.STANDARD;
+      return false;
     }
   }
 

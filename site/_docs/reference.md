@@ -130,28 +130,28 @@ statementList:
       statement [ ';' statement ]* [ ';' ]
 
 setStatement:
-      [ ALTER { SYSTEM | SESSION } ] SET identifier '=' expression
+      [ ALTER ( SYSTEM | SESSION ) ] SET identifier '=' expression
 
 resetStatement:
-      [ ALTER { SYSTEM | SESSION } ] RESET identifier
-  |   [ ALTER { SYSTEM | SESSION } ] RESET ALL
+      [ ALTER ( SYSTEM | SESSION ) ] RESET identifier
+  |   [ ALTER ( SYSTEM | SESSION ) ] RESET ALL
 
 explain:
       EXPLAIN PLAN
       [ WITH TYPE | WITH IMPLEMENTATION | WITHOUT IMPLEMENTATION ]
       [ EXCLUDING ATTRIBUTES | INCLUDING [ ALL ] ATTRIBUTES ]
-      [ AS JSON | AS XML | AS DOT ]
-      FOR { query | insert | update | merge | delete }
+      [ AS JSON | AS XML ]
+      FOR ( query | insert | update | merge | delete )
 
 describe:
       DESCRIBE DATABASE databaseName
-  |   DESCRIBE CATALOG [ databaseName . ] catalogName
-  |   DESCRIBE SCHEMA [ [ databaseName . ] catalogName ] . schemaName
-  |   DESCRIBE [ TABLE ] [ [ [ databaseName . ] catalogName . ] schemaName . ] tableName [ columnName ]
-  |   DESCRIBE [ STATEMENT ] { query | insert | update | merge | delete }
+   |  DESCRIBE CATALOG [ databaseName . ] catalogName
+   |  DESCRIBE SCHEMA [ [ databaseName . ] catalogName ] . schemaName
+   |  DESCRIBE [ TABLE ] [ [ [ databaseName . ] catalogName . ] schemaName . ] tableName [ columnName ]
+   |  DESCRIBE [ STATEMENT ] ( query | insert | update | merge | delete )
 
 insert:
-      { INSERT | UPSERT } INTO tablePrimary
+      ( INSERT | UPSERT ) INTO tablePrimary
       [ '(' column [, column ]* ')' ]
       query
 
@@ -186,7 +186,7 @@ query:
       |   query INTERSECT [ ALL | DISTINCT ] query
       }
       [ ORDER BY orderItem [, orderItem ]* ]
-      [ LIMIT { [ start, ] count | ALL } ]
+      [ LIMIT [ start, ] { count | ALL } ]
       [ OFFSET start { ROW | ROWS } ]
       [ FETCH { FIRST | NEXT } [ count ] { ROW | ROWS } ONLY ]
 
@@ -199,11 +199,11 @@ orderItem:
       expression [ ASC | DESC ] [ NULLS FIRST | NULLS LAST ]
 
 select:
-      SELECT [ hintComment ] [ STREAM ] [ ALL | DISTINCT ]
+      SELECT [ '/*+' hint [, hint]* '*/' ] [ STREAM ] [ ALL | DISTINCT ]
           { * | projectItem [, projectItem ]* }
       FROM tableExpression
       [ WHERE booleanExpression ]
-      [ GROUP BY [ ALL | DISTINCT ] { groupItem [, groupItem ]* } ]
+      [ GROUP BY { groupItem [, groupItem ]* } ]
       [ HAVING booleanExpression ]
       [ WINDOW windowName AS windowSpec [, windowName AS windowSpec ]* ]
 
@@ -213,11 +213,12 @@ selectWithoutFrom:
 
 projectItem:
       expression [ [ AS ] columnAlias ]
+  |   expression AS '(' columnAlias [, columnAlias ]* ')'
   |   tableAlias . *
 
 tableExpression:
       tableReference [, tableReference ]*
-  |   tableExpression [ NATURAL ] [ { LEFT | RIGHT | FULL } [ OUTER ] ] JOIN tableExpression [ joinCondition ]
+  |   tableExpression [ NATURAL ] [ ( LEFT | RIGHT | FULL ) [ OUTER ] ] JOIN tableExpression [ joinCondition ]
   |   tableExpression CROSS JOIN tableExpression
   |   tableExpression [ CROSS | OUTER ] APPLY tableExpression
 
@@ -228,15 +229,13 @@ joinCondition:
 tableReference:
       tablePrimary
       [ FOR SYSTEM_TIME AS OF expression ]
-      [ pivot ]
-      [ unpivot ]
       [ matchRecognize ]
       [ [ AS ] alias [ '(' columnAlias [, columnAlias ]* ')' ] ]
 
 tablePrimary:
       [ [ catalogName . ] schemaName . ] tableName
       '(' TABLE [ [ catalogName . ] schemaName . ] tableName ')'
-  |   tablePrimary [ hintComment ] [ EXTEND ] '(' columnDecl [, columnDecl ]* ')'
+  |   tablePrimary [ '/*+' hint [, hint]* '*/' ] [ EXTEND ] '(' columnDecl [, columnDecl ]* ')'
   |   [ LATERAL ] '(' query ')'
   |   UNNEST '(' expression ')' [ WITH ORDINALITY ]
   |   [ LATERAL ] TABLE '(' [ SPECIFIC ] functionName '(' expression [, expression ]* ')' ')'
@@ -249,9 +248,9 @@ hint:
   |   hintName '(' hintOptions ')'
 
 hintOptions:
-      hintKVOption [, hintKVOption ]*
-  |   optionName [, optionName ]*
-  |   optionValue [, optionValue ]*
+      hintKVOption [, hintKVOption]*
+  |   optionName [, optionName]*
+  |   optionValue [, optionValue]*
 
 hintKVOption:
       optionName '=' stringLiteral
@@ -260,48 +259,6 @@ hintKVOption:
 optionValue:
       stringLiteral
   |   numericLiteral
-
-columnOrList:
-      column
-  |   '(' column [, column ]* ')'
-
-exprOrList:
-      expr
-  |   '(' expr [, expr ]* ')'
-
-pivot:
-      PIVOT '('
-      pivotAgg [, pivotAgg ]*
-      FOR pivotList
-      IN '(' pivotExpr [, pivotExpr ]* ')'
-      ')'
-
-pivotAgg:
-      agg '(' [ ALL | DISTINCT ] value [, value ]* ')'
-      [ [ AS ] alias ]
-
-pivotList:
-      columnOrList
-
-pivotExpr:
-      exprOrList [ [ AS ] alias ]
-
-unpivot:
-      UNPIVOT [ INCLUDING NULLS | EXCLUDING NULLS ] '('
-      unpivotMeasureList
-      FOR unpivotAxisList
-      IN '(' unpivotValue [, unpivotValue ]* ')'
-      ')'
-
-unpivotMeasureList:
-      columnOrList
-
-unpivotAxisList:
-      columnOrList
-
-unpivotValue:
-      column [ AS literal ]
-  |   '(' column [, column ]* ')' [ AS '(' literal [, literal ]* ')' ]
 
 values:
       VALUES expression [, expression ]*
@@ -349,6 +306,9 @@ the <em>n</em>th item in the SELECT clause.
 In *query*, *count* and *start* may each be either an unsigned integer literal
 or a dynamic parameter whose value is an integer.
 
+In *projectItem*, *expression* followed by a *As* column alias list is only allowed in
+certain [conformance levels] ({{ site.apiRoot }}/org/apache/calcite/sql/validate/SqlConformance.html#allowSelectTableFunction--);
+in those same conformance levels, table function can be used in the select list.
 An aggregate query is a query that contains a GROUP BY or a HAVING
 clause, or aggregate functions in the SELECT clause. In the SELECT,
 HAVING and ORDER BY clauses of an aggregate query, all expressions
@@ -362,18 +322,13 @@ A scalar sub-query is a sub-query used as an expression.
 If the sub-query returns no rows, the value is NULL; if it
 returns more than one row, it is an error.
 
-IN, EXISTS, UNIQUE and scalar sub-queries can occur
+IN, EXISTS and scalar sub-queries can occur
 in any place where an expression can occur (such as the SELECT clause,
 WHERE clause, ON clause of a JOIN, or as an argument to an aggregate
 function).
 
-An IN, EXISTS, UNIQUE or scalar sub-query may be correlated; that is, it
+An IN, EXISTS or scalar sub-query may be correlated; that is, it
 may refer to tables in the FROM clause of an enclosing query.
-
-GROUP BY DISTINCT removes duplicate grouping sets (for example,
-"GROUP BY DISTINCT GROUPING SETS ((a), (a, b), (a))" is equivalent to
-"GROUP BY GROUPING SETS ((a), (a, b))");
-GROUP BY ALL is equivalent to GROUP BY.
 
 *selectWithoutFrom* is equivalent to VALUES,
 but is not standard SQL and is only allowed in certain
@@ -389,9 +344,6 @@ CROSS APPLY and OUTER APPLY are only allowed in certain
 "LIMIT start, count" is equivalent to "LIMIT count OFFSET start"
 but is only allowed in certain
 [conformance levels]({{ site.apiRoot }}/org/apache/calcite/sql/validate/SqlConformance.html#isLimitStartCountAllowed--).
-
-"OFFSET start" may occur before "LIMIT count" in certain
-[conformance levels]({{ site.apiRoot }}/org/apache/calcite/sql/validate/SqlConformance.html#isOffsetLimitAllowed--).
 
 ## Keywords
 
@@ -418,8 +370,6 @@ ALWAYS,
 APPLY,
 **ARE**,
 **ARRAY**,
-ARRAY_AGG,
-ARRAY_CONCAT_AGG,
 **ARRAY_MAX_CARDINALITY**,
 **AS**,
 ASC,
@@ -564,7 +514,6 @@ DIAGNOSTICS,
 DISPATCH,
 **DISTINCT**,
 DOMAIN,
-DOT,
 **DOUBLE**,
 DOW,
 DOY,
@@ -632,7 +581,6 @@ GRANTED,
 **GROUP**,
 **GROUPING**,
 **GROUPS**,
-GROUP_CONCAT,
 **HAVING**,
 HIERARCHY,
 **HOLD**,
@@ -641,13 +589,11 @@ HOP,
 HOURS,
 **IDENTITY**,
 IGNORE,
-ILIKE,
 IMMEDIATE,
 IMMEDIATELY,
 IMPLEMENTATION,
 **IMPORT**,
 **IN**,
-INCLUDE,
 INCLUDING,
 INCREMENT,
 **INDICATOR**,
@@ -811,7 +757,6 @@ PATH,
 **PERCENT_RANK**,
 **PERIOD**,
 **PERMUTE**,
-PIVOT,
 PLACING,
 PLAN,
 PLI,
@@ -867,7 +812,6 @@ RETURNING,
 **RETURNS**,
 **REVOKE**,
 **RIGHT**,
-RLIKE,
 ROLE,
 **ROLLBACK**,
 **ROLLUP**,
@@ -899,7 +843,6 @@ SECURITY,
 **SELECT**,
 SELF,
 **SENSITIVE**,
-SEPARATOR,
 SEQUENCE,
 SERIALIZABLE,
 SERVER,
@@ -981,7 +924,6 @@ STATEMENT,
 **STDDEV_POP**,
 **STDDEV_SAMP**,
 **STREAM**,
-STRING_AGG,
 STRUCTURE,
 STYLE,
 SUBCLASS_ORIGIN,
@@ -1042,7 +984,6 @@ UNDER,
 **UNKNOWN**,
 UNNAMED,
 **UNNEST**,
-UNPIVOT,
 **UPDATE**,
 **UPPER**,
 **UPSERT**,
@@ -1158,8 +1099,7 @@ Note:
 
 | Type     | Description                | Example literals
 |:-------- |:---------------------------|:---------------
-| ANY      | The union of all types |
-| UNKNOWN  | A value of an unknown type; used as a placeholder |
+| ANY      | A value of an unknown type |
 | ROW      | Row with 1 or more columns | Example: Row(f0 int null, f1 varchar)
 | MAP      | Collection of keys mapped to values |
 | MULTISET | Unordered collection that may contain duplicates | Example: int multiset
@@ -1207,18 +1147,18 @@ The operator precedence and associativity, highest to lowest.
 |:------------------------------------------------- |:-------------
 | .                                                 | left
 | ::                                                | left
-| [ ] (collection element)                          | left
+| [ ] (array element)                               | left
 | + - (unary plus, minus)                           | right
 | * / % &#124;&#124;                                | left
 | + -                                               | left
 | BETWEEN, IN, LIKE, SIMILAR, OVERLAPS, CONTAINS etc. | -
-| < > = <= >= <> != <=>                             | left
+| < > = <= >= <> !=                                 | left
 | IS NULL, IS FALSE, IS NOT TRUE etc.               | -
 | NOT                                               | right
 | AND                                               | left
 | OR                                                | left
 
-Note that `::`,`<=>` is dialect-specific, but is shown in this table for
+Note that `::` is dialect-specific, but is shown in this table for
 completeness.
 
 ### Comparison operators
@@ -1232,7 +1172,6 @@ completeness.
 | value1 >= value2                                  | Greater than or equal
 | value1 < value2                                   | Less than
 | value1 <= value2                                  | Less than or equal
-| value1 <=> value2                                 | Whether two values are equal, treating null values as the same
 | value IS NULL                                     | Whether *value* is null
 | value IS NOT NULL                                 | Whether *value* is not null
 | value1 IS DISTINCT FROM value2                    | Whether two values are not equal, treating null values as the same
@@ -1248,10 +1187,9 @@ completeness.
 | value IN (sub-query)                              | Whether *value* is equal to a row returned by *sub-query*
 | value NOT IN (sub-query)                          | Whether *value* is not equal to every row returned by *sub-query*
 | value comparison SOME (sub-query)                 | Whether *value* *comparison* at least one row returned by *sub-query*
-| value comparison ANY (sub-query)                  | Synonym for `SOME`
+| value comparison ANY (sub-query)                  | Synonym for SOME
 | value comparison ALL (sub-query)                  | Whether *value* *comparison* every row returned by *sub-query*
 | EXISTS (sub-query)                                | Whether *sub-query* returns at least one row
-| UNIQUE (sub-query)                                | Whether the rows returned by *sub-query* are unique (ignoring null values)
 
 {% highlight sql %}
 comp:
@@ -1261,7 +1199,6 @@ comp:
   |   >=
   |   <
   |   <=
-  |   <=>
 {% endhighlight %}
 
 ### Logical operators
@@ -1342,7 +1279,6 @@ Not implemented:
 | Operator syntax | Description
 |:--------------- |:-----------
 | binary &#124;&#124; binary | Concatenates two binary strings
-| OCTET_LENGTH(binary) | Returns the number of bytes in *binary*
 | POSITION(binary1 IN binary2) | Returns the position of the first occurrence of *binary1* in *binary2*
 | POSITION(binary1 IN binary2 FROM integer) | Returns the position of the first occurrence of *binary1* in *binary2* starting at a given point (not standard SQL)
 | OVERLAY(binary1 PLACING binary2 FROM integer [ FOR integer2 ]) | Replaces a substring of *binary1* with *binary2*
@@ -1590,10 +1526,8 @@ Implicit type coercion of following cases are ignored:
 |:--------------- |:-----------
 | ROW (value [, value ]*)  | Creates a row from a list of values.
 | (value [, value ]* )     | Creates a row from a list of values.
-| row '[' index ']'        | Returns the element at a particular location in a row (1-based index).
-| row '[' name ']'         | Returns the element of a row with a particular name.
 | map '[' key ']'     | Returns the element of a map with a particular key.
-| array '[' index ']' | Returns the element at a particular location in an array (1-based index).
+| array '[' index ']' | Returns the element at a particular location in an array.
 | ARRAY '[' value [, value ]* ']' | Creates an array from a list of values.
 | MAP '[' key, value [, key, value ]* ']' | Creates a map from a list of key-value pairs.
 
@@ -1808,11 +1742,10 @@ Syntax:
 
 {% highlight sql %}
 aggregateCall:
-      agg '(' [ ALL | DISTINCT ] value [, value ]* ')'
-      [ WITHIN DISTINCT '(' expression [, expression ]* ')' ]
-      [ WITHIN GROUP '(' ORDER BY orderItem [, orderItem ]* ')' ]
-      [ FILTER '(' WHERE condition ')' ]
-  |   agg '(' '*' ')' [ FILTER (WHERE condition) ]
+        agg( [ ALL | DISTINCT ] value [, value ]*)
+        [ WITHIN GROUP (ORDER BY orderItem [, orderItem ]*) ]
+        [ FILTER (WHERE condition) ]
+    |   agg(*) [ FILTER (WHERE condition) ]
 {% endhighlight %}
 
 where *agg* is one of the operators in the following table, or a user-defined
@@ -1824,9 +1757,6 @@ If `FILTER` is present, the aggregate function only considers rows for which
 If `DISTINCT` is present, duplicate argument values are eliminated before being
 passed to the aggregate function.
 
-If `WITHIN DISTINCT` is present, argument values are made distinct within
-each value of specified keys before being passed to the aggregate function.
-
 If `WITHIN GROUP` is present, the aggregate function sorts the input rows
 according to the `ORDER BY` clause inside `WITHIN GROUP` before aggregating
 values. `WITHIN GROUP` is only allowed for hypothetical set functions (`RANK`,
@@ -1836,34 +1766,33 @@ and `LISTAGG`).
 
 | Operator syntax                    | Description
 |:---------------------------------- |:-----------
-| ANY_VALUE( [ ALL &#124; DISTINCT ] value)     | Returns one of the values of *value* across all input values; this is NOT specified in the SQL standard
+| COLLECT( [ ALL &#124; DISTINCT ] value)       | Returns a multiset of the values
+| LISTAGG( [ ALL &#124; DISTINCT ] value [, separator]) | Returns values concatenated into a string, delimited by separator (default ',')
+| COUNT( [ ALL &#124; DISTINCT ] value [, value ]*) | Returns the number of input rows for which *value* is not null (wholly not null if *value* is composite)
+| COUNT(*)                           | Returns the number of input rows
+| FUSION(multiset)                   | Returns the multiset union of *multiset* across all input values
+| INTERSECTION(multiset)             | Returns the multiset intersection of *multiset* across all input values
 | APPROX_COUNT_DISTINCT(value [, value ]*)      | Returns the approximate number of distinct values of *value*; the database is allowed to use an approximation but is not required to
 | AVG( [ ALL &#124; DISTINCT ] numeric)         | Returns the average (arithmetic mean) of *numeric* across all input values
-| BIT_AND( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise AND of all non-null input values, or null if none; integer and binary types are supported
-| BIT_OR( [ ALL &#124; DISTINCT ] value)        | Returns the bitwise OR of all non-null input values, or null if none; integer and binary types are supported
-| BIT_XOR( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise XOR of all non-null input values, or null if none; integer and binary types are supported
-| COLLECT( [ ALL &#124; DISTINCT ] value)       | Returns a multiset of the values
-| COUNT(*)                                      | Returns the number of input rows
-| COUNT( [ ALL &#124; DISTINCT ] value [, value ]*) | Returns the number of input rows for which *value* is not null (wholly not null if *value* is composite)
-| COVAR_POP(numeric1, numeric2)                 | Returns the population covariance of the pair (*numeric1*, *numeric2*) across all input values
-| COVAR_SAMP(numeric1, numeric2)                | Returns the sample covariance of the pair (*numeric1*, *numeric2*) across all input values
-| EVERY(condition)                              | Returns TRUE if all of the values of *condition* are TRUE
-| FUSION(multiset)                              | Returns the multiset union of *multiset* across all input values
-| INTERSECTION(multiset)                        | Returns the multiset intersection of *multiset* across all input values
-| LISTAGG( [ ALL &#124; DISTINCT ] value [, separator]) | Returns values concatenated into a string, delimited by separator (default ',')
+| SUM( [ ALL &#124; DISTINCT ] numeric)         | Returns the sum of *numeric* across all input values
 | MAX( [ ALL &#124; DISTINCT ] value)           | Returns the maximum value of *value* across all input values
 | MIN( [ ALL &#124; DISTINCT ] value)           | Returns the minimum value of *value* across all input values
-| MODE(value)                                   | Returns the most frequent value of *value* across all input values
-| REGR_COUNT(numeric1, numeric2)                | Returns the number of rows where both dependent and independent expressions are not null
-| REGR_SXX(numeric1, numeric2)                  | Returns the sum of squares of the dependent expression in a linear regression model
-| REGR_SYY(numeric1, numeric2)                  | Returns the sum of squares of the independent expression in a linear regression model
-| SOME(condition)                               | Returns TRUE if one or more of the values of *condition* is TRUE
-| STDDEV( [ ALL &#124; DISTINCT ] numeric)      | Synonym for `STDDEV_SAMP`
+| ANY_VALUE( [ ALL &#124; DISTINCT ] value)     | Returns one of the values of *value* across all input values; this is NOT specified in the SQL standard
+| SOME(condition)                               | Returns true if any condition is true.
+| EVERY(condition)                              | Returns true if all conditions are true.
+| BIT_AND( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise AND of all non-null input values, or null if none
+| BIT_OR( [ ALL &#124; DISTINCT ] value)        | Returns the bitwise OR of all non-null input values, or null if none
+| BIT_XOR( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise XOR of all non-null input values, or null if none
 | STDDEV_POP( [ ALL &#124; DISTINCT ] numeric)  | Returns the population standard deviation of *numeric* across all input values
 | STDDEV_SAMP( [ ALL &#124; DISTINCT ] numeric) | Returns the sample standard deviation of *numeric* across all input values
-| SUM( [ ALL &#124; DISTINCT ] numeric)         | Returns the sum of *numeric* across all input values
+| STDDEV( [ ALL &#124; DISTINCT ] numeric)      | Synonym for `STDDEV_SAMP`
 | VAR_POP( [ ALL &#124; DISTINCT ] value)       | Returns the population variance (square of the population standard deviation) of *numeric* across all input values
 | VAR_SAMP( [ ALL &#124; DISTINCT ] numeric)    | Returns the sample variance (square of the sample standard deviation) of *numeric* across all input values
+| COVAR_POP(numeric1, numeric2)      | Returns the population covariance of the pair (*numeric1*, *numeric2*) across all input values
+| COVAR_SAMP(numeric1, numeric2)     | Returns the sample covariance of the pair (*numeric1*, *numeric2*) across all input values
+| REGR_COUNT(numeric1, numeric2)     | Returns the number of rows where both dependent and independent expressions are not null
+| REGR_SXX(numeric1, numeric2)       | Returns the sum of squares of the dependent expression in a linear regression model
+| REGR_SYY(numeric1, numeric2)       | Returns the sum of squares of the independent expression in a linear regression model
 
 Not implemented:
 
@@ -1874,35 +1803,20 @@ Not implemented:
 * REGR_SLOPE(numeric1, numeric2)
 * REGR_SXY(numeric1, numeric2)
 
-#### Ordered-Set Aggregate Functions
-
-The syntax is as for *aggregateCall*, except that `WITHIN GROUP` is
-required.
-
-In the following:
-
-* *fraction* is a numeric literal between 0 and 1, inclusive, and
-  represents a percentage
-
-| Operator syntax                    | Description
-|:---------------------------------- |:-----------
-| PERCENTILE_CONT(fraction) WITHIN GROUP (ORDER BY orderItem) | Returns a percentile based on a continuous distribution of the column values, interpolating between adjacent input items if needed
-| PERCENTILE_DISC(fraction) WITHIN GROUP (ORDER BY orderItem [, orderItem ]*) | Returns a percentile based on a discrete distribution of the column values returning the first input value whose position in the ordering equals or exceeds the specified fraction
-
 ### Window functions
 
 Syntax:
 
 {% highlight sql %}
 windowedAggregateCall:
-      agg '(' [ ALL | DISTINCT ] value [, value ]* ')'
-      [ RESPECT NULLS | IGNORE NULLS ]
-      [ WITHIN GROUP '(' ORDER BY orderItem [, orderItem ]* ')' ]
-      [ FILTER '(' WHERE condition ')' ]
-      OVER window
-  |   agg '(' '*' ')'
-      [ FILTER  '(' WHERE condition ')' ]
-      OVER window
+        agg( [ ALL | DISTINCT ] value [, value ]*)
+        [ RESPECT NULLS | IGNORE NULLS ]
+        [ WITHIN GROUP (ORDER BY orderItem [, orderItem ]*) ]
+        [ FILTER (WHERE condition) ]
+        OVER window
+    |   agg(*)
+        [ FILTER (WHERE condition) ]
+        OVER window
 {% endhighlight %}
 
 where *agg* is one of the operators in the following table, or a user-defined
@@ -1952,120 +1866,54 @@ Not implemented:
 | GROUPING_ID(expression [, expression ]*) | Synonym for `GROUPING`
 
 ### DESCRIPTOR
-
 | Operator syntax      | Description
 |:-------------------- |:-----------
 | DESCRIPTOR(name [, name ]*) | DESCRIPTOR appears as an argument in a function to indicate a list of names. The interpretation of names is left to the function.
 
 ### Table functions
-
 Table functions occur in the `FROM` clause.
 
 #### TUMBLE
-
-In streaming queries, TUMBLE assigns a window for each row of a relation based
-on a timestamp column. An assigned window is specified by its beginning and
-ending. All assigned windows have the same length, and that's why tumbling
-sometimes is named as "fixed windowing".
+In streaming queries, TUMBLE assigns a window for each row of a relation based on a timestamp column. An assigned window
+is specified by its beginning and ending. All assigned windows have the same length, and that's why tumbling sometimes
+is named as "fixed windowing".
 
 | Operator syntax      | Description
 |:-------------------- |:-----------
-| TUMBLE(data, DESCRIPTOR(timecol), size [, offset ]) | Indicates a tumbling window of *size* interval for *timecol*, optionally aligned at *offset*.
+| TUMBLE(table, DESCRIPTOR(datetime), interval [, offset ]) | Indicates a tumbling window of *interval* for *datetime*, optionally aligned at offset.
 
 Here is an example:
-
-{% highlight sql %}
-SELECT * FROM TABLE(
-  TUMBLE(
-    TABLE orders,
-    DESCRIPTOR(rowtime),
-    INTERVAL '1' MINUTE));
-
--- or with the named params
--- note: the DATA param must be the first
-SELECT * FROM TABLE(
-  TUMBLE(
-    DATA => TABLE orders,
-    TIMECOL => DESCRIPTOR(rowtime),
-    SIZE => INTERVAL '1' MINUTE));
-{% endhighlight %}
-
-applies a tumbling window with a one minute range to rows from the `orders`
-table. `rowtime` is the watermarked column of the `orders` table that informs
-whether data is complete.
+`SELECT * FROM TABLE(TUMBLE(TABLE orders, DESCRIPTOR(rowtime), INTERVAL '1' MINUTE))`,
+will apply tumbling with 1 minute window size on rows from table orders. rowtime is the
+watermarked column of table orders that tells data completeness.
 
 #### HOP
-
 In streaming queries, HOP assigns windows that cover rows within the interval of *size* and shifting every *slide* based
 on a timestamp column. Windows assigned could have overlapping so hopping sometime is named as "sliding windowing".
 
 
 | Operator syntax      | Description
 |:-------------------- |:-----------
-| HOP(data, DESCRIPTOR(timecol), slide, size [, offset ]) | Indicates a hopping window for *timecol*, covering rows within the interval of *size*, shifting every *slide* and optionally aligned at *offset*.
+| HOP(table, DESCRIPTOR(datetime), slide, size [, offset ]) | Indicates a hopping window for *datetime*, covering rows within the interval of *size*, shifting every *slide* and optionally aligned at offset.
 
 Here is an example:
-
-{% highlight sql %}
-SELECT * FROM TABLE(
-  HOP(
-    TABLE orders,
-    DESCRIPTOR(rowtime),
-    INTERVAL '2' MINUTE,
-    INTERVAL '5' MINUTE));
-
--- or with the named params
--- note: the DATA param must be the first
-SELECT * FROM TABLE(
-  HOP(
-    DATA => TABLE orders,
-    TIMECOL => DESCRIPTOR(rowtime),
-    SLIDE => INTERVAL '2' MINUTE,
-    SIZE => INTERVAL '5' MINUTE));
-{% endhighlight %}
-
-applies hopping with 5-minute interval size on rows from table `orders`
-and shifting every 2 minutes. `rowtime` is the watermarked column of table
-orders that tells data completeness.
+`SELECT * FROM TABLE(HOP(TABLE orders, DESCRIPTOR(rowtime), INTERVAL '2' MINUTE, INTERVAL '5' MINUTE))`,
+will apply hopping with 5-minute interval size on rows from table orders and shifting every 2 minutes. rowtime is the
+watermarked column of table orders that tells data completeness.
 
 #### SESSION
-
 In streaming queries, SESSION assigns windows that cover rows based on *datetime*. Within a session window, distances
 of rows are less than *interval*. Session window is applied per *key*.
 
 
 | Operator syntax      | Description
 |:-------------------- |:-----------
-| session(data, DESCRIPTOR(timecol), DESCRIPTOR(key), size) | Indicates a session window of *size* interval for *timecol*. Session window is applied per *key*.
+| session(table, DESCRIPTOR(datetime), DESCRIPTOR(key), interval) | Indicates a session window of *interval* for *datetime*. Session window is applied per *key*.
 
 Here is an example:
-
-{% highlight sql %}
-SELECT * FROM TABLE(
-  SESSION(
-    TABLE orders,
-    DESCRIPTOR(rowtime),
-    DESCRIPTOR(product),
-    INTERVAL '20' MINUTE));
-
--- or with the named params
--- note: the DATA param must be the first
-SELECT * FROM TABLE(
-  SESSION(
-    DATA => TABLE orders,
-    TIMECOL => DESCRIPTOR(rowtime),
-    KEY => DESCRIPTOR(product),
-    SIZE => INTERVAL '20' MINUTE));
-{% endhighlight %}
-
-applies a session with 20-minute inactive gap on rows from table `orders`.
-`rowtime` is the watermarked column of table orders that tells data
-completeness. Session is applied per product.
-
-**Note**: The `Tumble`, `Hop` and `Session` window table functions assign
-each row in the original table to a window. The output table has all
-the same columns as the original table plus two additional columns `window_start`
-and `window_end`, which represent the start and end of the window interval, respectively.
+`SELECT * FROM TABLE(SESSION(TABLE orders, DESCRIPTOR(rowtime), DESCRIPTOR(product), INTERVAL '20' MINUTE))`,
+will apply session with 20-minute inactive gap on rows from table orders. rowtime is the
+watermarked column of table orders that tells data completeness. Session is applied per product.
 
 ### Grouped window functions
 **warning**: grouped window functions are deprecated.
@@ -2126,7 +1974,7 @@ implements the OpenGIS Simple Features Implementation Specification for SQL,
 
 | C | Operator syntax      | Description
 |:- |:-------------------- |:-----------
-| p | ST_AsText(geom) | Synonym for `ST_AsWKT`
+| p | ST_AsText(geom) | Alias for `ST_AsWKT`
 | o | ST_AsWKT(geom) | Converts *geom* → WKT
 | o | ST_GeomFromText(wkt [, srid ]) | Returns a specified GEOMETRY value from WKT representation
 | o | ST_LineFromText(wkt [, srid ]) | Converts WKT → LINESTRING
@@ -2162,11 +2010,10 @@ Not implemented:
 
 | C | Operator syntax      | Description
 |:- |:-------------------- |:-----------
-| p | ST_MakeEnvelope(xMin, yMin, xMax, yMax  [, srid ]) | Creates a rectangular POLYGON
 | h | ST_MakeGrid(geom, deltaX, deltaY) | Calculates a regular grid of POLYGONs based on *geom*
 | h | ST_MakeGridPoints(geom, deltaX, deltaY) | Calculates a regular grid of points based on *geom*
 | o | ST_MakeLine(point1 [, point ]*) | Creates a line-string from the given POINTs (or MULTIPOINTs)
-| p | ST_MakePoint(x, y [, z ]) | Synonym for `ST_Point`
+| p | ST_MakePoint(x, y [, z ]) | Alias for `ST_Point`
 | o | ST_Point(x, y [, z ]) | Constructs a point from two or three coordinates
 
 Not implemented:
@@ -2175,6 +2022,7 @@ Not implemented:
 * ST_Expand(geom, distance) Expands *geom*'s envelope
 * ST_Expand(geom, deltaX, deltaY) Expands *geom*'s envelope
 * ST_MakeEllipse(point, width, height) Constructs an ellipse
+* ST_MakeEnvelope(xMin, yMin, xMax, yMax  [, srid ]) Creates a rectangular POLYGON
 * ST_MakePolygon(lineString [, hole ]*) Creates a POLYGON from *lineString* with the given holes (which are required to be closed LINESTRINGs)
 * ST_MinimumDiameter(geom) Returns the minimum diameter of *geom*
 * ST_MinimumRectangle(geom) Returns the minimum rectangle enclosing *geom*
@@ -2224,7 +2072,7 @@ Not implemented:
 * ST_IsValidReason(geom [, selfTouchValid ]) Returns text stating whether *geom* is valid, and if not valid, a reason why
 * ST_NPoints(geom) Returns the number of points in *geom*
 * ST_NumGeometries(geom) Returns the number of geometries in *geom* (1 if it is not a GEOMETRYCOLLECTION)
-* ST_NumInteriorRing(geom) Synonym for `ST_NumInteriorRings`
+* ST_NumInteriorRing(geom) Alias for `ST_NumInteriorRings`
 * ST_NumInteriorRings(geom) Returns the number of interior rings of *geom*
 * ST_NumPoints(lineString) Returns the number of points in *lineString*
 * ST_PointN(geom, n) Returns the *n*th point of a *lineString*
@@ -2407,7 +2255,7 @@ Not implemented:
 Not implemented:
 
 * ST_Accum(geom) Accumulates *geom* into a GEOMETRYCOLLECTION (or MULTIPOINT, MULTILINESTRING or MULTIPOLYGON if possible)
-* ST_Collect(geom) Synonym for `ST_Accum`
+* ST_Collect(geom) Alias for `ST_Accum`
 * ST_Union(geom) Computes the union of geometries
 
 ### JSON Functions
@@ -2421,7 +2269,7 @@ In the following:
 
 | Operator syntax        | Description
 |:---------------------- |:-----------
-| JSON_EXISTS(jsonValue, path [ { TRUE &#124; FALSE &#124; UNKNOWN &#124; ERROR } ON ERROR ] ) | Whether a *jsonValue* satisfies a search criterion described using JSON path expression *path*
+| JSON_EXISTS(jsonValue, path [ { TRUE &#124; FALSE &#124; UNKNOWN &#124; ERROR ) ON ERROR } ) | Whether a *jsonValue* satisfies a search criterion described using JSON path expression *path*
 | JSON_VALUE(jsonValue, path [ RETURNING type ] [ { ERROR &#124; NULL &#124; DEFAULT expr } ON EMPTY ] [ { ERROR &#124; NULL &#124; DEFAULT expr } ON ERROR ] ) | Extract an SQL scalar from a *jsonValue* using JSON path expression *path*
 | JSON_QUERY(jsonValue, path [ { WITHOUT [ ARRAY ] &#124; WITH [ CONDITIONAL &#124; UNCONDITIONAL ] [ ARRAY ] } WRAPPER ] [ { ERROR &#124; NULL &#124; EMPTY ARRAY &#124; EMPTY OBJECT } ON EMPTY ] [ { ERROR &#124; NULL &#124; EMPTY ARRAY &#124; EMPTY OBJECT } ON ERROR ] ) | Extract a JSON object or JSON array from *jsonValue* using the *path* JSON path expression
 
@@ -2436,9 +2284,9 @@ Note:
 
 Example Data:
 
-{% highlight json %}
+```JSON
 {"a": "[1,2]", "b": [1,2], "c": "hi"}
-{% endhighlight json %}
+```
 
 Comparison:
 
@@ -2457,23 +2305,10 @@ Not implemented:
 
 | Operator syntax        | Description
 |:---------------------- |:-----------
-| JSON_OBJECT( jsonKeyVal [, jsonKeyVal ]* [ nullBehavior ] ) | Construct JSON object using a series of key-value pairs
-| JSON_OBJECTAGG( jsonKeyVal [ nullBehavior ] ) | Aggregate function to construct a JSON object using a key-value pair
-| JSON_ARRAY( [ jsonVal [, jsonVal ]* ] [ nullBehavior ] ) | Construct a JSON array using a series of values
-| JSON_ARRAYAGG( jsonVal [ ORDER BY orderItem [, orderItem ]* ] [ nullBehavior ] ) | Aggregate function to construct a JSON array using a value
-
-{% highlight sql %}
-jsonKeyVal:
-      [ KEY ] name VALUE value [ FORMAT JSON ]
-  |   name : value [ FORMAT JSON ]
-
-jsonVal:
-      value [ FORMAT JSON ]
-
-nullBehavior:
-      NULL ON NULL
-  |   ABSENT ON NULL
-{% endhighlight %}
+| JSON_OBJECT( { [ KEY ] name VALUE value [ FORMAT JSON ] &#124; name : value [ FORMAT JSON ] } * [ { NULL &#124; ABSENT } ON NULL ] ) | Construct JSON object using a series of key (*name*) value (*value*) pairs
+| JSON_OBJECTAGG( { [ KEY ] name VALUE value [ FORMAT JSON ] &#124; name : value [ FORMAT JSON ] } [ { NULL &#124; ABSENT } ON NULL ] ) | Aggregate function to construct a JSON object using a key (*name*) value (*value*) pair
+| JSON_ARRAY( { value [ FORMAT JSON ] } * [ { NULL &#124; ABSENT } ON NULL ] ) | Construct a JSON array using a series of values (*value*)
+| JSON_ARRAYAGG( value [ FORMAT JSON ] [ ORDER BY orderItem [, orderItem ]* ] [ { NULL &#124; ABSENT } ON NULL ] ) | Aggregate function to construct a JSON array using a value (*value*)
 
 Note:
 
@@ -2510,13 +2345,11 @@ To enable an operator table, set the
 [fun]({{ site.baseurl }}/docs/adapter.html#jdbc-connect-string-parameters)
 connect string parameter.
 
-The 'C' (compatibility) column contains value:
-* 'b' for Google BigQuery ('fun=bigquery' in the connect string),
-* 'h' for Apache Hive ('fun=hive' in the connect string),
-* 'm' for MySQL ('fun=mysql' in the connect string),
-* 'o' for Oracle ('fun=oracle' in the connect string),
-* 'p' for PostgreSQL ('fun=postgresql' in the connect string),
-* 's' for Apache Spark ('fun=spark' in the connect string).
+The 'C' (compatibility) column contains value
+'b' for BigQuery ('fun=bigquery' in the connect string),
+'m' for MySQL ('fun=mysql' in the connect string),
+'o' for Oracle ('fun=oracle' in the connect string),
+'p' for PostgreSQL ('fun=postgresql' in the connect string).
 
 One operator name may correspond to multiple SQL dialects, but with different
 semantics.
@@ -2524,17 +2357,12 @@ semantics.
 | C | Operator syntax                                | Description
 |:- |:-----------------------------------------------|:-----------
 | p | expr :: type                                   | Casts *expr* to *type*
-| m | expr1 <=> expr2                                | Whether two values are equal, treating null values as the same, and it's similar to `IS NOT DISTINCT FROM`
-| b | ARRAY_CONCAT(array [, array ]*)                | Concatenates one or more arrays. If any input argument is `NULL` the function returns `NULL`
-| b | ARRAY_LENGTH(array)                            | Synonym for `CARDINALITY`
-| b | ARRAY_REVERSE(array)                           | Reverses elements of *array*
 | o | CHR(integer) | Returns the character having the binary equivalent to *integer* as a CHAR value
 | o | COSH(numeric)                                  | Returns the hyperbolic cosine of *numeric*
 | o | CONCAT(string, string)                         | Concatenates two strings
 | m p | CONCAT(string [, string ]*)                  | Concatenates two or more strings
 | m | COMPRESS(string)                               | Compresses a string using zlib compression and returns the result as a binary string.
 | p | CONVERT_TIMEZONE(tz1, tz2, datetime)           | Converts the timezone of *datetime* from *tz1* to *tz2*
-| b | CURRENT_DATETIME([timezone])                   | Returns the current time as a TIMESTAMP from *timezone*
 | m | DAYNAME(datetime)                              | Returns the name, in the connection's locale, of the weekday in *datetime*; for example, it returns '星期日' for both DATE '2020-02-10' and TIMESTAMP '2020-02-10 10:10:10'
 | b | DATE(string)                                   | Equivalent to `CAST(string AS DATE)`
 | b | DATE_FROM_UNIX_DATE(integer)                   | Returns the DATE that is *integer* days after 1970-01-01
@@ -2544,16 +2372,13 @@ semantics.
 | o | EXISTSNODE(xml, xpath, [, namespaces ])        | Determines whether traversal of a XML document using a specified xpath results in any nodes. Returns 0 if no nodes remain after applying the XPath traversal on the document fragment of the element or elements matched by the XPath expression. Returns 1 if any nodes remain. The optional namespace value that specifies a default mapping or namespace mapping for prefixes, which is used when evaluating the XPath expression.
 | m | EXTRACTVALUE(xml, xpathExpr))                  | Returns the text of the first text node which is a child of the element or elements matched by the XPath expression.
 | o | GREATEST(expr [, expr ]*)                      | Returns the greatest of the expressions
-| b h s | IF(condition, value1, value2)              | Returns *value1* if *condition* is TRUE, *value2* otherwise
-| p | string1 ILIKE string2 [ ESCAPE string3 ]       | Whether *string1* matches pattern *string2*, ignoring case (similar to `LIKE`)
-| p | string1 NOT ILIKE string2 [ ESCAPE string3 ]   | Whether *string1* does not match pattern *string2*, ignoring case (similar to `NOT LIKE`)
-| m | JSON_TYPE(jsonValue)                           | Returns a string value indicating the type of *jsonValue*
-| m | JSON_DEPTH(jsonValue)                          | Returns an integer value indicating the depth of *jsonValue*
+| m | JSON_TYPE(jsonValue)                           | Returns a string value indicating the type of a *jsonValue*
+| m | JSON_DEPTH(jsonValue)                          | Returns an integer value indicating the depth of a *jsonValue*
 | m | JSON_PRETTY(jsonValue)                         | Returns a pretty-printing of *jsonValue*
 | m | JSON_LENGTH(jsonValue [, path ])               | Returns a integer indicating the length of *jsonValue*
 | m | JSON_KEYS(jsonValue [, path ])                 | Returns a string indicating the keys of a JSON *jsonValue*
 | m | JSON_REMOVE(jsonValue, path[, path])           | Removes data from *jsonValue* using a series of *path* expressions and returns the result
-| m | JSON_STORAGE_SIZE(jsonValue)                   | Returns the number of bytes used to store the binary representation of *jsonValue*
+| m | JSON_STORAGE_SIZE(jsonValue)                   | Returns the number of bytes used to store the binary representation of a *jsonValue*
 | o | LEAST(expr [, expr ]* )                        | Returns the least of the expressions
 | m p | LEFT(string, length)                         | Returns the leftmost *length* characters from the *string*
 | m | TO_BASE64(string)                              | Converts the *string* to base-64 encoded form and returns a encoded string
@@ -2566,14 +2391,12 @@ semantics.
 | m p | REPEAT(string, integer)                      | Returns a string consisting of *string* repeated of *integer* times; returns an empty string if *integer* is less than 1
 | m | REVERSE(string)                                | Returns *string* with the order of the characters reversed
 | m p | RIGHT(string, length)                        | Returns the rightmost *length* characters from the *string*
-| h s | string1 RLIKE string2                        | Whether *string1* matches regex pattern *string2* (similar to `LIKE`, but uses Java regex)
-| h s | string1 NOT RLIKE string2                    | Whether *string1* does not match regex pattern *string2* (similar to `NOT LIKE`, but uses Java regex)
 | o | RTRIM(string)                                  | Returns *string* with all blanks removed from the end
 | m p | SHA1(string)                                 | Calculates a SHA-1 hash value of *string* and returns it as a hex string
 | o | SINH(numeric)                                  | Returns the hyperbolic sine of *numeric*
 | m o p | SOUNDEX(string)                            | Returns the phonetic representation of *string*; throws if *string* is encoded with multi-byte encoding such as UTF-8
 | m | SPACE(integer)                                 | Returns a string of *integer* spaces; returns an empty string if *integer* is less than 1
-| b m o p | SUBSTR(string, position [, substringLength ]) | Returns a portion of *string*, beginning at character *position*, *substringLength* characters long. SUBSTR calculates lengths using characters as defined by the input character set
+| o | SUBSTR(string, position [, substringLength ]) | Returns a portion of *string*, beginning at character *position*, *substringLength* characters long. SUBSTR calculates lengths using characters as defined by the input character set
 | m | STRCMP(string, string)                         | Returns 0 if both of the strings are same and returns -1 when the first argument is smaller than the second and 1 when the second one is smaller than the first one
 | o | TANH(numeric)                                  | Returns the hyperbolic tangent of *numeric*
 | b | TIMESTAMP_MICROS(integer)                      | Returns the TIMESTAMP that is *integer* microseconds after 1970-01-01 00:00:00
@@ -2586,7 +2409,7 @@ semantics.
 | b | UNIX_MILLIS(timestamp)                         | Returns the number of milliseconds since 1970-01-01 00:00:00
 | b | UNIX_SECONDS(timestamp)                        | Returns the number of seconds since 1970-01-01 00:00:00
 | b | UNIX_DATE(date)                                | Returns the number of days since 1970-01-01
-| o | XMLTRANSFORM(xml, xslt)                        | Applies XSLT transform *xslt* to XML string *xml* and returns the result
+| o | XMLTRANSFORM(xml, xslt)                        | Returns a string after applying xslt to supplied XML
 
 Note:
 
@@ -2611,84 +2434,70 @@ Note:
   * A scalar value has length 1;
   * The length of array or object is the number of elements is contains.
 
-Dialect-specific aggregate functions.
-
-| C | Operator syntax                                | Description
-|:- |:-----------------------------------------------|:-----------
-| b p | ARRAY_AGG( [ ALL &#124; DISTINCT ] value [ RESPECT NULLS &#124; IGNORE NULLS ] [ ORDER BY orderItem [, orderItem ]* ] ) | Gathers values into arrays
-| b p | ARRAY_CONCAT_AGG( [ ALL &#124; DISTINCT ] value [ ORDER BY orderItem [, orderItem ]* ] ) | Concatenates arrays into arrays
-| p | BOOL_AND(condition)                            | Synonym for `EVERY`
-| p | BOOL_OR(condition)                             | Synonym for `SOME`
-| b | COUNTIF(condition)                             | Returns the number of rows for which *condition* is TRUE; equivalent to `COUNT(*) FILTER (WHERE condition)`
-| m | GROUP_CONCAT( [ ALL &#124; DISTINCT ] value [, value ]* [ ORDER BY orderItem [, orderItem ]* ] [ SEPARATOR separator ] ) | MySQL-specific variant of `LISTAGG`
-| b | LOGICAL_AND(condition)                         | Synonym for `EVERY`
-| b | LOGICAL_OR(condition)                          | Synonym for `SOME`
-| b p | STRING_AGG( [ ALL &#124; DISTINCT ] value [, separator] [ ORDER BY orderItem [, orderItem ]* ] ) | Synonym for `LISTAGG`
-
 Usage Examples:
 
 ##### JSON_TYPE example
 
 SQL
 
-{% highlight sql %}
+```SQL
 SELECT JSON_TYPE(v) AS c1,
   JSON_TYPE(JSON_VALUE(v, 'lax $.b' ERROR ON ERROR)) AS c2,
   JSON_TYPE(JSON_VALUE(v, 'strict $.a[0]' ERROR ON ERROR)) AS c3,
   JSON_TYPE(JSON_VALUE(v, 'strict $.a[1]' ERROR ON ERROR)) AS c4
 FROM (VALUES ('{"a": [10, true],"b": "[10, true]"}')) AS t(v)
 LIMIT 10;
-{% endhighlight %}
+```
 
 Result
 
 | c1     | c2    | c3      | c4      |
-|:------:|:-----:|:-------:|:-------:|
+| ------ | ----- | ------- | ------- |
 | OBJECT | ARRAY | INTEGER | BOOLEAN |
 
 ##### JSON_DEPTH example
 
 SQL
 
-{% highlight sql %}
+```SQL
 SELECT JSON_DEPTH(v) AS c1,
   JSON_DEPTH(JSON_VALUE(v, 'lax $.b' ERROR ON ERROR)) AS c2,
   JSON_DEPTH(JSON_VALUE(v, 'strict $.a[0]' ERROR ON ERROR)) AS c3,
   JSON_DEPTH(JSON_VALUE(v, 'strict $.a[1]' ERROR ON ERROR)) AS c4
 FROM (VALUES ('{"a": [10, true],"b": "[10, true]"}')) AS t(v)
 LIMIT 10;
-{% endhighlight %}
+```
 
 Result
 
 | c1     | c2    | c3      | c4      |
-|:------:|:-----:|:-------:|:-------:|
+| ------ | ----- | ------- | ------- |
 | 3      | 2     | 1       | 1       |
 
 ##### JSON_LENGTH example
 
 SQL
 
-{% highlight sql %}
+```SQL
 SELECT JSON_LENGTH(v) AS c1,
   JSON_LENGTH(v, 'lax $.a') AS c2,
   JSON_LENGTH(v, 'strict $.a[0]') AS c3,
   JSON_LENGTH(v, 'strict $.a[1]') AS c4
 FROM (VALUES ('{"a": [10, true]}')) AS t(v)
 LIMIT 10;
-{% endhighlight %}
+```
 
 Result
 
 | c1     | c2    | c3      | c4      |
-|:------:|:-----:|:-------:|:-------:|
+| ------ | ----- | ------- | ------- |
 | 1      | 2     | 1       | 1       |
 
 ##### JSON_KEYS example
 
 SQL
 
-{% highlight sql %}
+ ```SQL
 SELECT JSON_KEYS(v) AS c1,
   JSON_KEYS(v, 'lax $.a') AS c2,
   JSON_KEYS(v, 'lax $.b') AS c2,
@@ -2696,28 +2505,28 @@ SELECT JSON_KEYS(v) AS c1,
   JSON_KEYS(v, 'strict $.a[1]') AS c4
 FROM (VALUES ('{"a": [10, true],"b": {"c": 30}}')) AS t(v)
 LIMIT 10;
-{% endhighlight %}
+```
 
  Result
 
 | c1         | c2   | c3    | c4   | c5   |
-|:----------:|:----:|:-----:|:----:|:----:|
+| ---------- | ---- | ----- | ---- | ---- |
 | ["a", "b"] | NULL | ["c"] | NULL | NULL |
 
 ##### JSON_REMOVE example
 
 SQL
 
-{% highlight sql %}
+ ```SQL
 SELECT JSON_REMOVE(v, '$[1]') AS c1
 FROM (VALUES ('["a", ["b", "c"], "d"]')) AS t(v)
 LIMIT 10;
-{% endhighlight %}
+```
 
  Result
 
 | c1         |
-|:----------:|
+| ---------- |
 | ["a", "d"] |
 
 
@@ -2725,19 +2534,19 @@ LIMIT 10;
 
 SQL
 
-{% highlight sql %}
+ ```SQL
 SELECT
 JSON_STORAGE_SIZE('[100, \"sakila\", [1, 3, 5], 425.05]') AS c1,
 JSON_STORAGE_SIZE('{\"a\": 10, \"b\": \"a\", \"c\": \"[1, 3, 5, 7]\"}') AS c2,
 JSON_STORAGE_SIZE('{\"a\": 10, \"b\": \"xyz\", \"c\": \"[1, 3, 5, 7]\"}') AS c3,
 JSON_STORAGE_SIZE('[100, \"json\", [[10, 20, 30], 3, 5], 425.05]') AS c4
 limit 10;
-{% endhighlight %}
+```
 
  Result
 
 | c1 | c2 | c3 | c4 |
-|:--:|:---:|:---:|:--:|
+| -- | ---| ---| -- |
 | 29 | 35 | 37 | 36 |
 
 
@@ -2745,37 +2554,37 @@ limit 10;
 
 SQL
 
-{% highlight sql %}
+```SQL
 SELECT DECODE(f1, 1, 'aa', 2, 'bb', 3, 'cc', 4, 'dd', 'ee') as c1,
   DECODE(f2, 1, 'aa', 2, 'bb', 3, 'cc', 4, 'dd', 'ee') as c2,
   DECODE(f3, 1, 'aa', 2, 'bb', 3, 'cc', 4, 'dd', 'ee') as c3,
   DECODE(f4, 1, 'aa', 2, 'bb', 3, 'cc', 4, 'dd', 'ee') as c4,
   DECODE(f5, 1, 'aa', 2, 'bb', 3, 'cc', 4, 'dd', 'ee') as c5
 FROM (VALUES (1, 2, 3, 4, 5)) AS t(f1, f2, f3, f4, f5);
-{% endhighlight %}
 
+```
  Result
 
 | c1          | c2          | c3          | c4          | c5          |
-|:-----------:|:-----------:|:-----------:|:-----------:|:-----------:|
+| ----------- | ----------- | ----------- | ----------- | ----------- |
 | aa          | bb          | cc          | dd          | ee          |
 
 #### TRANSLATE example
 
 SQL
 
-{% highlight sql %}
+```SQL
 SELECT TRANSLATE('Aa*Bb*Cc''D*d', ' */''%', '_') as c1,
   TRANSLATE('Aa/Bb/Cc''D/d', ' */''%', '_') as c2,
   TRANSLATE('Aa Bb Cc''D d', ' */''%', '_') as c3,
   TRANSLATE('Aa%Bb%Cc''D%d', ' */''%', '_') as c4
 FROM (VALUES (true)) AS t(f0);
-{% endhighlight %}
+```
 
 Result
 
 | c1          | c2          | c3          | c4          |
-|:-----------:|:-----------:|:-----------:|:-----------:|
+| ----------- | ----------- | ----------- | ----------- |
 | Aa_Bb_CcD_d | Aa_Bb_CcD_d | Aa_Bb_CcD_d | Aa_Bb_CcD_d |
 
 Not implemented:
@@ -2871,7 +2680,7 @@ FUNCTION f(
   INTEGER c,
   INTEGER d DEFAULT NULL,
   INTEGER e DEFAULT NULL) RETURNS INTEGER
-{% endhighlight %}
+{% endhighlight sql %}
 
 All of the function's parameters have names, and parameters `b`, `d` and `e`
 have a default value of `NULL` and are therefore optional.
@@ -2921,41 +2730,37 @@ It would be very flexible to profile the resource with hints per query (not the 
 
 #### Syntax
 
-Calcite supports hints in two locations:
+Calcite supports basically two kinds of hints:
 
 * Query Hint: right after the `SELECT` keyword;
 * Table Hint: right after the referenced table name.
 
-For example:
 {% highlight sql %}
-SELECT /*+ hint1, hint2(a=1, b=2) */
-...
-FROM
-  tableName /*+ hint3(5, 'x') */
-JOIN
-  tableName /*+ hint4(c=id), hint5 */
-...
-{% endhighlight %}
+query :
+      SELECT /*+ hints */
+      ...
+      from
+          tableName /*+ hints */
+          JOIN
+          tableName /*+ hints */
+      ...
 
-The syntax is as follows:
+hints :
+      hintItem[, hintItem ]*
 
-{% highlight sql %}
-hintComment:
-      '/*+' hint [, hint ]* '*/'
-
-hint:
+hintItem :
       hintName
-  |   hintName '(' optionKey '=' optionVal [, optionKey '=' optionVal ]* ')'
-  |   hintName '(' hintOption [, hintOption ]* ')'
+  |   hintName(optionKey=optionVal[, optionKey=optionVal ]*)
+  |   hintName(hintOption [, hintOption ]*)
 
-optionKey:
+optionKey :
       simpleIdentifier
   |   stringLiteral
 
-optionVal:
+optionVal :
       stringLiteral
 
-hintOption:
+hintOption :
       simpleIdentifier
    |  numericLiteral
    |  stringLiteral
@@ -2985,19 +2790,18 @@ matchRecognize:
       [ ORDER BY orderItem [, orderItem ]* ]
       [ MEASURES measureColumn [, measureColumn ]* ]
       [ ONE ROW PER MATCH | ALL ROWS PER MATCH ]
-      [ AFTER MATCH skip ]
+      [ AFTER MATCH
+            ( SKIP TO NEXT ROW
+            | SKIP PAST LAST ROW
+            | SKIP TO FIRST variable
+            | SKIP TO LAST variable
+            | SKIP TO variable )
+      ]
       PATTERN '(' pattern ')'
       [ WITHIN intervalLiteral ]
       [ SUBSET subsetItem [, subsetItem ]* ]
       DEFINE variable AS condition [, variable AS condition ]*
       ')'
-
-skip:
-      SKIP TO NEXT ROW
-  |   SKIP PAST LAST ROW
-  |   SKIP TO FIRST variable
-  |   SKIP TO LAST variable
-  |   SKIP TO variable
 
 subsetItem:
       variable = '(' variable [, variable ]* ')'
@@ -3134,7 +2938,7 @@ createFunctionStatement:
       [ USING  usingFile [, usingFile ]* ]
 
 usingFile:
-      { JAR | FILE | ARCHIVE } filePathLiteral
+      ( JAR | FILE | ARCHIVE ) filePathLiteral
 
 dropSchemaStatement:
       DROP SCHEMA [ IF EXISTS ] name
@@ -3169,23 +2973,16 @@ In *createFunctionStatement* and *usingFile*, *classNameLiteral*
 and *filePathLiteral* are character literals.
 
 
-#### Declaring objects for user-defined types
+#### Declaring Objects For Types Defined In Schema
+After an object type is defined and installed in the schema, you can use it to declare objects in any SQL block. For example, you can use the object type to specify the datatype of an attribute, column, variable, bind variable, record field, table element, formal parameter, or function result. At run time, instances of the object type are created; that is, objects of that type are instantiated. Each object can hold different values.
 
-After an object type is defined and installed in the schema, you can use it to
-declare objects in any SQL block. For example, you can use the object type to
-specify the datatype of an attribute, column, variable, bind variable, record
-field, table element, formal parameter, or function result. At run time,
-instances of the object type are created; that is, objects of that type are
-instantiated. Each object can hold different values.
-
-For example, we can declare types `address_typ` and `employee_typ`:
-
-{% highlight sql %}
+Example: For declared types `address_typ` and `employee_typ`
+```SQL
 CREATE TYPE address_typ AS OBJECT (
    street          VARCHAR2(30),
    city            VARCHAR2(20),
    state           CHAR(2),
-   postal_code     VARCHAR2(6));
+   postal_code     VARCHAR2(6) );
 
 CREATE TYPE employee_typ AS OBJECT (
   employee_id       NUMBER(6),
@@ -3199,13 +2996,14 @@ CREATE TYPE employee_typ AS OBJECT (
   commission_pct    NUMBER(2,2),
   manager_id        NUMBER(6),
   department_id     NUMBER(4),
-  address           address_typ);
-{% endhighlight %}
+  address           address_typ
+);
+```
 
-Using these types, you can instantiate objects as follows:
+We can declare objects of type `employee_typ` and `address_typ` :
 
-{% highlight sql %}
+```SQL
 employee_typ(315, 'Francis', 'Logan', 'FLOGAN',
-    '555.777.2222', '01-MAY-04', 'SA_MAN', 11000, .15, 101, 110,
-     address_typ('376 Mission', 'San Francisco', 'CA', '94222'))
-{% endhighlight %}
+        '555.777.2222', '01-MAY-04', 'SA_MAN', 11000, .15, 101, 110,
+         address_typ('376 Mission', 'San Francisco', 'CA', '94222'))
+```

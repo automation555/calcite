@@ -23,13 +23,12 @@ import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
+import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParserPos;
-import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.apache.calcite.util.Static.RESOURCE;
@@ -62,64 +61,47 @@ public class AliasNamespace extends AbstractNamespace {
     super(validator, enclosingNode);
     this.call = call;
     assert call.getOperator() == SqlStdOperatorTable.AS;
-    assert call.operandCount() >= 2;
   }
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public boolean supportsModality(SqlModality modality) {
+  protected RelDataType validateImpl(RelDataType targetRowType) {
+    final List<String> nameList = new ArrayList<>();
     final List<SqlNode> operands = call.getOperandList();
     final SqlValidatorNamespace childNs =
-        validator.getNamespaceOrThrow(operands.get(0));
-    return childNs.supportsModality(modality);
-  }
-
-  @Override protected RelDataType validateImpl(RelDataType targetRowType) {
-    final List<SqlNode> operands = call.getOperandList();
-    final SqlValidatorNamespace childNs =
-        validator.getNamespaceOrThrow(operands.get(0));
+        validator.getNamespace(operands.get(0));
     final RelDataType rowType = childNs.getRowTypeSansSystemColumns();
-    final RelDataType aliasedType;
-    if (operands.size() == 2) {
-      // Alias is 'AS t' (no column list).
-      // If the sub-query is UNNEST or VALUES,
-      // and the sub-query has one column,
-      // then the namespace's sole column is named after the alias.
-      if (rowType.getFieldCount() == 1) {
-        aliasedType = validator.getTypeFactory().builder()
-            .kind(rowType.getStructKind())
-            .add(((SqlIdentifier) operands.get(1)).getSimple(),
-                rowType.getFieldList().get(0).getType())
-            .build();
-      } else {
-        aliasedType = rowType;
-      }
+    List<SqlNode> columnNames;
+    if (SqlUtil.isAsOperatorWithListOperand(call)) {
+      columnNames = ((SqlNodeList) operands.get(1)).getList();
     } else {
-      // Alias is 'AS t (c0, ..., cN)'
-      final List<SqlNode> columnNames = Util.skip(operands, 2);
-      final List<String> nameList = SqlIdentifier.simpleNames(columnNames);
-      final int i = Util.firstDuplicate(nameList);
-      if (i >= 0) {
-        final SqlIdentifier id = (SqlIdentifier) columnNames.get(i);
-        throw validator.newValidationError(id,
-            RESOURCE.aliasListDuplicate(id.getSimple()));
-      }
-      if (columnNames.size() != rowType.getFieldCount()) {
-        // Position error over all column names
-        final SqlNode node = operands.size() == 3
-            ? operands.get(2)
-            : new SqlNodeList(columnNames, SqlParserPos.sum(columnNames));
-        throw validator.newValidationError(node,
-            RESOURCE.aliasListDegree(rowType.getFieldCount(),
-                getString(rowType), columnNames.size()));
-      }
-      aliasedType = validator.getTypeFactory().builder()
-          .addAll(
-              Util.transform(rowType.getFieldList(), f ->
-                  Pair.of(nameList.get(f.getIndex()), f.getType())))
-          .kind(rowType.getStructKind())
-          .build();
+      columnNames = Util.skip(operands, 2);
     }
+    for (final SqlNode operand : columnNames) {
+      String name = ((SqlIdentifier) operand).getSimple();
+      if (nameList.contains(name)) {
+        throw validator.newValidationError(operand,
+            RESOURCE.aliasListDuplicate(name));
+      }
+      nameList.add(name);
+    }
+    if (nameList.size() != rowType.getFieldCount()) {
+      // Position error over all column names
+      final SqlNode node = operands.size() == 3
+          ? operands.get(2)
+          : new SqlNodeList(columnNames, SqlParserPos.sum(columnNames));
+      throw validator.newValidationError(node,
+          RESOURCE.aliasListDegree(rowType.getFieldCount(), getString(rowType),
+              nameList.size()));
+    }
+    final List<RelDataType> typeList = new ArrayList<>();
+    for (RelDataTypeField field : rowType.getFieldList()) {
+      typeList.add(field.getType());
+    }
+    final RelDataType aliasedType = validator.getTypeFactory().createStructType(
+        rowType.getStructKind(),
+        typeList,
+        nameList);
 
     // As per suggestion in CALCITE-4085, JavaType has its special nullability handling.
     if (rowType instanceof RelDataTypeFactoryImpl.JavaType) {
@@ -130,7 +112,7 @@ public class AliasNamespace extends AbstractNamespace {
     }
   }
 
-  private static String getString(RelDataType rowType) {
+  private String getString(RelDataType rowType) {
     StringBuilder buf = new StringBuilder();
     buf.append("(");
     for (RelDataTypeField field : rowType.getFieldList()) {
@@ -145,15 +127,15 @@ public class AliasNamespace extends AbstractNamespace {
     return buf.toString();
   }
 
-  @Override public @Nullable SqlNode getNode() {
+  public SqlNode getNode() {
     return call;
   }
 
-  @Override public String translate(String name) {
+  public String translate(String name) {
     final RelDataType underlyingRowType =
         validator.getValidatedNodeType(call.operand(0));
     int i = 0;
-    for (RelDataTypeField field : getRowType().getFieldList()) {
+    for (RelDataTypeField field : rowType.getFieldList()) {
       if (field.getName().equals(name)) {
         return underlyingRowType.getFieldList().get(i).getName();
       }

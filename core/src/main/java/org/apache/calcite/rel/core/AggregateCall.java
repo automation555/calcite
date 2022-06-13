@@ -16,7 +16,6 @@
  */
 package org.apache.calcite.rel.core;
 
-import org.apache.calcite.linq4j.Ord;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelCollations;
 import org.apache.calcite.rel.RelNode;
@@ -24,15 +23,12 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.type.SqlTypeUtil;
-import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Optionality;
 import org.apache.calcite.util.mapping.Mapping;
 import org.apache.calcite.util.mapping.Mappings;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
-
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
 import java.util.Objects;
@@ -50,13 +46,12 @@ public class AggregateCall {
   private final boolean approximate;
   private final boolean ignoreNulls;
   public final RelDataType type;
-  public final @Nullable String name;
+  public final String name;
 
   // We considered using ImmutableIntList but we would not save much memory:
   // since all values are small, ImmutableList uses cached Integer values.
   private final ImmutableList<Integer> argList;
   public final int filterArg;
-  public final @Nullable ImmutableBitSet distinctKeys;
   public final RelCollation collation;
 
   //~ Constructors -----------------------------------------------------------
@@ -78,7 +73,7 @@ public class AggregateCall {
       RelDataType type,
       String name) {
     this(aggFunction, distinct, false, false,
-        argList, -1, null, RelCollations.EMPTY, type, name);
+        argList, -1, RelCollations.EMPTY, type, name);
   }
 
   /**
@@ -90,8 +85,6 @@ public class AggregateCall {
    * @param argList     List of ordinals of arguments
    * @param filterArg   Ordinal of filter argument (the
    *                    {@code FILTER (WHERE ...)} clause in SQL), or -1
-   * @param distinctKeys Ordinals of fields to make values distinct on before
-   *                    aggregating, or null
    * @param collation   How to sort values before aggregation (the
    *                    {@code WITHIN GROUP} clause in SQL)
    * @param type        Result type
@@ -99,15 +92,13 @@ public class AggregateCall {
    */
   private AggregateCall(SqlAggFunction aggFunction, boolean distinct,
       boolean approximate, boolean ignoreNulls, List<Integer> argList,
-      int filterArg, @Nullable ImmutableBitSet distinctKeys,
-      RelCollation collation, RelDataType type, @Nullable String name) {
-    this.type = Objects.requireNonNull(type, "type");
+      int filterArg, RelCollation collation, RelDataType type, String name) {
+    this.type = Objects.requireNonNull(type);
     this.name = name;
-    this.aggFunction = Objects.requireNonNull(aggFunction, "aggFunction");
+    this.aggFunction = Objects.requireNonNull(aggFunction);
     this.argList = ImmutableList.copyOf(argList);
-    this.distinctKeys = distinctKeys;
     this.filterArg = filterArg;
-    this.collation = Objects.requireNonNull(collation, "collation");
+    this.collation = Objects.requireNonNull(collation);
     this.distinct = distinct;
     this.approximate = approximate;
     this.ignoreNulls = ignoreNulls;
@@ -122,44 +113,44 @@ public class AggregateCall {
   @Deprecated // to be removed before 2.0
   public static AggregateCall create(SqlAggFunction aggFunction,
       boolean distinct, List<Integer> argList, int groupCount, RelNode input,
-      @Nullable RelDataType type, @Nullable String name) {
+      RelDataType type, String name) {
     return create(aggFunction, distinct, false, false, argList, -1,
-        null, RelCollations.EMPTY, groupCount, input, type, name);
+        RelCollations.EMPTY, groupCount, input, type, name);
   }
 
   @Deprecated // to be removed before 2.0
   public static AggregateCall create(SqlAggFunction aggFunction,
       boolean distinct, List<Integer> argList, int filterArg, int groupCount,
-      RelNode input, @Nullable RelDataType type, @Nullable String name) {
+      RelNode input, RelDataType type, String name) {
     return create(aggFunction, distinct, false, false, argList, filterArg,
-        null, RelCollations.EMPTY, groupCount, input, type, name);
+        RelCollations.EMPTY, groupCount, input, type, name);
   }
 
   @Deprecated // to be removed before 2.0
   public static AggregateCall create(SqlAggFunction aggFunction,
       boolean distinct, boolean approximate, List<Integer> argList,
       int filterArg, int groupCount,
-      RelNode input, @Nullable RelDataType type, @Nullable String name) {
+      RelNode input, RelDataType type, String name) {
     return create(aggFunction, distinct, approximate, false, argList,
-        filterArg, null, RelCollations.EMPTY, groupCount, input, type, name);
+        filterArg, RelCollations.EMPTY, groupCount, input, type, name);
   }
 
   @Deprecated // to be removed before 2.0
   public static AggregateCall create(SqlAggFunction aggFunction,
       boolean distinct, boolean approximate, List<Integer> argList,
       int filterArg, RelCollation collation, int groupCount,
-      RelNode input, @Nullable RelDataType type, @Nullable String name) {
+      RelNode input, RelDataType type, String name) {
     return create(aggFunction, distinct, approximate, false, argList, filterArg,
-        null, collation, groupCount, input, type, name);
+        collation, groupCount, input, type, name);
   }
 
   /** Creates an AggregateCall, inferring its type if {@code type} is null. */
+  @Deprecated // to be removed before 2.0
   public static AggregateCall create(SqlAggFunction aggFunction,
       boolean distinct, boolean approximate, boolean ignoreNulls,
-      List<Integer> argList, int filterArg,
-      @Nullable ImmutableBitSet distinctKeys, RelCollation collation,
+      List<Integer> argList, int filterArg, RelCollation collation,
       int groupCount,
-      RelNode input, @Nullable RelDataType type, @Nullable String name) {
+      RelNode input, RelDataType type, String name) {
     if (type == null) {
       final RelDataTypeFactory typeFactory =
           input.getCluster().getTypeFactory();
@@ -171,52 +162,43 @@ public class AggregateCall {
       type = aggFunction.inferReturnType(callBinding);
     }
     return create(aggFunction, distinct, approximate, ignoreNulls, argList,
-        filterArg, distinctKeys, collation, type, name);
+        filterArg, collation, type, name);
   }
 
   @Deprecated // to be removed before 2.0
   public static AggregateCall create(SqlAggFunction aggFunction,
       boolean distinct, List<Integer> argList, int filterArg, RelDataType type,
-      @Nullable String name) {
-    return create(aggFunction, distinct, false, false, argList, filterArg, null,
+      String name) {
+    return create(aggFunction, distinct, false, false, argList, filterArg,
         RelCollations.EMPTY, type, name);
   }
 
   @Deprecated // to be removed before 2.0
   public static AggregateCall create(SqlAggFunction aggFunction,
       boolean distinct, boolean approximate, List<Integer> argList,
-      int filterArg, RelDataType type, @Nullable String name) {
+      int filterArg, RelDataType type, String name) {
     return create(aggFunction, distinct, approximate, false, argList, filterArg,
-        null, RelCollations.EMPTY, type, name);
+        RelCollations.EMPTY, type, name);
   }
 
   @Deprecated // to be removed before 2.0
   public static AggregateCall create(SqlAggFunction aggFunction,
       boolean distinct, boolean approximate, List<Integer> argList,
-      int filterArg, RelCollation collation, RelDataType type, @Nullable String name) {
+      int filterArg, RelCollation collation, RelDataType type, String name) {
     return create(aggFunction, distinct, approximate, false, argList, filterArg,
-        null, collation, type, name);
+        collation, type, name);
   }
 
+  /** Creates an AggregateCall. */
   @Deprecated // to be removed before 2.0
   public static AggregateCall create(SqlAggFunction aggFunction,
       boolean distinct, boolean approximate, boolean ignoreNulls,
       List<Integer> argList, int filterArg, RelCollation collation,
-      RelDataType type, @Nullable String name) {
-    return create(aggFunction, distinct, approximate, ignoreNulls, argList,
-        filterArg, null, collation, type, name);
-  }
-
-  /** Creates an AggregateCall. */
-  public static AggregateCall create(SqlAggFunction aggFunction,
-      boolean distinct, boolean approximate, boolean ignoreNulls,
-      List<Integer> argList, int filterArg,
-      @Nullable ImmutableBitSet distinctKeys, RelCollation collation,
-      RelDataType type, @Nullable String name) {
+      RelDataType type, String name) {
     final boolean distinct2 = distinct
         && (aggFunction.getDistinctOptionality() != Optionality.IGNORED);
     return new AggregateCall(aggFunction, distinct2, approximate, ignoreNulls,
-        argList, filterArg, distinctKeys, collation, type, name);
+        argList, filterArg, collation, type, name);
   }
 
   /**
@@ -229,13 +211,6 @@ public class AggregateCall {
     return distinct;
   }
 
-  /** Withs {@link #isDistinct()}. */
-  public AggregateCall withDistinct(boolean distinct) {
-    return distinct == this.distinct ? this
-        : new AggregateCall(aggFunction, distinct, approximate, ignoreNulls,
-            argList, filterArg, distinctKeys, collation, type, name);
-  }
-
   /**
    * Returns whether this AggregateCall is approximate, as in <code>
    * APPROX_COUNT_DISTINCT(empno)</code>.
@@ -246,13 +221,6 @@ public class AggregateCall {
     return approximate;
   }
 
-  /** Withs {@link #isApproximate()}. */
-  public AggregateCall withApproximate(boolean approximate) {
-    return approximate == this.approximate ? this
-        : new AggregateCall(aggFunction, distinct, approximate, ignoreNulls,
-            argList, filterArg, distinctKeys, collation, type, name);
-  }
-
   /**
    * Returns whether this AggregateCall ignores nulls.
    *
@@ -260,13 +228,6 @@ public class AggregateCall {
    */
   public final boolean ignoreNulls() {
     return ignoreNulls;
-  }
-
-  /** Withs {@link #ignoreNulls()}. */
-  public AggregateCall withIgnoreNulls(boolean ignoreNulls) {
-    return ignoreNulls == this.ignoreNulls ? this
-        : new AggregateCall(aggFunction, distinct, approximate, ignoreNulls,
-            argList, filterArg, distinctKeys, collation, type, name);
   }
 
   /**
@@ -288,13 +249,6 @@ public class AggregateCall {
     return collation;
   }
 
-  /** Withs {@link #getCollation()}. */
-  public AggregateCall withCollation(RelCollation collation) {
-    return collation.equals(this.collation) ? this
-        : new AggregateCall(aggFunction, distinct, approximate, ignoreNulls,
-            argList, filterArg, distinctKeys, collation, type, name);
-  }
-
   /**
    * Returns the ordinals of the arguments to this call.
    *
@@ -304,21 +258,6 @@ public class AggregateCall {
    */
   public final List<Integer> getArgList() {
     return argList;
-  }
-
-  /** Withs {@link #getArgList()}. */
-  public AggregateCall withArgList(List<Integer> argList) {
-    return argList.equals(this.argList) ? this
-        : new AggregateCall(aggFunction, distinct, approximate, ignoreNulls,
-            argList, filterArg, distinctKeys, collation, type, name);
-  }
-
-  /** Withs {@link #distinctKeys}. */
-  public AggregateCall withDistinctKeys(
-      @Nullable ImmutableBitSet distinctKeys) {
-    return Objects.equals(distinctKeys, this.distinctKeys) ? this
-        : new AggregateCall(aggFunction, distinct, approximate, ignoreNulls,
-            argList, filterArg, distinctKeys, collation, type, name);
   }
 
   /**
@@ -335,23 +274,26 @@ public class AggregateCall {
    *
    * @return name
    */
-  public @Nullable String getName() {
+  public String getName() {
     return name;
   }
 
-  /** Withs {@link #name}. */
-  public AggregateCall withName(@Nullable String name) {
-    return Objects.equals(name, this.name) ? this
-        : new AggregateCall(aggFunction, distinct, approximate, ignoreNulls,
-            argList, filterArg, distinctKeys, collation, type, name);
+  /**
+   * Creates an equivalent AggregateCall that has a new name.
+   *
+   * @param name New name (may be null)
+   */
+  public AggregateCall rename(String name) {
+    if (Objects.equals(this.name, name)) {
+      return this;
+    }
+    return new AggregateCall(aggFunction, distinct, approximate, ignoreNulls,
+        argList,
+        filterArg, RelCollations.EMPTY, type,
+        name);
   }
 
-  @Deprecated // to be removed before 2.0
-  public AggregateCall rename(@Nullable String name) {
-    return withName(name);
-  }
-
-  @Override public String toString() {
+  public String toString() {
     StringBuilder buf = new StringBuilder(aggFunction.toString());
     buf.append("(");
     if (approximate) {
@@ -369,14 +311,6 @@ public class AggregateCall {
       buf.append(arg);
     }
     buf.append(")");
-    if (distinctKeys != null) {
-      buf.append(" WITHIN DISTINCT (");
-      for (Ord<Integer> key : Ord.zip(distinctKeys)) {
-        buf.append(key.i > 0 ? ", $" : "$");
-        buf.append(key.e);
-      }
-      buf.append(")");
-    }
     if (!collation.equals(RelCollations.EMPTY)) {
       buf.append(" WITHIN GROUP (");
       buf.append(collation);
@@ -394,29 +328,28 @@ public class AggregateCall {
     return filterArg >= 0;
   }
 
-  /** Withs {@link #filterArg}. */
-  public AggregateCall withFilter(int filterArg) {
-    return filterArg == this.filterArg ? this
-        : new AggregateCall(aggFunction, distinct, approximate, ignoreNulls,
-            argList, filterArg, distinctKeys, collation, type, name);
-  }
-
-  @Override public boolean equals(@Nullable Object o) {
-    return o == this
-        || o instanceof AggregateCall
-        && aggFunction.equals(((AggregateCall) o).aggFunction)
-        && distinct == ((AggregateCall) o).distinct
-        && approximate == ((AggregateCall) o).approximate
-        && ignoreNulls == ((AggregateCall) o).ignoreNulls
-        && argList.equals(((AggregateCall) o).argList)
-        && filterArg == ((AggregateCall) o).filterArg
-        && Objects.equals(distinctKeys, ((AggregateCall) o).distinctKeys)
-        && collation.equals(((AggregateCall) o).collation);
+  @Override public boolean equals(Object o) {
+    if (!(o instanceof AggregateCall)) {
+      return false;
+    }
+    AggregateCall other = (AggregateCall) o;
+    return aggFunction.equals(other.aggFunction)
+        && (distinct == other.distinct)
+        && (approximate == other.approximate)
+        && (ignoreNulls == other.ignoreNulls)
+        && argList.equals(other.argList)
+        && filterArg == other.filterArg
+        && Objects.equals(collation, other.collation);
   }
 
   @Override public int hashCode() {
-    return Objects.hash(aggFunction, distinct, approximate, ignoreNulls,
-        argList, filterArg, distinctKeys, collation);
+    return Objects.hash(aggFunction,
+            distinct,
+            approximate,
+            ignoreNulls,
+            argList,
+            filterArg,
+            collation);
   }
 
   /**
@@ -444,28 +377,21 @@ public class AggregateCall {
    */
   @Deprecated // to be removed before 2.0
   public AggregateCall copy(List<Integer> args, int filterArg,
-      @Nullable ImmutableBitSet distinctKeys, RelCollation collation) {
-    return new AggregateCall(aggFunction, distinct, approximate, ignoreNulls,
-        args, filterArg, distinctKeys, collation, type, name);
-  }
-
-  @Deprecated // to be removed before 2.0
-  public AggregateCall copy(List<Integer> args, int filterArg,
       RelCollation collation) {
-    // ignoring distinctKeys is error-prone
-    return copy(args, filterArg, distinctKeys, collation);
+    return new AggregateCall(aggFunction, distinct, approximate, ignoreNulls,
+        args, filterArg, collation, type, name);
   }
 
   @Deprecated // to be removed before 2.0
   public AggregateCall copy(List<Integer> args, int filterArg) {
-    // ignoring distinctKeys, collation is error-prone
-    return copy(args, filterArg, distinctKeys, collation);
+    // ignoring collation is error-prone
+    return copy(args, filterArg, collation);
   }
 
   @Deprecated // to be removed before 2.0
   public AggregateCall copy(List<Integer> args) {
-    // ignoring filterArg, distinctKeys, collation is error-prone
-    return copy(args, filterArg, distinctKeys, collation);
+    // ignoring filterArg and collation is error-prone
+    return copy(args, filterArg, collation);
   }
 
   /**
@@ -489,17 +415,134 @@ public class AggregateCall {
             && filterArg == this.filterArg
             ? type
             : null;
-    return create(aggFunction, distinct, approximate, ignoreNulls, argList,
-        filterArg, distinctKeys, collation,
-        newGroupKeyCount, input, newType, getName());
+    return builder(this).argList(argList).filterArg(filterArg).
+        groupCount(newGroupKeyCount).input(input).type(newType).build();
   }
 
   /** Creates a copy of this aggregate call, applying a mapping to its
    * arguments. */
   public AggregateCall transform(Mappings.TargetMapping mapping) {
-    return copy(Mappings.apply2((Mapping) mapping, argList),
-        hasFilter() ? Mappings.apply(mapping, filterArg) : -1,
-        distinctKeys == null ? null : distinctKeys.permute(mapping),
-        RelCollations.permute(collation, mapping));
+    return builder(this).argList(Mappings.apply2((Mapping) mapping, argList))
+        .filterArg(hasFilter() ? Mappings.apply(mapping, filterArg) : -1)
+        .collation(RelCollations.permute(collation, mapping)).build();
+  }
+
+  public static Builder builder(AggregateCall aggCall) {
+    Builder builder = new Builder();
+    builder.aggFunction(aggCall.aggFunction)
+        .approximate(aggCall.approximate)
+        .argList(aggCall.argList)
+        .collation(aggCall.collation)
+        .distinct(aggCall.distinct)
+        .filterArg(aggCall.filterArg)
+        .ignoreNulls(aggCall.ignoreNulls)
+        .name(aggCall.name)
+        .type(aggCall.type);
+    return builder;
+  }
+
+  public static Builder builder() {
+    return new Builder();
+  }
+
+  /**
+   * Utility for creating aggregate calls.
+   */
+  public static class Builder {
+
+    private SqlAggFunction aggFunction = null;
+
+    private boolean distinct = false;
+
+    private boolean approximate = false;
+
+    private boolean ignoreNulls = false;
+
+    private List<Integer> argList = ImmutableList.of();
+
+    private int filterArg = -1;
+
+    private RelCollation collation = RelCollations.EMPTY;
+
+    private RelDataType type;
+
+    private String name;
+
+    private int groupCount = 0;
+
+    private RelNode input;
+
+    public Builder aggFunction(SqlAggFunction aggFunction) {
+      this.aggFunction = aggFunction;
+      return this;
+    }
+
+    public Builder distinct(boolean distinct) {
+      this.distinct = distinct;
+      return this;
+    }
+
+    public Builder approximate(boolean approximate) {
+      this.approximate = approximate;
+      return this;
+    }
+
+    public Builder ignoreNulls(boolean ignoreNulls) {
+      this.ignoreNulls = ignoreNulls;
+      return this;
+    }
+
+    public Builder argList(List<Integer> argList) {
+      this.argList = argList;
+      return this;
+    }
+
+    public Builder filterArg(int filterArg) {
+      this.filterArg = filterArg;
+      return this;
+    }
+
+    public Builder collation(RelCollation collation) {
+      this.collation = collation;
+      return this;
+    }
+
+    public Builder type(RelDataType type) {
+      this.type = type;
+      return this;
+    }
+
+    public Builder name(String name) {
+      this.name = name;
+      return this;
+    }
+
+    public Builder groupCount(int groupCount) {
+      this.groupCount = groupCount;
+      return this;
+    }
+
+    public Builder input(RelNode input) {
+      this.input = input;
+      return this;
+    }
+
+    public AggregateCall build() {
+      if (type == null) {
+        final RelDataTypeFactory typeFactory =
+            input.getCluster().getTypeFactory();
+        final List<RelDataType> types =
+            SqlTypeUtil.projectTypes(input.getRowType(), argList);
+        final Aggregate.AggCallBinding callBinding =
+            new Aggregate.AggCallBinding(typeFactory, aggFunction, types,
+                groupCount, filterArg >= 0);
+        type = aggFunction.inferReturnType(callBinding);
+      }
+
+      final boolean distinct2 = distinct
+          && (aggFunction.getDistinctOptionality() != Optionality.IGNORED);
+      return new AggregateCall(aggFunction, distinct2, approximate, ignoreNulls,
+          argList, filterArg, collation, type, name);
+    }
   }
 }

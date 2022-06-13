@@ -20,6 +20,7 @@ import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelRule;
+import org.apache.calcite.plan.SubstitutionVisitor;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.Aggregate.Group;
@@ -34,8 +35,6 @@ import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.mapping.Mappings;
 
 import com.google.common.collect.ImmutableList;
-
-import org.immutables.value.Value;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -56,7 +55,6 @@ import java.util.List;
  * @see org.apache.calcite.rel.rules.FilterAggregateTransposeRule
  * @see CoreRules#AGGREGATE_FILTER_TRANSPOSE
  */
-@Value.Enclosing
 public class AggregateFilterTransposeRule
     extends RelRule<AggregateFilterTransposeRule.Config>
     implements TransformationRule {
@@ -135,7 +133,8 @@ public class AggregateFilterTransposeRule
       final List<AggregateCall> topAggCallList = new ArrayList<>();
       int i = newGroupSet.cardinality();
       for (AggregateCall aggregateCall : aggregate.getAggCallList()) {
-        final SqlAggFunction rollup = aggregateCall.getAggregation().getRollup();
+        final SqlAggFunction rollup =
+            SubstitutionVisitor.getRollup(aggregateCall.getAggregation());
         if (rollup == null) {
           // This aggregate cannot be rolled up.
           return;
@@ -145,11 +144,8 @@ public class AggregateFilterTransposeRule
           return;
         }
         topAggCallList.add(
-            AggregateCall.create(rollup, aggregateCall.isDistinct(),
-                aggregateCall.isApproximate(), aggregateCall.ignoreNulls(),
-                ImmutableList.of(i++), -1,
-                aggregateCall.distinctKeys, aggregateCall.collation,
-                aggregateCall.type, aggregateCall.name));
+            AggregateCall.builder(aggregateCall).aggFunction(rollup)
+            .argList(ImmutableList.of(i++)).filterArg(-1).build());
       }
       final Aggregate topAggregate =
           aggregate.copy(aggregate.getTraitSet(), newFilter,
@@ -159,9 +155,8 @@ public class AggregateFilterTransposeRule
   }
 
   /** Rule configuration. */
-  @Value.Immutable
   public interface Config extends RelRule.Config {
-    Config DEFAULT = ImmutableAggregateFilterTransposeRule.Config.of()
+    Config DEFAULT = EMPTY.as(Config.class)
         .withOperandFor(Aggregate.class, Filter.class);
 
     @Override default AggregateFilterTransposeRule toRule() {

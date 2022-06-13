@@ -27,8 +27,6 @@ import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.SingleRel;
-import org.apache.calcite.rel.hint.Hintable;
-import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexCall;
@@ -47,12 +45,7 @@ import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
 
-import org.checkerframework.checker.initialization.qual.UnderInitialization;
-import org.checkerframework.checker.nullness.qual.Nullable;
-import org.checkerframework.checker.nullness.qual.RequiresNonNull;
-
 import java.util.AbstractList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -70,31 +63,9 @@ import java.util.Objects;
  *
  * <p>Created by {@link org.apache.calcite.rel.rules.ProjectToWindowRule}.
  */
-public abstract class Window extends SingleRel implements Hintable {
+public abstract class Window extends SingleRel {
   public final ImmutableList<Group> groups;
   public final ImmutableList<RexLiteral> constants;
-  protected final ImmutableList<RelHint> hints;
-
-  /**
-   * Creates a window relational expression.
-   *
-   * @param cluster Cluster
-   * @param traitSet Trait set
-   * @param hints   Hints for this node
-   * @param input   Input relational expression
-   * @param constants List of constants that are additional inputs
-   * @param rowType Output row type
-   * @param groups Windows
-   */
-  protected Window(RelOptCluster cluster, RelTraitSet traitSet, List<RelHint> hints,
-      RelNode input, List<RexLiteral> constants, RelDataType rowType, List<Group> groups) {
-    super(cluster, traitSet, input);
-    this.constants = ImmutableList.copyOf(constants);
-    assert rowType != null;
-    this.rowType = rowType;
-    this.groups = ImmutableList.copyOf(groups);
-    this.hints = ImmutableList.copyOf(hints);
-  }
 
   /**
    * Creates a window relational expression.
@@ -108,10 +79,14 @@ public abstract class Window extends SingleRel implements Hintable {
    */
   public Window(RelOptCluster cluster, RelTraitSet traitSet, RelNode input,
       List<RexLiteral> constants, RelDataType rowType, List<Group> groups) {
-    this(cluster, traitSet, Collections.emptyList(), input, constants, rowType, groups);
+    super(cluster, traitSet, input);
+    this.constants = ImmutableList.copyOf(constants);
+    assert rowType != null;
+    this.rowType = rowType;
+    this.groups = ImmutableList.copyOf(groups);
   }
 
-  @Override public boolean isValid(Litmus litmus, @Nullable Context context) {
+  @Override public boolean isValid(Litmus litmus, Context context) {
     // In the window specifications, an aggregate call such as
     // 'SUM(RexInputRef #10)' refers to expression #10 of inputProgram.
     // (Not its projections.)
@@ -148,7 +123,7 @@ public abstract class Window extends SingleRel implements Hintable {
     return litmus.succeed();
   }
 
-  @Override public RelWriter explainTerms(RelWriter pw) {
+  public RelWriter explainTerms(RelWriter pw) {
     super.explainTerms(pw);
     for (Ord<Group> window : Ord.zip(groups)) {
       pw.item("window#" + window.i, window.e.toString());
@@ -159,11 +134,11 @@ public abstract class Window extends SingleRel implements Hintable {
   public static ImmutableIntList getProjectOrdinals(final List<RexNode> exprs) {
     return ImmutableIntList.copyOf(
         new AbstractList<Integer>() {
-          @Override public Integer get(int index) {
+          public Integer get(int index) {
             return ((RexSlot) exprs.get(index)).getIndex();
           }
 
-          @Override public int size() {
+          public int size() {
             return exprs.size();
           }
         });
@@ -173,7 +148,7 @@ public abstract class Window extends SingleRel implements Hintable {
       final List<RexFieldCollation> collations) {
     return RelCollations.of(
         new AbstractList<RelFieldCollation>() {
-          @Override public RelFieldCollation get(int index) {
+          public RelFieldCollation get(int index) {
             final RexFieldCollation collation = collations.get(index);
             return new RelFieldCollation(
                 ((RexLocalRef) collation.left).getIndex(),
@@ -181,7 +156,7 @@ public abstract class Window extends SingleRel implements Hintable {
                 collation.getNullDirection());
           }
 
-          @Override public int size() {
+          public int size() {
             return collations.size();
           }
         });
@@ -195,7 +170,7 @@ public abstract class Window extends SingleRel implements Hintable {
     return constants;
   }
 
-  @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
+  @Override public RelOptCost computeSelfCost(RelOptPlanner planner,
       RelMetadataQuery mq) {
     // Cost is proportional to the number of rows and the number of
     // components (groups and aggregate functions). There is
@@ -255,23 +230,20 @@ public abstract class Window extends SingleRel implements Hintable {
         RexWindowBound upperBound,
         RelCollation orderKeys,
         List<RexWinAggCall> aggCalls) {
-      this.keys = Objects.requireNonNull(keys, "keys");
+      this.keys = Objects.requireNonNull(keys);
       this.isRows = isRows;
-      this.lowerBound = Objects.requireNonNull(lowerBound, "lowerBound");
-      this.upperBound = Objects.requireNonNull(upperBound, "upperBound");
-      this.orderKeys = Objects.requireNonNull(orderKeys, "orderKeys");
+      this.lowerBound = Objects.requireNonNull(lowerBound);
+      this.upperBound = Objects.requireNonNull(upperBound);
+      this.orderKeys = Objects.requireNonNull(orderKeys);
       this.aggCalls = ImmutableList.copyOf(aggCalls);
       this.digest = computeString();
     }
 
-    @Override public String toString() {
+    public String toString() {
       return digest;
     }
 
-    @RequiresNonNull({"keys", "orderKeys", "lowerBound", "upperBound", "aggCalls"})
-    private String computeString(
-        @UnderInitialization Group this
-    ) {
+    private String computeString() {
       final StringBuilder buf = new StringBuilder("window(");
       final int i = buf.length();
       if (!keys.isEmpty()) {
@@ -315,7 +287,7 @@ public abstract class Window extends SingleRel implements Hintable {
       return buf.toString();
     }
 
-    @Override public boolean equals(@Nullable Object obj) {
+    @Override public boolean equals(Object obj) {
       return this == obj
           || obj instanceof Group
           && this.digest.equals(((Group) obj).digest);
@@ -353,17 +325,16 @@ public abstract class Window extends SingleRel implements Hintable {
           Util.skip(windowRel.getRowType().getFieldNames(),
               windowRel.getInput().getRowType().getFieldCount());
       return new AbstractList<AggregateCall>() {
-        @Override public int size() {
+        public int size() {
           return aggCalls.size();
         }
 
-        @Override public AggregateCall get(int index) {
+        public AggregateCall get(int index) {
           final RexWinAggCall aggCall = aggCalls.get(index);
           final SqlAggFunction op = (SqlAggFunction) aggCall.getOperator();
-          return AggregateCall.create(op, aggCall.distinct, false,
-              aggCall.ignoreNulls, getProjectOrdinals(aggCall.getOperands()),
-              -1, null, RelCollations.EMPTY,
-              aggCall.getType(), fieldNames.get(aggCall.ordinal));
+          return AggregateCall.builder().aggFunction(op).distinct(aggCall.distinct)
+              .ignoreNulls(aggCall.ignoreNulls).argList(getProjectOrdinals(aggCall.getOperands()))
+              .type(aggCall.getType()).name(fieldNames.get(aggCall.ordinal)).build();
         }
       };
     }
@@ -422,7 +393,7 @@ public abstract class Window extends SingleRel implements Hintable {
       this.ignoreNulls = ignoreNulls;
     }
 
-    @Override public boolean equals(@Nullable Object o) {
+    @Override public boolean equals(Object o) {
       if (this == o) {
         return true;
       }
@@ -448,9 +419,5 @@ public abstract class Window extends SingleRel implements Hintable {
     @Override public RexCall clone(RelDataType type, List<RexNode> operands) {
       return super.clone(type, operands);
     }
-  }
-
-  @Override public ImmutableList<RelHint> getHints() {
-    return hints;
   }
 }

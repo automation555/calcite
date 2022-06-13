@@ -57,7 +57,7 @@ class TableFunctionTest {
     final String c = Smalls.class.getName();
     final String m = Smalls.MULTIPLICATION_TABLE_METHOD.getName();
     final String m2 = Smalls.FIBONACCI_TABLE_METHOD.getName();
-    final String m3 = Smalls.FIBONACCI_LIMIT_TABLE_METHOD.getName();
+    final String m3 = Smalls.FIBONACCI2_TABLE_METHOD.getName();
     return CalciteAssert.model("{\n"
         + "  version: '1.0',\n"
         + "   schemas: [\n"
@@ -102,27 +102,6 @@ class TableFunctionTest {
       ResultSet resultSet = connection.createStatement().executeQuery(sql);
       assertThat(CalciteAssert.toString(resultSet),
           equalTo("N=4; C=abcd\n"));
-    }
-  }
-
-  /**
-   * Tests correlated subquery with 2 identical params is being processed correctly.
-   */
-  @Test void testInterpretFunctionWithInitializer() throws SQLException {
-    try (Connection connection = DriverManager.getConnection("jdbc:calcite:")) {
-      CalciteConnection calciteConnection =
-          connection.unwrap(CalciteConnection.class);
-      SchemaPlus rootSchema = calciteConnection.getRootSchema();
-      SchemaPlus schema = rootSchema.add("s", new AbstractSchema());
-      final TableFunction table =
-          TableFunctionImpl.create(Smalls.DUMMY_TABLE_METHOD_WITH_TWO_PARAMS);
-      final String callMethodName = Smalls.DUMMY_TABLE_METHOD_WITH_TWO_PARAMS.getName();
-      schema.add(callMethodName, table);
-      final String sql = "select x, (select * from table (\"s\".\"" + callMethodName + "\"(x, x))) "
-          + "from (values (2), (4)) as t (x)";
-      ResultSet resultSet = connection.createStatement().executeQuery(sql);
-      assertThat(CalciteAssert.toString(resultSet),
-          equalTo("X=2; EXPR$1=null\nX=4; EXPR$1=null\n"));
     }
   }
 
@@ -483,7 +462,24 @@ class TableFunctionTest {
     with().query(q).returnsUnordered("C=2\nC=3\nC=4");
   }
 
-  @Test void testCrossApply() {
+  @Test public void testTableFunctionInSelect() {
+    final String q = "select * from ("
+        + "select f0, \"s\".\"fibonacci2\"(20) as (c)"
+        +    " from (select 1 as f0)"
+        + ")";
+    with()
+        .with(CalciteConnectionProperty.CONFORMANCE,
+            SqlConformanceEnum.HIVE)
+        .query(q).returnsUnordered("F0=1; C=1",
+        "F0=1; C=1",
+        "F0=1; C=13",
+        "F0=1; C=2",
+        "F0=1; C=3",
+        "F0=1; C=5",
+        "F0=1; C=8");
+  }
+
+  @Test public void testCrossApply() {
     final String q1 = "select *\n"
         + "from (values 2, 5) as t (c)\n"
         + "cross apply table(\"s\".\"fibonacci2\"(c))";

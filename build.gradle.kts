@@ -25,25 +25,18 @@ import com.github.vlsi.gradle.properties.dsl.props
 import com.github.vlsi.gradle.release.RepositoryType
 import de.thetaphi.forbiddenapis.gradle.CheckForbiddenApis
 import de.thetaphi.forbiddenapis.gradle.CheckForbiddenApisExtension
-import net.ltgt.gradle.errorprone.errorprone
 import org.apache.calcite.buildtools.buildext.dsl.ParenthesisBalancer
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 
 plugins {
-    // java-base is needed for platform(...) resolution,
-    // see https://github.com/gradle/gradle/issues/14822
-    `java-base`
     publishing
     // Verification
     checkstyle
     calcite.buildext
-    id("org.checkerframework") apply false
     id("com.github.autostyle")
     id("org.nosphere.apache.rat")
     id("com.github.spotbugs")
     id("de.thetaphi.forbiddenapis") apply false
-    id("net.ltgt.errorprone") apply false
-    id("com.github.vlsi.jandex") apply false
     id("org.owasp.dependencycheck")
     id("com.github.johnrengelman.shadow") apply false
     // IDE configuration
@@ -54,7 +47,6 @@ plugins {
     id("com.github.vlsi.gradle-extensions")
     id("com.github.vlsi.license-gather") apply false
     id("com.github.vlsi.stage-vote-release")
-    id("com.autonomousapps.dependency-analysis") apply false
 }
 
 repositories {
@@ -68,32 +60,13 @@ val lastEditYear by extra(lastEditYear())
 
 // Do not enable spotbugs by default. Execute it only when -Pspotbugs is present
 val enableSpotBugs = props.bool("spotbugs")
-val enableCheckerframework by props()
-val enableErrorprone by props()
-val enableDependencyAnalysis by props()
-val skipJandex by props()
 val skipCheckstyle by props()
 val skipAutostyle by props()
 val skipJavadoc by props()
 val enableMavenLocal by props()
 val enableGradleMetadata by props()
-val werror by props(true) // treat javac warnings as errors
 // Inherited from stage-vote-release-plugin: skipSign, useGpgCmd
 // Inherited from gradle-extensions-plugin: slowSuiteLogThreshold=0L, slowTestLogThreshold=2000L
-
-// Java versions prior to 1.8.0u202 have known issues that cause invalid bytecode in certain patterns
-// of annotation usage.
-// So we require at least 1.8.0u202
-System.getProperty("java.version").let { version ->
-    version.takeIf { it.startsWith("1.8.0_") }
-        ?.removePrefix("1.8.0_")
-        ?.toIntOrNull()
-        ?.let {
-            require(it >= 202) {
-                "Apache Calcite requires Java 1.8.0u202 or later. The current Java version is $version"
-            }
-        }
-}
 
 ide {
     copyrightToAsf()
@@ -113,7 +86,6 @@ val gitProps by tasks.registering(FindGitAttributes::class) {
 
 val rat by tasks.getting(org.nosphere.apache.rat.RatTask::class) {
     gitignore(gitProps)
-    verbose.set(true)
     // Note: patterns are in non-standard syntax for RAT, so we use exclude(..) instead of excludeFile
     exclude(rootDir.resolve(".ratignore").readLines())
 }
@@ -162,7 +134,7 @@ val javadocAggregate by tasks.registering(Javadoc::class) {
     group = JavaBasePlugin.DOCUMENTATION_GROUP
     description = "Generates aggregate javadoc for all the artifacts"
 
-    val sourceSets = subprojects
+    val sourceSets = allprojects
         .mapNotNull { it.extensions.findByType<SourceSetContainer>() }
         .map { it.named("main") }
 
@@ -176,7 +148,7 @@ val javadocAggregate by tasks.registering(Javadoc::class) {
 val javadocAggregateIncludingTests by tasks.registering(Javadoc::class) {
     description = "Generates aggregate javadoc for all the artifacts"
 
-    val sourceSets = subprojects
+    val sourceSets = allprojects
         .mapNotNull { it.extensions.findByType<SourceSetContainer>() }
         .flatMap { listOf(it.named("main"), it.named("test")) }
 
@@ -186,9 +158,9 @@ val javadocAggregateIncludingTests by tasks.registering(Javadoc::class) {
 }
 
 val adaptersForSqlline = listOf(
-    ":babel", ":cassandra", ":druid", ":elasticsearch",
-    ":file", ":geode", ":innodb", ":kafka", ":mongodb",
-    ":pig", ":piglet", ":plus", ":redis", ":spark", ":splunk")
+    ":babel", ":cassandra", ":druid", ":elasticsearch", ":file", ":geode", ":kafka", ":mongodb",
+    ":pig", ":piglet", ":plus", ":redis", ":spark", ":splunk"
+)
 
 val dataSetsForSqlline = listOf(
     "net.hydromatic:foodmart-data-hsqldb",
@@ -198,17 +170,10 @@ val dataSetsForSqlline = listOf(
 
 val sqllineClasspath by configurations.creating {
     isCanBeConsumed = false
-    attributes {
-        attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage.JAVA_RUNTIME))
-        attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements.CLASSES_AND_RESOURCES))
-        attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, JavaVersion.current().majorVersion.toInt())
-        attribute(Bundling.BUNDLING_ATTRIBUTE, objects.named(Bundling.EXTERNAL))
-    }
 }
 
 dependencies {
     sqllineClasspath(platform(project(":bom")))
-    sqllineClasspath(project(":testkit"))
     sqllineClasspath("sqlline:sqlline")
     for (p in adaptersForSqlline) {
         sqllineClasspath(project(p))
@@ -226,33 +191,8 @@ val buildSqllineClasspath by tasks.registering(Jar::class) {
     manifest {
         attributes(
             "Main-Class" to "sqlline.SqlLine",
-            "Class-Path" to provider {
-                // Class-Path is a list of URLs
-                sqllineClasspath.joinToString(" ") {
-                    it.toURI().toURL().toString()
-                }
-            }
+            "Class-Path" to provider { sqllineClasspath.joinToString(" ") { it.absolutePath } }
         )
-    }
-}
-
-if (enableDependencyAnalysis) {
-    apply(plugin = "com.autonomousapps.dependency-analysis")
-    configure<com.autonomousapps.DependencyAnalysisExtension> {
-        // See https://github.com/autonomousapps/dependency-analysis-android-gradle-plugin
-        // Most of the time the recommendations are good, however, there are cases the suggestsions
-        // are off, so we don't include the dependency analysis to CI workflow yet
-        // ./gradlew -PenableDependencyAnalysis buildHealth --no-parallel --no-daemon
-        issues {
-            all { // all projects
-                onAny {
-                    severity("fail")
-                }
-                onRedundantPlugins {
-                    severity("ignore")
-                }
-            }
-        }
     }
 }
 
@@ -293,6 +233,9 @@ allprojects {
     repositories {
         // RAT and Autostyle dependencies
         mavenCentral()
+        flatDir {
+            dirs = setOf(file("libs"))
+        }
     }
 
     val javaUsed = file("src/main/java").isDirectory
@@ -302,9 +245,7 @@ allprojects {
 
     plugins.withId("java-library") {
         dependencies {
-            "annotationProcessor"(platform(project(":bom")))
             "implementation"(platform(project(":bom")))
-            "testAnnotationProcessor"(platform(project(":bom")))
         }
     }
 
@@ -314,9 +255,10 @@ allprojects {
         dependencies {
             val testImplementation by configurations
             val testRuntimeOnly by configurations
-            testImplementation(platform("org.junit:junit-bom"))
-            testImplementation("org.junit.jupiter:junit-jupiter")
+            testImplementation("org.junit.jupiter:junit-jupiter-api")
+            testImplementation("org.junit.jupiter:junit-jupiter-params")
             testImplementation("org.hamcrest:hamcrest")
+            testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
             if (project.props.bool("junit4", default = false)) {
                 // Allow projects to opt-out of junit dependency, so they can be JUnit5-only
                 testImplementation("junit:junit")
@@ -387,19 +329,14 @@ allprojects {
             // On the other hand, supporessions.xml still analyzes the file, and
             // then it recognizes it should suppress all the output.
             excludeJavaCcGenerated()
+            // Checkstyle 8.26 does not need classpath, see https://github.com/gradle/gradle/issues/14227
+            classpath = files()
             // Workaround for https://github.com/gradle/gradle/issues/13927
             // Absolute paths must not be used as they defeat Gradle build cache
             // Unfortunately, Gradle passes only config_loc variable by default, so we make
             // all the paths relative to config_loc
             configProperties!!["cache_file"] =
                 buildDir.resolve("checkstyle/cacheFile").relativeTo(configLoc)
-        }
-        // afterEvaluate is to support late sourceSet addition (e.g. jmh sourceset)
-        afterEvaluate {
-            tasks.configureEach<Checkstyle> {
-                // Checkstyle 8.26 does not need classpath, see https://github.com/gradle/gradle/issues/14227
-                classpath = files()
-            }
         }
     }
     if (!skipAutostyle || !skipCheckstyle) {
@@ -437,8 +374,8 @@ allprojects {
                 docEncoding = "UTF-8"
                 charSet = "UTF-8"
                 encoding = "UTF-8"
-                docTitle = "Apache Calcite API"
-                windowTitle = "Apache Calcite API"
+                docTitle = "Apache Calcite ${project.name} API"
+                windowTitle = "Apache Calcite ${project.name} API"
                 header = "<b>Apache Calcite</b>"
                 bottom =
                     "Copyright &copy; 2012-$lastEditYear Apache Software Foundation. All Rights Reserved."
@@ -457,11 +394,6 @@ allprojects {
             sourceCompatibility = JavaVersion.VERSION_1_8
             targetCompatibility = JavaVersion.VERSION_1_8
         }
-        configure<JavaPluginExtension> {
-            consistentResolution {
-                useCompileClasspathVersions()
-            }
-        }
 
         repositories {
             if (enableMavenLocal) {
@@ -474,15 +406,6 @@ allprojects {
         apply(plugin = "de.thetaphi.forbiddenapis")
         apply(plugin = "maven-publish")
 
-        if (!skipJandex) {
-            apply(plugin = "com.github.vlsi.jandex")
-
-            project.configure<com.github.vlsi.jandex.JandexExtension> {
-                toolVersion.set("jandex".v)
-                skipIndexFileGeneration()
-            }
-        }
-
         if (!enableGradleMetadata) {
             tasks.withType<GenerateModuleMetadata> {
                 enabled = false
@@ -492,9 +415,7 @@ allprojects {
         if (!skipAutostyle) {
             autostyle {
                 java {
-                    filter.exclude(*javaccGeneratedPatterns +
-                            "**/test/java/*.java" +
-                            "**/RelRule.java" /** remove as part of CALCITE-4831 **/)
+                    filter.exclude(*javaccGeneratedPatterns + "**/test/java/*.java")
                     license()
                     if (!project.props.bool("junit4", default = false)) {
                         replace("junit5: Test", "org.junit.Test", "org.junit.jupiter.api.Test")
@@ -512,8 +433,6 @@ allprojects {
                         replace("junit5: Assert.fail", "org.junit.Assert.fail", "org.junit.jupiter.api.Assertions.fail")
                     }
                     replaceRegex("side by side comments", "(\n\\s*+[*]*+/\n)(/[/*])", "\$1\n\$2")
-                    replaceRegex("jsr305 nullable -> checkerframework", "javax\\.annotation\\.Nullable", "org.checkerframework.checker.nullness.qual.Nullable")
-                    replaceRegex("jsr305 nonnull -> checkerframework", "javax\\.annotation\\.Nonnull", "org.checkerframework.checker.nullness.qual.NonNull")
                     importOrder(
                         "org.apache.calcite.",
                         "org.apache.",
@@ -534,13 +453,10 @@ allprojects {
                         "static "
                     )
                     removeUnusedImports()
-                    replaceRegex("Avoid 2+ blank lines after package", "^package\\s+([^;]+)\\s*;\\n{3,}", "package \$1;\n\n")
-                    replaceRegex("Avoid 2+ blank lines after import", "^import\\s+([^;]+)\\s*;\\n{3,}", "import \$1;\n\n")
                     indentWithSpaces(2)
                     replaceRegex("@Override should not be on its own line", "(@Override)\\s{2,}", "\$1 ")
                     replaceRegex("@Test should not be on its own line", "(@Test)\\s{2,}", "\$1 ")
-                    replaceRegex("Newline in string should be at end of line", """\\n" *\+""", "\\\\n\"\n  +")
-                    replaceRegex("require message for requireNonNull", """(?<!#)requireNonNull\(\s*(\w+)\s*(?:,\s*"(?!\1")\w+"\s*)?\)""", "requireNonNull($1, \"$1\")")
+                    replaceRegex("Newline in string should be at end of line", """\\n" *\+""", "\\n\"\n  +")
                     // (?-m) disables multiline, so $ matches the very end of the file rather than end of line
                     replaceRegex("Remove '// End file.java' trailer", "(?-m)\n// End [^\n]+\\.\\w+\\s*$", "")
                     replaceRegex("<p> should not be placed a the end of the line", "(?-m)\\s*+<p> *+\n \\* ", "\n *\n * <p>")
@@ -578,8 +494,6 @@ allprojects {
 
         configure<CheckForbiddenApisExtension> {
             failOnUnsupportedJava = false
-            ignoreSignaturesOfMissingClasses = true
-            suppressAnnotations.add("org.immutables.value.Generated")
             bundledSignatures.addAll(
                 listOf(
                     "jdk-unsafe",
@@ -588,76 +502,6 @@ allprojects {
                 )
             )
             signaturesFiles = files("$rootDir/src/main/config/forbidden-apis/signatures.txt")
-        }
-
-        if (enableErrorprone) {
-            apply(plugin = "net.ltgt.errorprone")
-            dependencies {
-                "errorprone"("com.google.errorprone:error_prone_core:${"errorprone".v}")
-                "annotationProcessor"("com.google.guava:guava-beta-checker:1.0")
-            }
-            tasks.withType<JavaCompile>().configureEach {
-                options.errorprone {
-                    disableWarningsInGeneratedCode.set(true)
-                    errorproneArgs.add("-XepExcludedPaths:.*/javacc/.*")
-                    enable(
-                        "MethodCanBeStatic"
-                    )
-                    disable(
-                        "ComplexBooleanConstant",
-                        "EqualsGetClass",
-                        "EqualsHashCode", // verified in Checkstyle
-                        "OperatorPrecedence",
-                        "MutableConstantField",
-                        "ReferenceEquality",
-                        "SameNameButDifferent",
-                        "TypeParameterUnusedInFormals"
-                    )
-                    // Analyze issues, and enable the check
-                    disable(
-                        "BigDecimalEquals",
-                        "DoNotCallSuggester",
-                        "StringSplitter"
-                    )
-                }
-            }
-        }
-        if (enableCheckerframework) {
-            apply(plugin = "org.checkerframework")
-            dependencies {
-                "checkerFramework"("org.checkerframework:checker:${"checkerframework".v}")
-                // CheckerFramework annotations might be used in the code as follows:
-                // dependencies {
-                //     "compileOnly"("org.checkerframework:checker-qual")
-                //     "testCompileOnly"("org.checkerframework:checker-qual")
-                // }
-                if (JavaVersion.current() == JavaVersion.VERSION_1_8) {
-                    // only needed for JDK 8
-                    "checkerFrameworkAnnotatedJDK"("org.checkerframework:jdk8")
-                }
-            }
-            configure<org.checkerframework.gradle.plugin.CheckerFrameworkExtension> {
-                skipVersionCheck = true
-                // See https://checkerframework.org/manual/#introduction
-                checkers.add("org.checkerframework.checker.nullness.NullnessChecker")
-                // Below checkers take significant time and they do not provide much value :-/
-                // checkers.add("org.checkerframework.checker.optional.OptionalChecker")
-                // checkers.add("org.checkerframework.checker.regex.RegexChecker")
-                // https://checkerframework.org/manual/#creating-debugging-options-progress
-                // extraJavacArgs.add("-Afilenames")
-                extraJavacArgs.addAll(listOf("-Xmaxerrs", "10000"))
-                // Consider Java assert statements for nullness and other checks
-                extraJavacArgs.add("-AassumeAssertionsAreEnabled")
-                // https://checkerframework.org/manual/#stub-using
-                extraJavacArgs.add("-Astubs=" +
-                        fileTree("$rootDir/src/main/config/checkerframework") {
-                            include("**/*.astub")
-                        }.asPath
-                )
-                if (project.path == ":core") {
-                    extraJavacArgs.add("-AskipDefs=^org\\.apache\\.calcite\\.sql\\.parser\\.impl\\.")
-                }
-            }
         }
 
         tasks {
@@ -682,22 +526,13 @@ allprojects {
                     "**/org/apache/calcite/runtime/Resources${'$'}Inst.class",
                     "**/org/apache/calcite/test/concurrent/ConcurrentTestCommandScript.class",
                     "**/org/apache/calcite/test/concurrent/ConcurrentTestCommandScript${'$'}ShellCommand.class",
-                    "**/org/apache/calcite/util/Unsafe.class",
-                    "**/org/apache/calcite/test/Unsafe.class"
+                    "**/org/apache/calcite/util/Unsafe.class"
                 )
             }
 
             configureEach<JavaCompile> {
-                inputs.property("java.version", System.getProperty("java.version"))
-                inputs.property("java.vm.version", System.getProperty("java.vm.version"))
                 options.encoding = "UTF-8"
-                options.compilerArgs.add("-Xlint:deprecation")
-                if (werror) {
-                    options.compilerArgs.add("-Werror")
-                }
-                if (enableCheckerframework) {
-                    options.forkOptions.memoryMaximumSize = "2g"
-                }
+                options.compilerArgs.addAll(listOf("-Xlint:deprecation", "-Werror"))
             }
             configureEach<Test> {
                 outputs.cacheIf("test results depend on the database configuration, so we souldn't cache it") {
@@ -724,7 +559,6 @@ allprojects {
                 passProperty("junit.jupiter.execution.timeout.default", "5 m")
                 passProperty("user.language", "TR")
                 passProperty("user.country", "tr")
-                passProperty("user.timezone", "UTC")
                 val props = System.getProperties()
                 for (e in props.propertyNames() as `java.util`.Enumeration<String>) {
                     if (e.startsWith("calcite.") || e.startsWith("avatica.")) {
@@ -781,6 +615,11 @@ allprojects {
             archiveClassifier.set("tests")
         }
 
+        val testSourcesJar by tasks.registering(Jar::class) {
+            from(sourceSets["test"].allJava)
+            archiveClassifier.set("test-sources")
+        }
+
         val sourcesJar by tasks.registering(Jar::class) {
             from(sourceSets["main"].allJava)
             archiveClassifier.set("sources")
@@ -791,11 +630,18 @@ allprojects {
             archiveClassifier.set("javadoc")
         }
 
+        val testClasses by configurations.creating {
+            extendsFrom(configurations["testRuntime"])
+        }
+
         val archives by configurations.getting
 
         // Parenthesis needed to use Project#getArtifacts
         (artifacts) {
+            testClasses(testJar)
             archives(sourcesJar)
+            archives(testJar)
+            archives(testSourcesJar)
         }
 
         val archivesBaseName = "calcite-$name"
