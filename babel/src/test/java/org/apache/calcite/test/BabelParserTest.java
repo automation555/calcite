@@ -16,7 +16,6 @@
  */
 package org.apache.calcite.test;
 
-import org.apache.calcite.avatica.util.TimeUnit;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.dialect.MysqlSqlDialect;
 import org.apache.calcite.sql.parser.SqlAbstractParserImpl;
@@ -35,7 +34,6 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
 
 import static org.hamcrest.CoreMatchers.is;
@@ -107,6 +105,13 @@ class BabelParserTest extends SqlParserTest {
   @Test void testYearIsNotReserved() {
     final String sql = "select 1 as year from t";
     final String expected = "SELECT 1 AS `YEAR`\n"
+        + "FROM `T`";
+    sql(sql).ok(expected);
+  }
+
+  @Test void testIdentifierStartWithNumber() {
+    final String sql = "select 1 as 1_c1 from t";
+    final String expected = "SELECT 1 AS `1_C1`\n"
         + "FROM `T`";
     sql(sql).ok(expected);
   }
@@ -184,34 +189,6 @@ class BabelParserTest extends SqlParserTest {
         + "FROM `MYTABLE`";
 
     sql(sql).ok(expected);
-  }
-
-  /** Overrides, adding tests for DATEADD, DATEDIFF, DATE_PART functions
-   * in addition to EXTRACT. */
-  @Override protected void checkTimeUnitCodes(
-      Map<String, TimeUnit> timeUnitCodes) {
-    super.checkTimeUnitCodes(timeUnitCodes);
-
-    SqlParserFixture f = fixture()
-        .withConfig(config -> config.withTimeUnitCodes(timeUnitCodes));
-
-    timeUnitCodes.forEach((abbrev, timeUnit) -> {
-      String sql = "SELECT "
-          + "DATEADD(" + abbrev + ", 1, '2022-06-03 15:30:00.000'),"
-          + "DATEDIFF(" + abbrev + ", '2021-06-03 12:00:00.000', '2022-06-03 15:30:00.000'),"
-          + "DATE_PART(" + abbrev + ", '2022-06-03 15:30:00.000')";
-      String expected = "SELECT "
-          + "`DATEADD`(" + timeUnit + ", 1, '2022-06-03 15:30:00.000'), "
-          + "`DATEDIFF`(" + timeUnit + ", '2021-06-03 12:00:00.000', '2022-06-03 15:30:00.000'), "
-          + "`DATE_PART`(" + timeUnit + ", '2022-06-03 15:30:00.000')";
-      f.sql(sql).ok(expected);
-    });
-    f.sql("SELECT DATEADD(^A^, 1, NOW())")
-        .fails("'A' is not a valid datetime format");
-    if (timeUnitCodes.containsKey("S")) {
-      f.sql("SELECT DATEADD(S^.^A, 1, NOW())")
-          .fails("(?s).*Encountered \".\" at .*");
-    }
   }
 
   /** PostgreSQL and Redshift allow TIMESTAMP literals that contain only a
