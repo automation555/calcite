@@ -63,10 +63,10 @@ import java.util.Set;
  * {@link RelMetadataQuery#areColumnsUnique} for the standard logical algebra.
  */
 public class RelMdColumnUniqueness
-    implements MetadataHandler<BuiltInMetadata.ColumnUniqueness> {
+    implements MetadataHandler {
   public static final RelMetadataProvider SOURCE =
       ReflectiveRelMetadataProvider.reflectiveSource(
-          new RelMdColumnUniqueness(), BuiltInMetadata.ColumnUniqueness.Handler.class);
+          new RelMdColumnUniqueness(), BuiltInMetadata.ColumnUniquenessHandler.class);
 
   //~ Constructors -----------------------------------------------------------
 
@@ -74,6 +74,7 @@ public class RelMdColumnUniqueness
 
   //~ Methods ----------------------------------------------------------------
 
+  @Deprecated // to be removed before 2.0
   @Override public MetadataDef<BuiltInMetadata.ColumnUniqueness> getDef() {
     return BuiltInMetadata.ColumnUniqueness.DEF;
   }
@@ -351,24 +352,8 @@ public class RelMdColumnUniqueness
     if (Aggregate.isSimple(rel) || ignoreNulls) {
       columns = decorateWithConstantColumnsFromPredicates(columns, rel, mq);
       // group by keys form a unique key
-      final ImmutableBitSet groupKey = ImmutableBitSet.range(rel.getGroupCount());
-      final boolean contained = columns.contains(groupKey);
-      if (contained) {
-        return true;
-      } else if (!Aggregate.isSimple(rel)) {
-        return false;
-      }
-
-      final ImmutableBitSet commonKeys = columns.intersect(groupKey);
-      if (commonKeys.isEmpty()) {
-        return false;
-      }
-      final ImmutableBitSet.Builder targetColumns = ImmutableBitSet.builder();
-      for (int key: commonKeys) {
-        targetColumns.set(rel.getGroupSet().nth(key));
-      }
-
-      return mq.areColumnsUnique(rel.getInput(), targetColumns.build(), ignoreNulls);
+      ImmutableBitSet groupKey = ImmutableBitSet.range(rel.getGroupCount());
+      return columns.contains(groupKey);
     }
     return null;
   }

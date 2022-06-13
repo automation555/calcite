@@ -33,6 +33,7 @@ import org.apache.calcite.rel.core.TableModify;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.core.Union;
 import org.apache.calcite.rel.core.Values;
+import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.util.Bug;
 import org.apache.calcite.util.ImmutableBitSet;
@@ -46,13 +47,14 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  * {@link RelMetadataQuery#getRowCount} for the standard logical algebra.
  */
 public class RelMdRowCount
-    implements MetadataHandler<BuiltInMetadata.RowCount> {
+    implements MetadataHandler {
   public static final RelMetadataProvider SOURCE =
       ReflectiveRelMetadataProvider.reflectiveSource(
-          new RelMdRowCount(), BuiltInMetadata.RowCount.Handler.class);
+          new RelMdRowCount(), BuiltInMetadata.RowCountHandler.class);
 
   //~ Methods ----------------------------------------------------------------
 
+  @Deprecated // to be removed before 2.0
   @Override public MetadataDef<BuiltInMetadata.RowCount> getDef() {
     return BuiltInMetadata.RowCount.DEF;
   }
@@ -146,13 +148,22 @@ public class RelMdRowCount
     if (rowCount == null) {
       return null;
     }
-
-    final int offset = rel.offset instanceof RexLiteral ? RexLiteral.intValue(rel.offset) : 0;
+    if (rel.offset instanceof RexDynamicParam) {
+      return rowCount;
+    }
+    final int offset = rel.offset == null ? 0 : RexLiteral.intValue(rel.offset);
     rowCount = Math.max(rowCount - offset, 0D);
 
-    final double limit =
-        rel.fetch instanceof RexLiteral ? RexLiteral.intValue(rel.fetch) : rowCount;
-    return limit < rowCount ? limit : rowCount;
+    if (rel.fetch != null) {
+      if (rel.fetch instanceof RexDynamicParam) {
+        return rowCount;
+      }
+      final int limit = RexLiteral.intValue(rel.fetch);
+      if (limit < rowCount) {
+        return (double) limit;
+      }
+    }
+    return rowCount;
   }
 
   public @Nullable Double getRowCount(EnumerableLimit rel, RelMetadataQuery mq) {
@@ -160,13 +171,22 @@ public class RelMdRowCount
     if (rowCount == null) {
       return null;
     }
-
-    final int offset = rel.offset instanceof RexLiteral ? RexLiteral.intValue(rel.offset) : 0;
+    if (rel.offset instanceof RexDynamicParam) {
+      return rowCount;
+    }
+    final int offset = rel.offset == null ? 0 : RexLiteral.intValue(rel.offset);
     rowCount = Math.max(rowCount - offset, 0D);
 
-    final double limit =
-        rel.fetch instanceof RexLiteral ? RexLiteral.intValue(rel.fetch) : rowCount;
-    return limit < rowCount ? limit : rowCount;
+    if (rel.fetch != null) {
+      if (rel.fetch instanceof RexDynamicParam) {
+        return rowCount;
+      }
+      final int limit = RexLiteral.intValue(rel.fetch);
+      if (limit < rowCount) {
+        return (double) limit;
+      }
+    }
+    return rowCount;
   }
 
   // Covers Converter, Interpreter
@@ -180,10 +200,7 @@ public class RelMdRowCount
 
   public Double getRowCount(Aggregate rel, RelMetadataQuery mq) {
     ImmutableBitSet groupKey = rel.getGroupSet();
-    if (groupKey.isEmpty()) {
-      // Aggregate with no GROUP BY always returns 1 row (even on empty table).
-      return 1D;
-    }
+
     // rowCount is the cardinality of the group by columns
     Double distinctRowCount =
         mq.getDistinctRowCount(rel.getInput(), groupKey, null);

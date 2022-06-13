@@ -19,7 +19,6 @@ package org.apache.calcite.test.catalog;
 import org.apache.calcite.plan.RelOptPredicateList;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.metadata.BuiltInMetadata;
-import org.apache.calcite.rel.metadata.MetadataDef;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
@@ -35,8 +34,6 @@ import org.apache.calcite.sql.util.SqlOperatorTables;
 
 import com.google.common.collect.ImmutableList;
 
-import org.checkerframework.checker.nullness.qual.NonNull;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -48,24 +45,17 @@ public class MockCatalogReaderExtended extends MockCatalogReaderSimple {
   /**
    * Creates a MockCatalogReader.
    *
-   * <p>Caller must then call {@link #init} to populate with data;
-   * constructor is protected to encourage you to call {@link #create}.
+   * <p>Caller must then call {@link #init} to populate with data.</p>
    *
    * @param typeFactory   Type factory
    * @param caseSensitive case sensitivity
    */
-  protected MockCatalogReaderExtended(RelDataTypeFactory typeFactory,
+  public MockCatalogReaderExtended(RelDataTypeFactory typeFactory,
       boolean caseSensitive) {
     super(typeFactory, caseSensitive);
   }
 
-  /** Creates and initializes a MockCatalogReaderExtended. */
-  public static @NonNull MockCatalogReaderExtended create(
-      RelDataTypeFactory typeFactory, boolean caseSensitive) {
-    return new MockCatalogReaderExtended(typeFactory, caseSensitive).init();
-  }
-
-  @Override public MockCatalogReaderExtended init() {
+  @Override public MockCatalogReader init() {
     super.init();
 
     MockSchema salesSchema = new MockSchema("SALES");
@@ -215,7 +205,7 @@ public class MockCatalogReaderExtended extends MockCatalogReaderSimple {
     restaurantTable.addColumn("HILBERT", f.bigintType);
     restaurantTable.addMonotonic("HILBERT");
     restaurantTable.addWrap(
-        new BuiltInMetadata.AllPredicates.Handler() {
+        new BuiltInMetadata.AllPredicatesHandler() {
           @Override public RelOptPredicateList getAllPredicates(RelNode r,
               RelMetadataQuery mq) {
             // Return the predicate:
@@ -245,7 +235,9 @@ public class MockCatalogReaderExtended extends MockCatalogReaderSimple {
             throw new AssertionError();
           }
 
-          @Override public MetadataDef<BuiltInMetadata.AllPredicates> getDef() {
+          @Deprecated // to be removed before 2.0
+          @Override public
+          org.apache.calcite.rel.metadata.MetadataDef<BuiltInMetadata.AllPredicates> getDef() {
             return BuiltInMetadata.AllPredicates.DEF;
           }
         });
