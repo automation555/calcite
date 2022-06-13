@@ -96,10 +96,6 @@ public class RexShuttle implements RexVisitor<RexNode> {
     return fieldRef;
   }
 
-  @Override public RexNode visitLambda(RexLambda lambda) {
-    return lambda;
-  }
-
   public RexNode visitCall(final RexCall call) {
     boolean[] update = {false};
     List<RexNode> clonedOperands = visitList(call.operands, update);
@@ -149,7 +145,8 @@ public class RexShuttle implements RexVisitor<RexNode> {
   protected List<RexNode> visitList(
       List<? extends RexNode> exprs, boolean[] update) {
     ImmutableList.Builder<RexNode> clonedOperands = ImmutableList.builder();
-    for (RexNode operand : exprs) {
+    for (int i = 0; i < exprs.size(); i++) {
+      RexNode operand = exprs.get(i);
       RexNode clonedOperand = operand.accept(this);
       if ((clonedOperand != operand) && (update != null)) {
         update[0] = true;
@@ -164,8 +161,8 @@ public class RexShuttle implements RexVisitor<RexNode> {
    */
   public void visitList(
       List<? extends RexNode> exprs, List<RexNode> outExprs) {
-    for (RexNode expr : exprs) {
-      outExprs.add(expr.accept(this));
+    for (int i = 0; i < exprs.size(); i++) {
+      outExprs.add(exprs.get(i).accept(this));
     }
   }
 
@@ -216,10 +213,6 @@ public class RexShuttle implements RexVisitor<RexNode> {
   }
 
   public RexNode visitLocalRef(RexLocalRef localRef) {
-    return localRef;
-  }
-
-  @Override public RexNode visitLambdaRef(RexLambdaRef localRef) {
     return localRef;
   }
 
@@ -285,3 +278,5 @@ public class RexShuttle implements RexVisitor<RexNode> {
     return (expr == null) ? null : expr.accept(this);
   }
 }
+
+// End RexShuttle.java
