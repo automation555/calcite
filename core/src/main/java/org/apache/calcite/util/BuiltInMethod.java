@@ -17,10 +17,6 @@
 package org.apache.calcite.util;
 
 import org.apache.calcite.DataContext;
-import org.apache.calcite.adapter.enumerable.AggregateLambdaFactory;
-import org.apache.calcite.adapter.enumerable.OrderedAggregateLambdaFactory;
-import org.apache.calcite.adapter.enumerable.SequencedAdderAggregateLambdaFactory;
-import org.apache.calcite.adapter.enumerable.SourceSorter;
 import org.apache.calcite.adapter.java.ReflectiveSchema;
 import org.apache.calcite.adapter.jdbc.JdbcSchema;
 import org.apache.calcite.avatica.util.DateTimeUtils;
@@ -92,10 +88,6 @@ import org.apache.calcite.schema.Schema;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.schema.Schemas;
 import org.apache.calcite.sql.SqlExplainLevel;
-import org.apache.calcite.sql.SqlJsonConstructorNullClause;
-import org.apache.calcite.sql.SqlJsonQueryEmptyOrErrorBehavior;
-import org.apache.calcite.sql.SqlJsonQueryWrapperBehavior;
-import org.apache.calcite.sql.SqlJsonValueEmptyOrErrorBehavior;
 
 import com.google.common.collect.ImmutableMap;
 
@@ -142,19 +134,12 @@ public enum BuiltInMethod {
       SchemaPlus.class, Class.class, String.class),
   REFLECTIVE_SCHEMA_GET_TARGET(ReflectiveSchema.class, "getTarget"),
   DATA_CONTEXT_GET(DataContext.class, "get", String.class),
-  DATA_CONTEXT_GET_BINDABLE_PARAM(DataContext.class, "getBindableParameterLocalValue",
-      int.class),
   DATA_CONTEXT_GET_ROOT_SCHEMA(DataContext.class, "getRootSchema"),
   JDBC_SCHEMA_DATA_SOURCE(JdbcSchema.class, "getDataSource"),
   ROW_VALUE(Row.class, "getObject", int.class),
   ROW_AS_COPY(Row.class, "asCopy", Object[].class),
   RESULT_SET_ENUMERABLE_OF(ResultSetEnumerable.class, "of", DataSource.class,
       String.class, Function1.class),
-  RESULT_SET_ENUMERABLE_OF_PREPARED(ResultSetEnumerable.class, "of",
-      DataSource.class, String.class, Function1.class,
-      ResultSetEnumerable.PreparedStatementEnricher.class),
-  CREATE_ENRICHER(ResultSetEnumerable.class, "createEnricher", Integer[].class,
-      DataContext.class),
   JOIN(ExtendedEnumerable.class, "join", Enumerable.class, Function1.class,
       Function1.class, Function2.class),
   MERGE_JOIN(EnumerableDefaults.class, "mergeJoin", Enumerable.class,
@@ -265,33 +250,6 @@ public enum BuiltInMethod {
   ANY_ITEM(SqlFunctions.class, "itemOptional", Object.class, Object.class),
   UPPER(SqlFunctions.class, "upper", String.class),
   LOWER(SqlFunctions.class, "lower", String.class),
-  JSONIZE(SqlFunctions.class, "jsonize", Object.class),
-  JSON_VALUE_EXPRESSION(SqlFunctions.class, "jsonValueExpression",
-      String.class),
-  JSON_STRUCTURED_VALUE_EXPRESSION(SqlFunctions.class,
-      "jsonStructuredValueExpression", Object.class),
-  JSON_API_COMMON_SYNTAX(SqlFunctions.class, "jsonApiCommonSyntax",
-      Object.class, String.class),
-  JSON_EXISTS(SqlFunctions.class, "jsonExists", Object.class),
-  JSON_VALUE_ANY(SqlFunctions.class, "jsonValueAny", Object.class,
-      SqlJsonValueEmptyOrErrorBehavior.class, Object.class,
-      SqlJsonValueEmptyOrErrorBehavior.class, Object.class),
-  JSON_QUERY(SqlFunctions.class, "jsonQuery", Object.class,
-      SqlJsonQueryWrapperBehavior.class,
-      SqlJsonQueryEmptyOrErrorBehavior.class,
-      SqlJsonQueryEmptyOrErrorBehavior.class),
-  JSON_OBJECT(SqlFunctions.class, "jsonObject",
-      SqlJsonConstructorNullClause.class),
-  JSON_OBJECTAGG_ADD(SqlFunctions.class, "jsonObjectAggAdd", Map.class,
-      String.class, Object.class, SqlJsonConstructorNullClause.class),
-  JSON_ARRAY(SqlFunctions.class, "jsonArray",
-      SqlJsonConstructorNullClause.class),
-  JSON_ARRAYAGG_ADD(SqlFunctions.class, "jsonArrayAggAdd",
-      List.class, Object.class, SqlJsonConstructorNullClause.class),
-  IS_JSON_VALUE(SqlFunctions.class, "isJsonValue", String.class),
-  IS_JSON_OBJECT(SqlFunctions.class, "isJsonObject", String.class),
-  IS_JSON_ARRAY(SqlFunctions.class, "isJsonArray", String.class),
-  IS_JSON_SCALAR(SqlFunctions.class, "isJsonScalar", String.class),
   INITCAP(SqlFunctions.class, "initcap", String.class),
   SUBSTRING(SqlFunctions.class, "substring", String.class, int.class,
       int.class),
@@ -337,6 +295,14 @@ public enum BuiltInMethod {
   INTERNAL_TO_DATE(SqlFunctions.class, "internalToDate", int.class),
   INTERNAL_TO_TIME(SqlFunctions.class, "internalToTime", int.class),
   INTERNAL_TO_TIMESTAMP(SqlFunctions.class, "internalToTimestamp", long.class),
+  TIMESTAMPSTRING_TO_TIMESTAMP(SqlFunctions.class, "fromTimestampStringToTimestamp",
+      TimestampString.class),
+  DATESTRING_TO_TIMESTAMP(SqlFunctions.class, "fromDateStringToTimestamp",
+      DateString.class),
+  TIMESTAMPSTRING_TO_DATE(SqlFunctions.class, "fromTimestampStringToDate",
+      TimestampString.class),
+  DATESTRING_TO_DATE(SqlFunctions.class, "fromDateStringToDate",
+      DateString.class),
   STRING_TO_DATE(DateTimeUtils.class, "dateStringToUnixDate", String.class),
   STRING_TO_TIME(DateTimeUtils.class, "timeStringToUnixDate", String.class),
   STRING_TO_TIMESTAMP(DateTimeUtils.class, "timestampStringToUnixDate", String.class),
@@ -475,21 +441,7 @@ public enum BuiltInMethod {
   CONTEXT_ROOT(Context.class, "root", true),
   DATA_CONTEXT_GET_QUERY_PROVIDER(DataContext.class, "getQueryProvider"),
   METADATA_REL(Metadata.class, "rel"),
-  STRUCT_ACCESS(SqlFunctions.class, "structAccess", Object.class, int.class,
-      String.class),
-  SOURCE_SORTER(SourceSorter.class, Function2.class, Function1.class,
-      Comparator.class),
-  ORDERED_AGGREGATE_LAMBDA_FACTORY(OrderedAggregateLambdaFactory.class,
-      Function0.class, List.class),
-  SEQUENCED_ADDER_AGGREGATE_LAMBDA_FACTORY(SequencedAdderAggregateLambdaFactory.class,
-      Function0.class, List.class),
-  AGG_LAMBDA_FACTORY_ACC_INITIALIZER(AggregateLambdaFactory.class,
-      "accumulatorInitializer"),
-  AGG_LAMBDA_FACTORY_ACC_ADDER(AggregateLambdaFactory.class, "accumulatorAdder"),
-  AGG_LAMBDA_FACTORY_ACC_RESULT_SELECTOR(AggregateLambdaFactory.class,
-      "resultSelector", Function2.class),
-  AGG_LAMBDA_FACTORY_ACC_SINGLE_GROUP_RESULT_SELECTOR(AggregateLambdaFactory.class,
-      "singleGroupResultSelector", Function1.class);
+  STRUCT_ACCESS(SqlFunctions.class, "structAccess", Object.class, int.class, String.class);
 
   public final Method method;
   public final Constructor constructor;

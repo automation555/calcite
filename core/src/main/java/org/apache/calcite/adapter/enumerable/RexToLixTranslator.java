@@ -50,7 +50,9 @@ import org.apache.calcite.sql.type.SqlTypeUtil;
 import org.apache.calcite.sql.validate.SqlConformance;
 import org.apache.calcite.util.BuiltInMethod;
 import org.apache.calcite.util.ControlFlowException;
+import org.apache.calcite.util.DateString;
 import org.apache.calcite.util.Pair;
+import org.apache.calcite.util.TimestampString;
 import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
@@ -571,18 +573,6 @@ public class RexToLixTranslator {
     return scaleIntervalToNumber(sourceType, targetType, convert);
   }
 
-  private Expression handleNullUnboxingIfNecessary(
-      Expression input,
-      RexImpTable.NullAs nullAs,
-      Type storageType) {
-    if (RexImpTable.NullAs.NOT_POSSIBLE == nullAs && input.type.equals(storageType)) {
-      // When we asked for not null input that would be stored as box, avoid
-      // unboxing which may occur in the handleNull method below.
-      return input;
-    }
-    return handleNull(input, nullAs);
-  }
-
   /** Adapts an expression with "normal" result to one that adheres to
    * this particular policy. Wraps the result expression into a new
    * parameter if need be.
@@ -636,13 +626,18 @@ public class RexToLixTranslator {
       nullAs = RexImpTable.NullAs.NOT_POSSIBLE;
     }
     switch (expr.getKind()) {
-    case INPUT_REF: {
+    case INPUT_REF:
       final int index = ((RexInputRef) expr).getIndex();
       Expression x = inputGetter.field(list, index, storageType);
 
       Expression input = list.append("inp" + index + "_", x); // safe to share
-      return handleNullUnboxingIfNecessary(input, nullAs, storageType);
-    }
+      if (nullAs == RexImpTable.NullAs.NOT_POSSIBLE
+          && input.type.equals(storageType)) {
+        // When we asked for not null input that would be stored as box, avoid
+        // unboxing via nullAs.handle below.
+        return input;
+      }
+      return handleNull(input, nullAs);
     case LOCAL_REF:
       return translate(
           deref(expr),
@@ -662,7 +657,7 @@ public class RexToLixTranslator {
     case CORREL_VARIABLE:
       throw new RuntimeException("Cannot translate " + expr + ". Correlated"
           + " variables should always be referenced by field access");
-    case FIELD_ACCESS: {
+    case FIELD_ACCESS:
       RexFieldAccess fieldAccess = (RexFieldAccess) expr;
       RexNode target = deref(fieldAccess.getReferenceExpr());
       int fieldIndex = fieldAccess.getField().getIndex();
@@ -675,9 +670,7 @@ public class RexToLixTranslator {
         }
         InputGetter getter =
             correlates.apply(((RexCorrelVariable) target).getName());
-        Expression y = getter.field(list, fieldIndex, storageType);
-        Expression input = list.append("corInp" + fieldIndex + "_", y); // safe to share
-        return handleNullUnboxingIfNecessary(input, nullAs, storageType);
+        return getter.field(list, fieldIndex, storageType);
       default:
         RexNode rxIndex = builder.makeLiteral(fieldIndex, typeFactory.createType(int.class), true);
         RexNode rxName = builder.makeLiteral(fieldName, typeFactory.createType(String.class), true);
@@ -687,7 +680,6 @@ public class RexToLixTranslator {
             ImmutableList.of(target, rxIndex, rxName));
         return translateCall(accessCall, nullAs);
       }
-    }
     default:
       if (expr instanceof RexCall) {
         return translateCall((RexCall) expr, nullAs);
@@ -729,8 +721,8 @@ public class RexToLixTranslator {
     }
     return nullAs.handle(
         convert(
-            Expressions.call(root, BuiltInMethod.DATA_CONTEXT_GET_BINDABLE_PARAM.method,
-                Expressions.constant(expr.getIndex())),
+            Expressions.call(root, BuiltInMethod.DATA_CONTEXT_GET.method,
+                Expressions.constant("?" + expr.getIndex())),
             storageType));
   }
 
@@ -1025,6 +1017,10 @@ public class RexToLixTranslator {
       // generate "SqlFunctions.internalToDate".
       if (isA(fromType, Primitive.INT)) {
         return Expressions.call(BuiltInMethod.INTERNAL_TO_DATE.method, operand);
+      } else if (fromType == TimestampString.class) {
+        return Expressions.call(BuiltInMethod.TIMESTAMPSTRING_TO_DATE.method, operand);
+      } else if (fromType == DateString.class) {
+        return Expressions.call(BuiltInMethod.DATESTRING_TO_DATE.method, operand);
       } else {
         return Expressions.convert_(operand, java.sql.Date.class);
       }
@@ -1042,6 +1038,10 @@ public class RexToLixTranslator {
       if (isA(fromType, Primitive.LONG)) {
         return Expressions.call(BuiltInMethod.INTERNAL_TO_TIMESTAMP.method,
             operand);
+      } else if (fromType == TimestampString.class) {
+        return Expressions.call(BuiltInMethod.TIMESTAMPSTRING_TO_TIMESTAMP.method, operand);
+      } else if (fromType == DateString.class) {
+        return Expressions.call(BuiltInMethod.DATESTRING_TO_TIMESTAMP.method, operand);
       } else {
         return Expressions.convert_(operand, java.sql.Timestamp.class);
       }

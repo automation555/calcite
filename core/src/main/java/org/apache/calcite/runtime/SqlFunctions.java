@@ -33,24 +33,12 @@ import org.apache.calcite.linq4j.function.Function1;
 import org.apache.calcite.linq4j.function.NonDeterministic;
 import org.apache.calcite.linq4j.tree.Primitive;
 import org.apache.calcite.runtime.FlatLists.ComparableList;
-import org.apache.calcite.sql.SqlJsonConstructorNullClause;
-import org.apache.calcite.sql.SqlJsonExistsErrorBehavior;
-import org.apache.calcite.sql.SqlJsonQueryEmptyOrErrorBehavior;
-import org.apache.calcite.sql.SqlJsonQueryWrapperBehavior;
-import org.apache.calcite.sql.SqlJsonValueEmptyOrErrorBehavior;
 import org.apache.calcite.util.Bug;
+import org.apache.calcite.util.DateString;
 import org.apache.calcite.util.NumberUtil;
 import org.apache.calcite.util.TimeWithTimeZoneString;
+import org.apache.calcite.util.TimestampString;
 import org.apache.calcite.util.TimestampWithTimeZoneString;
-
-import com.jayway.jsonpath.Configuration;
-import com.jayway.jsonpath.DocumentContext;
-import com.jayway.jsonpath.JsonPath;
-import com.jayway.jsonpath.Option;
-import com.jayway.jsonpath.spi.json.JacksonJsonProvider;
-import com.jayway.jsonpath.spi.json.JsonProvider;
-import com.jayway.jsonpath.spi.mapper.JacksonMappingProvider;
-import com.jayway.jsonpath.spi.mapper.MappingProvider;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
@@ -63,7 +51,6 @@ import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -72,14 +59,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Objects;
 import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import static org.apache.calcite.util.Static.RESOURCE;
 
 /**
  * Helper methods to implement SQL functions in generated code.
@@ -126,15 +109,6 @@ public class SqlFunctions {
   private static final ThreadLocal<Map<String, AtomicLong>> THREAD_SEQUENCES =
       ThreadLocal.withInitial(HashMap::new);
 
-  private static final Pattern JSON_PATH_BASE =
-      Pattern.compile("^\\s*(?<mode>strict|lax)\\s+(?<spec>.+)$",
-          Pattern.CASE_INSENSITIVE | Pattern.DOTALL | Pattern.MULTILINE);
-
-  private static final JsonProvider JSON_PATH_JSON_PROVIDER =
-      new JacksonJsonProvider();
-  private static final MappingProvider JSON_PATH_MAPPING_PROVIDER =
-      new JacksonMappingProvider();
-
   private SqlFunctions() {
   }
 
@@ -146,7 +120,7 @@ public class SqlFunctions {
     }
     int e = s + l;
     if (e < s) {
-      throw RESOURCE.illegalNegativeSubstringLength().ex();
+      throw new IllegalArgumentException("substring error: negative substring length not allowed");
     }
     if (s > lc || e < 1) {
       return "";
@@ -169,7 +143,7 @@ public class SqlFunctions {
     }
     int e = s + l;
     if (e < s) {
-      throw RESOURCE.illegalNegativeSubstringLength().ex();
+      throw new IllegalArgumentException("substring error: negative substring length not allowed");
     }
     if (s > lc || e < 1) {
       return ByteString.EMPTY;
@@ -265,7 +239,7 @@ public class SqlFunctions {
   public static String trim(boolean left, boolean right, String seek,
       String s, boolean strict) {
     if (strict && seek.length() != 1) {
-      throw RESOURCE.trimError().ex();
+      throw new IllegalArgumentException("trim error: trim character must be exactly 1 character");
     }
     int j = s.length();
     if (right) {
@@ -840,16 +814,16 @@ public class SqlFunctions {
     throw notArithmetic("*", b0, b1);
   }
 
-  private static RuntimeException notArithmetic(String op, Object b0,
+  private static IllegalArgumentException notArithmetic(String op, Object b0,
       Object b1) {
-    return RESOURCE.invalidTypesForArithmetic(b0.getClass().toString(),
-        op, b1.getClass().toString()).ex();
+    return new IllegalArgumentException("Invalid types for arithmetic: "
+        + b0.getClass() + " " + op + " " + b1.getClass());
   }
 
-  private static RuntimeException notComparable(String op, Object b0,
+  private static IllegalArgumentException notComparable(String op, Object b0,
       Object b1) {
-    return RESOURCE.invalidTypesForComparison(b0.getClass().toString(),
-        op, b1.getClass().toString()).ex();
+    return new IllegalArgumentException("Invalid types for comparison: "
+        + b0.getClass() + " " + op + " " + b1.getClass());
   }
 
   // EXP
@@ -863,6 +837,10 @@ public class SqlFunctions {
     return Math.exp(b0.doubleValue());
   }
 
+  public static double exp(long b0) {
+    return Math.exp(b0);
+  }
+
   // POWER
 
   /** SQL <code>POWER</code> operator applied to double values. */
@@ -874,12 +852,20 @@ public class SqlFunctions {
     return Math.pow(b0, b1.doubleValue());
   }
 
-  public static double power(BigDecimal b0, double b1) {
-    return Math.pow(b0.doubleValue(), b1);
+  public static double power(long b0, long b1) {
+    return Math.pow(b0, b1);
   }
 
   public static double power(BigDecimal b0, BigDecimal b1) {
     return Math.pow(b0.doubleValue(), b1.doubleValue());
+  }
+
+  public static double power(long b0, BigDecimal b1) {
+    return Math.pow(b0, b1.doubleValue());
+  }
+
+  public static double power(BigDecimal b0, long b1) {
+    return Math.pow(b0.doubleValue(), b1);
   }
 
   // LN
@@ -887,6 +873,11 @@ public class SqlFunctions {
   /** SQL {@code LN(number)} function applied to double values. */
   public static double ln(double d) {
     return Math.log(d);
+  }
+
+  /** SQL {@code LN(number)} function applied to long values. */
+  public static double ln(long b0) {
+    return Math.log(b0);
   }
 
   /** SQL {@code LN(number)} function applied to BigDecimal values. */
@@ -898,6 +889,11 @@ public class SqlFunctions {
 
   /** SQL <code>LOG10(numeric)</code> operator applied to double values. */
   public static double log10(double b0) {
+    return Math.log10(b0);
+  }
+
+  /** SQL {@code LOG10(number)} function applied to long values. */
+  public static double log10(long b0) {
     return Math.log10(b0);
   }
 
@@ -1099,6 +1095,11 @@ public class SqlFunctions {
   }
 
   // ACOS
+  /** SQL <code>ACOS</code> operator applied to long values. */
+  public static double acos(long b0) {
+    return Math.acos(b0);
+  }
+
   /** SQL <code>ACOS</code> operator applied to BigDecimal values. */
   public static double acos(BigDecimal b0) {
     return Math.acos(b0.doubleValue());
@@ -1110,6 +1111,11 @@ public class SqlFunctions {
   }
 
   // ASIN
+  /** SQL <code>ASIN</code> operator applied to long values. */
+  public static double asin(long b0) {
+    return Math.asin(b0);
+  }
+
   /** SQL <code>ASIN</code> operator applied to BigDecimal values. */
   public static double asin(BigDecimal b0) {
     return Math.asin(b0.doubleValue());
@@ -1121,6 +1127,11 @@ public class SqlFunctions {
   }
 
   // ATAN
+  /** SQL <code>ATAN</code> operator applied to long values. */
+  public static double atan(long b0) {
+    return Math.atan(b0);
+  }
+
   /** SQL <code>ATAN</code> operator applied to BigDecimal values. */
   public static double atan(BigDecimal b0) {
     return Math.atan(b0.doubleValue());
@@ -1132,13 +1143,18 @@ public class SqlFunctions {
   }
 
   // ATAN2
-  /** SQL <code>ATAN2</code> operator applied to double/BigDecimal values. */
-  public static double atan2(double b0, BigDecimal b1) {
+  /** SQL <code>ATAN2</code> operator applied to long values. */
+  public static double atan2(long b0, long b1) {
+    return Math.atan2(b0, b1);
+  }
+
+  /** SQL <code>ATAN2</code> operator applied to long/BigDecimal values. */
+  public static double atan2(long b0, BigDecimal b1) {
     return Math.atan2(b0, b1.doubleValue());
   }
 
-  /** SQL <code>ATAN2</code> operator applied to BigDecimal/double values. */
-  public static double atan2(BigDecimal b0, double b1) {
+  /** SQL <code>ATAN2</code> operator applied to BigDecimal/long values. */
+  public static double atan2(BigDecimal b0, long b1) {
     return Math.atan2(b0.doubleValue(), b1);
   }
 
@@ -1153,6 +1169,11 @@ public class SqlFunctions {
   }
 
   // COS
+  /** SQL <code>COS</code> operator applied to long values. */
+  public static double cos(long b0) {
+    return Math.cos(b0);
+  }
+
   /** SQL <code>COS</code> operator applied to BigDecimal values. */
   public static double cos(BigDecimal b0) {
     return Math.cos(b0.doubleValue());
@@ -1164,6 +1185,11 @@ public class SqlFunctions {
   }
 
   // COT
+  /** SQL <code>COT</code> operator applied to long values. */
+  public static double cot(long b0) {
+    return 1.0d / Math.tan(b0);
+  }
+
   /** SQL <code>COT</code> operator applied to BigDecimal values. */
   public static double cot(BigDecimal b0) {
     return 1.0d / Math.tan(b0.doubleValue());
@@ -1175,6 +1201,11 @@ public class SqlFunctions {
   }
 
   // DEGREES
+  /** SQL <code>DEGREES</code> operator applied to long values. */
+  public static double degrees(long b0) {
+    return Math.toDegrees(b0);
+  }
+
   /** SQL <code>DEGREES</code> operator applied to BigDecimal values. */
   public static double degrees(BigDecimal b0) {
     return Math.toDegrees(b0.doubleValue());
@@ -1186,6 +1217,11 @@ public class SqlFunctions {
   }
 
   // RADIANS
+  /** SQL <code>RADIANS</code> operator applied to long values. */
+  public static double radians(long b0) {
+    return Math.toRadians(b0);
+  }
+
   /** SQL <code>RADIANS</code> operator applied to BigDecimal values. */
   public static double radians(BigDecimal b0) {
     return Math.toRadians(b0.doubleValue());
@@ -1298,6 +1334,11 @@ public class SqlFunctions {
   }
 
   // SIN
+  /** SQL <code>SIN</code> operator applied to long values. */
+  public static double sin(long b0) {
+    return Math.sin(b0);
+  }
+
   /** SQL <code>SIN</code> operator applied to BigDecimal values. */
   public static double sin(BigDecimal b0) {
     return Math.sin(b0.doubleValue());
@@ -1309,6 +1350,11 @@ public class SqlFunctions {
   }
 
   // TAN
+  /** SQL <code>TAN</code> operator applied to long values. */
+  public static double tan(long b0) {
+    return Math.tan(b0);
+  }
+
   /** SQL <code>TAN</code> operator applied to BigDecimal values. */
   public static double tan(BigDecimal b0) {
     return Math.tan(b0.doubleValue());
@@ -1454,7 +1500,7 @@ public class SqlFunctions {
 
   @NonDeterministic
   private static Object cannotConvert(Object o, Class toType) {
-    throw RESOURCE.cannotConvert(o.toString(), toType.toString()).ex();
+    throw new RuntimeException("Cannot convert " + o + " to " + toType);
   }
 
   /** CAST(VARCHAR AS BOOLEAN). */
@@ -1465,7 +1511,7 @@ public class SqlFunctions {
     } else if (s.equalsIgnoreCase("FALSE")) {
       return false;
     } else {
-      throw RESOURCE.invalidCharacterForCast(s).ex();
+      throw new RuntimeException("Invalid character for cast");
     }
   }
 
@@ -1565,7 +1611,6 @@ public class SqlFunctions {
     return o instanceof Integer ? (Integer) o
         : o instanceof Number ? toInt((Number) o)
         : o instanceof String ? toInt((String) o)
-        : o instanceof java.sql.Time ? toInt((java.sql.Time) o)
         : o instanceof java.util.Date ? toInt((java.util.Date) o)
         : (Integer) cannotConvert(o, int.class);
   }
@@ -1611,7 +1656,6 @@ public class SqlFunctions {
     return o instanceof Long ? (Long) o
         : o instanceof Number ? toLong((Number) o)
         : o instanceof String ? toLong((String) o)
-        : o instanceof java.util.Date ? toLong((java.util.Date) o)
         : (Long) cannotConvert(o, long.class);
   }
 
@@ -1784,6 +1828,23 @@ public class SqlFunctions {
         .withTimeZone(DateTimeUtils.UTC_ZONE)
         .getLocalTimestampString()
         .getMillisSinceEpoch();
+  }
+
+  public static Timestamp fromTimestampStringToTimestamp(TimestampString timestampString) {
+    return new Timestamp(timestampString.getMillisSinceEpoch());
+  }
+
+
+  public static Timestamp fromDateStringToTimestamp(DateString dateString) {
+    return new Timestamp(dateString.getMillisSinceEpoch());
+  }
+
+  public static java.sql.Date fromTimestampStringToDate(TimestampString timestampString) {
+    return new java.sql.Date(timestampString.getMillisSinceEpoch());
+  }
+
+  public static java.sql.Date fromDateStringToDate(DateString dateString) {
+    return new java.sql.Date(dateString.getMillisSinceEpoch());
   }
 
   // Don't need shortValueOf etc. - Short.valueOf is sufficient.
@@ -2050,7 +2111,7 @@ public class SqlFunctions {
     try {
       return Primitive.asList(a.getArray());
     } catch (SQLException e) {
-      throw toUnchecked(e);
+      throw new RuntimeException(e);
     }
   }
 
@@ -2089,7 +2150,7 @@ public class SqlFunctions {
     case 1:
       return list.get(0);
     default:
-      throw RESOURCE.moreThanOneValueInList(list.toString()).ex();
+      throw new RuntimeException("more than one value");
     }
   }
 
@@ -2377,386 +2438,10 @@ public class SqlFunctions {
         Field structField = beanClass.getDeclaredField(fieldName);
         return structField.get(structObject);
       } catch (NoSuchFieldException | IllegalAccessException ex) {
-        throw RESOURCE.failedToAccessField(fieldName, beanClass.getName()).ex(ex);
+        throw new IllegalStateException("Failed to access field '" + fieldName
+            + "' of object of type " + beanClass.getName(), ex);
       }
     }
-  }
-
-
-  private static boolean isScalarObject(Object obj) {
-    if (obj instanceof Collection) {
-      return false;
-    }
-    if (obj instanceof Map) {
-      return false;
-    }
-    return true;
-  }
-
-  public static Object jsonValueExpression(String input) {
-    try {
-      return dejsonize(input);
-    } catch (Exception e) {
-      return e;
-    }
-  }
-
-  public static Object jsonStructuredValueExpression(Object input) {
-    return input;
-  }
-
-  public static PathContext jsonApiCommonSyntax(Object input, String pathSpec) {
-    try {
-      Matcher matcher = JSON_PATH_BASE.matcher(pathSpec);
-      if (!matcher.matches()) {
-        throw RESOURCE.illegalJsonPathSpec(pathSpec).ex();
-      }
-      PathMode mode = PathMode.valueOf(matcher.group(1).toUpperCase(Locale.ROOT));
-      String pathWff = matcher.group(2);
-      DocumentContext ctx;
-      switch (mode) {
-      case STRICT:
-        if (input instanceof Exception) {
-          return PathContext.withStrictException((Exception) input);
-        }
-        ctx = JsonPath.parse(input,
-            Configuration
-                .builder()
-                .jsonProvider(JSON_PATH_JSON_PROVIDER)
-                .mappingProvider(JSON_PATH_MAPPING_PROVIDER)
-                .build());
-        break;
-      case LAX:
-        if (input instanceof Exception) {
-          return PathContext.withReturned(PathMode.LAX, null);
-        }
-        ctx = JsonPath.parse(input,
-            Configuration
-                .builder()
-                .options(Option.SUPPRESS_EXCEPTIONS)
-                .jsonProvider(JSON_PATH_JSON_PROVIDER)
-                .mappingProvider(JSON_PATH_MAPPING_PROVIDER)
-                .build());
-        break;
-      default:
-        throw RESOURCE.illegalJsonPathModeInPathSpec(mode.toString(), pathSpec).ex();
-      }
-      try {
-        return PathContext.withReturned(mode, ctx.read(pathWff));
-      } catch (Exception e) {
-        return PathContext.withStrictException(e);
-      }
-    } catch (Exception e) {
-      return PathContext.withUnknownException(e);
-    }
-  }
-
-  public static Boolean jsonExists(Object input) {
-    return jsonExists(input, SqlJsonExistsErrorBehavior.FALSE);
-  }
-
-  public static Boolean jsonExists(Object input,
-      SqlJsonExistsErrorBehavior errorBehavior) {
-    PathContext context = (PathContext) input;
-    if (context.exc != null) {
-      switch (errorBehavior) {
-      case TRUE:
-        return Boolean.TRUE;
-      case FALSE:
-        return Boolean.FALSE;
-      case ERROR:
-        throw toUnchecked(context.exc);
-      case UNKNOWN:
-        return null;
-      default:
-        throw RESOURCE.illegalErrorBehaviorInJsonExistsFunc(
-            errorBehavior.toString()).ex();
-      }
-    } else {
-      return !Objects.isNull(context.pathReturned);
-    }
-  }
-
-  public static Object jsonValueAny(Object input,
-      SqlJsonValueEmptyOrErrorBehavior emptyBehavior,
-      Object defaultValueOnEmpty,
-      SqlJsonValueEmptyOrErrorBehavior errorBehavior,
-      Object defaultValueOnError) {
-    final PathContext context = (PathContext) input;
-    final Exception exc;
-    if (context.exc != null) {
-      exc = context.exc;
-    } else {
-      Object value = context.pathReturned;
-      if (value == null || context.mode == PathMode.LAX
-          && !isScalarObject(value)) {
-        switch (emptyBehavior) {
-        case ERROR:
-          throw RESOURCE.emptyResultOfJsonValueFuncNotAllowed().ex();
-        case NULL:
-          return null;
-        case DEFAULT:
-          return defaultValueOnEmpty;
-        default:
-          throw RESOURCE.illegalEmptyBehaviorInJsonValueFunc(
-              emptyBehavior.toString()).ex();
-        }
-      } else if (context.mode == PathMode.STRICT
-          && !isScalarObject(value)) {
-        exc = RESOURCE.scalarValueRequiredInStrictModeOfJsonValueFunc(
-            value.toString()).ex();
-      } else {
-        return value;
-      }
-    }
-    switch (errorBehavior) {
-    case ERROR:
-      throw toUnchecked(exc);
-    case NULL:
-      return null;
-    case DEFAULT:
-      return defaultValueOnError;
-    default:
-      throw RESOURCE.illegalErrorBehaviorInJsonValueFunc(
-          errorBehavior.toString()).ex();
-    }
-  }
-
-  public static String jsonQuery(Object input,
-      SqlJsonQueryWrapperBehavior wrapperBehavior,
-      SqlJsonQueryEmptyOrErrorBehavior emptyBehavior,
-      SqlJsonQueryEmptyOrErrorBehavior errorBehavior) {
-    final PathContext context = (PathContext) input;
-    final Exception exc;
-    if (context.exc != null) {
-      exc = context.exc;
-    } else {
-      Object value;
-      if (context.pathReturned == null) {
-        value = null;
-      } else {
-        switch (wrapperBehavior) {
-        case WITHOUT_ARRAY:
-          value = context.pathReturned;
-          break;
-        case WITH_UNCONDITIONAL_ARRAY:
-          value = Collections.singletonList(context.pathReturned);
-          break;
-        case WITH_CONDITIONAL_ARRAY:
-          if (context.pathReturned instanceof Collection) {
-            value = context.pathReturned;
-          } else {
-            value = Collections.singletonList(context.pathReturned);
-          }
-          break;
-        default:
-          throw RESOURCE.illegalWrapperBehaviorInJsonQueryFunc(
-              wrapperBehavior.toString()).ex();
-        }
-      }
-      if (value == null || context.mode == PathMode.LAX
-          && isScalarObject(value)) {
-        switch (emptyBehavior) {
-        case ERROR:
-          throw RESOURCE.emptyResultOfJsonQueryFuncNotAllowed().ex();
-        case NULL:
-          return null;
-        case EMPTY_ARRAY:
-          return "[]";
-        case EMPTY_OBJECT:
-          return "{}";
-        default:
-          throw RESOURCE.illegalEmptyBehaviorInJsonQueryFunc(
-              emptyBehavior.toString()).ex();
-        }
-      } else if (context.mode == PathMode.STRICT && isScalarObject(value)) {
-        exc = RESOURCE.arrayOrObjectValueRequiredInStrictModeOfJsonQueryFunc(
-            value.toString()).ex();
-      } else {
-        try {
-          return jsonize(value);
-        } catch (Exception e) {
-          exc = e;
-        }
-      }
-    }
-    switch (errorBehavior) {
-    case ERROR:
-      throw toUnchecked(exc);
-    case NULL:
-      return null;
-    case EMPTY_ARRAY:
-      return "[]";
-    case EMPTY_OBJECT:
-      return "{}";
-    default:
-      throw RESOURCE.illegalErrorBehaviorInJsonQueryFunc(
-          errorBehavior.toString()).ex();
-    }
-  }
-
-  public static String jsonize(Object input) {
-    return JSON_PATH_JSON_PROVIDER.toJson(input);
-  }
-
-  public static Object dejsonize(String input) {
-    return JSON_PATH_JSON_PROVIDER.parse(input);
-  }
-
-  public static String jsonObject(SqlJsonConstructorNullClause nullClause,
-      Object... kvs) {
-    assert kvs.length % 2 == 0;
-    Map<String, Object> map = new HashMap<>();
-    for (int i = 0; i < kvs.length; i += 2) {
-      String k = (String) kvs[i];
-      Object v = kvs[i + 1];
-      if (k == null) {
-        throw RESOURCE.nullKeyOfJsonObjectNotAllowed().ex();
-      }
-      if (v == null) {
-        if (nullClause == SqlJsonConstructorNullClause.NULL_ON_NULL) {
-          map.put(k, null);
-        }
-      } else {
-        map.put(k, v);
-      }
-    }
-    return jsonize(map);
-  }
-
-  public static void jsonObjectAggAdd(Map map, String k, Object v,
-      SqlJsonConstructorNullClause nullClause) {
-    if (k == null) {
-      throw RESOURCE.nullKeyOfJsonObjectNotAllowed().ex();
-    }
-    if (v == null) {
-      if (nullClause == SqlJsonConstructorNullClause.NULL_ON_NULL) {
-        map.put(k, null);
-      }
-    } else {
-      map.put(k, v);
-    }
-  }
-
-  public static String jsonArray(SqlJsonConstructorNullClause nullClause,
-      Object... elements) {
-    List<Object> list = new ArrayList<>();
-    for (Object element : elements) {
-      if (element == null) {
-        if (nullClause == SqlJsonConstructorNullClause.NULL_ON_NULL) {
-          list.add(null);
-        }
-      } else {
-        list.add(element);
-      }
-    }
-    return jsonize(list);
-  }
-
-  public static void jsonArrayAggAdd(List list, Object element,
-      SqlJsonConstructorNullClause nullClause) {
-    if (element == null) {
-      if (nullClause == SqlJsonConstructorNullClause.NULL_ON_NULL) {
-        list.add(null);
-      }
-    } else {
-      list.add(element);
-    }
-  }
-
-  public static boolean isJsonValue(String input) {
-    try {
-      dejsonize(input);
-      return true;
-    } catch (Exception e) {
-      return false;
-    }
-  }
-
-  public static boolean isJsonObject(String input) {
-    try {
-      Object o = dejsonize(input);
-      return o instanceof Map;
-    } catch (Exception e) {
-      return false;
-    }
-  }
-
-  public static boolean isJsonArray(String input) {
-    try {
-      Object o = dejsonize(input);
-      return o instanceof Collection;
-    } catch (Exception e) {
-      return false;
-    }
-  }
-
-  public static boolean isJsonScalar(String input) {
-    try {
-      Object o = dejsonize(input);
-      return !(o instanceof Map) && !(o instanceof Collection);
-    } catch (Exception e) {
-      return false;
-    }
-  }
-
-  private static RuntimeException toUnchecked(Exception e) {
-    if (e instanceof RuntimeException) {
-      return (RuntimeException) e;
-    }
-    return new RuntimeException(e);
-  }
-
-  /**
-   * Returned path context of JsonApiCommonSyntax, public for testing.
-   */
-  public static class PathContext {
-    public final PathMode mode;
-    public final Object pathReturned;
-    public final Exception exc;
-
-    private PathContext(PathMode mode, Object pathReturned, Exception exc) {
-      this.mode = mode;
-      this.pathReturned = pathReturned;
-      this.exc = exc;
-    }
-
-    public static PathContext withUnknownException(Exception exc) {
-      return new PathContext(PathMode.UNKNOWN, null, exc);
-    }
-
-    public static PathContext withStrictException(Exception exc) {
-      return new PathContext(PathMode.STRICT, null, exc);
-    }
-
-    public static PathContext withReturned(PathMode mode, Object pathReturned) {
-      if (mode == PathMode.UNKNOWN) {
-        throw RESOURCE.illegalJsonPathMode(mode.toString()).ex();
-      }
-      if (mode == PathMode.STRICT && pathReturned == null) {
-        throw RESOURCE.strictPathModeRequiresNonEmptyValue().ex();
-      }
-      return new PathContext(mode, pathReturned, null);
-    }
-
-    @Override public String toString() {
-      return "PathContext{"
-          + "mode=" + mode
-          + ", pathReturned=" + pathReturned
-          + ", exc=" + exc
-          + '}';
-    }
-  }
-
-  /**
-   * Path spec has two different modes: lax mode and strict mode.
-   * Lax mode suppresses any thrown exception and returns null,
-   * whereas strict mode throws exceptions.
-   */
-  public enum PathMode {
-    LAX,
-    STRICT,
-    UNKNOWN
   }
 
   /** Enumerates over the cartesian product of the given lists, returning

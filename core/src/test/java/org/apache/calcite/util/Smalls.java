@@ -41,11 +41,9 @@ import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.schema.Statistic;
 import org.apache.calcite.schema.Statistics;
 import org.apache.calcite.schema.TranslatableTable;
-import org.apache.calcite.schema.UDFDescription;
 import org.apache.calcite.schema.impl.AbstractTable;
 import org.apache.calcite.schema.impl.ViewTable;
 import org.apache.calcite.sql.SqlCall;
-import org.apache.calcite.sql.SqlFunctionCategory;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.dialect.CalciteSqlDialect;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -58,6 +56,7 @@ import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.util.AbstractList;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -88,6 +87,8 @@ public class Smalls {
       Types.lookupMethod(Smalls.class, "fibonacciTable");
   public static final Method FIBONACCI2_TABLE_METHOD =
       Types.lookupMethod(Smalls.class, "fibonacciTableWithLimit", long.class);
+  public static final Method DAYSBETWEEN_METHOD =
+      Types.lookupMethod(Smalls.class, "daysBetween", Timestamp.class, Timestamp.class);
   public static final Method VIEW_METHOD =
       Types.lookupMethod(Smalls.class, "view", String.class);
   public static final Method STR_METHOD =
@@ -282,6 +283,29 @@ public class Smalls {
       public boolean rolledUpColumnValidInsideAgg(String column, SqlCall call,
           SqlNode parent, CalciteConnectionConfig config) {
         return true;
+      }
+    };
+  }
+
+  public static QueryableTable daysBetween(Timestamp from, Timestamp to) {
+    return new AbstractQueryableTable(Object[].class) {
+
+      @Override public RelDataType getRowType(RelDataTypeFactory typeFactory) {
+        return typeFactory.builder()
+            .add("daybetween", typeFactory.createJavaType(Timestamp.class))
+            .build();
+      }
+
+      @Override public Queryable<Timestamp> asQueryable(QueryProvider queryProvider,
+                                                        SchemaPlus schema,
+                                                        String tableName) {
+        List<Timestamp> days = new ArrayList<>();
+        Long day = 24L * 60L * 60L * 1000L;
+        for (Timestamp t = new Timestamp(from.getTime() + day); t.before(to);
+             t = new Timestamp(t.getTime() + day)) {
+          days.add(t);
+        }
+        return Linq4j.asEnumerable(days).asQueryable();
       }
     };
   }
@@ -889,119 +913,6 @@ public class Smalls {
     public final WideProductSale[] prod = {
         new WideProductSale(100, 10)
     };
-  }
-
-  /**
-   * Udf function with overload methods
-   */
-  @UDFDescription(name = "MY_UDF", category = SqlFunctionCategory.USER_DEFINED_FUNCTION)
-  public static class MyUdfFunction {
-    public static String eval(String a) {
-      return "eval(String:" + a + ")";
-    }
-
-    public static String eval(String a, String b) {
-      return "eval(String:" + a + ", String:" + b + ")";
-    }
-
-    public static String eval(String a, int c) {
-      return "eval(String:" + a + ", int:" + c + ")";
-    }
-
-    public static String eval(Long a, int b) {
-      return "eval(Long:" + a + ", int:" + b + ")";
-    }
-
-    public static String eval(int a, int b) {
-      return "eval(int:" + a + ",int:" + b + ")";
-    }
-  }
-
-  /**
-   * User-defined table function with overload methods
-   */
-  @UDFDescription(name = "MY_UDTF", category = SqlFunctionCategory.USER_DEFINED_TABLE_FUNCTION)
-  public static class MyUdtfFunction {
-
-    public static MyScannableTable eval(String a) {
-      return new MyScannableTable("eval(String: " + a + ")");
-    }
-
-    public static MyScannableTable eval(long a) {
-      return new MyScannableTable("eval(long:" + a + ")");
-    }
-
-    public static MyScannableTable eval(int a) {
-      return new MyScannableTable("eval(int:" + a + ")");
-    }
-  }
-
-  /**
-   * ScannableTable for {@link MyUdtfFunction}
-   */
-  public static class MyScannableTable implements ScannableTable {
-
-    private String msg;
-
-    public MyScannableTable(String msg) {
-      this.msg = msg;
-    }
-
-    public MyScannableTable() {
-      this("default");
-    }
-
-    public Enumerable<Object[]> scan(DataContext root) {
-      return new AbstractEnumerable<Object[]>() {
-        private long pos = 1;
-        public Enumerator<Object[]> enumerator() {
-
-          return new Enumerator<Object[]>() {
-            public Object[] current() {
-              return new Object[] {msg};
-            }
-
-            public boolean moveNext() {
-              if (pos > 0) {
-                pos--;
-                return true;
-              }
-              return false;
-            }
-
-            public void reset() {
-              pos = 1;
-            }
-
-            public void close() {
-
-            }
-          };
-        }
-      };
-    }
-
-    public RelDataType getRowType(RelDataTypeFactory typeFactory) {
-      return typeFactory.builder()
-          .add("N", SqlTypeName.VARCHAR).build();
-    }
-
-    public Statistic getStatistic() {
-      return Statistics.UNKNOWN;
-    }
-
-    public Schema.TableType getJdbcTableType() {
-      return Schema.TableType.TABLE;
-    }
-
-    public boolean isRolledUp(String column) {
-      return false;
-    }
-
-    public boolean rolledUpColumnValidInsideAgg(String column, SqlCall call,
-        SqlNode parent, CalciteConnectionConfig config) {
-      return false;
-    }
   }
 
   /** Table with a lot of columns. */
