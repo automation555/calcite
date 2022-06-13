@@ -45,7 +45,6 @@ import org.apache.calcite.rex.RexCorrelVariable;
 import org.apache.calcite.rex.RexFieldCollation;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
-import org.apache.calcite.rex.RexSubQuery;
 import org.apache.calcite.rex.RexWindowBounds;
 import org.apache.calcite.runtime.CalciteException;
 import org.apache.calcite.schema.SchemaPlus;
@@ -68,6 +67,7 @@ import org.apache.calcite.sql.type.SqlOperandMetadata;
 import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.validate.SqlUserDefinedTableFunction;
+import org.apache.calcite.test.schemata.hr.HrSchema;
 import org.apache.calcite.tools.Frameworks;
 import org.apache.calcite.tools.Programs;
 import org.apache.calcite.tools.RelBuilder;
@@ -2299,25 +2299,6 @@ public class RelBuilderTest {
         hasTree(expectedWithoutSimplify));
   }
 
-  @Test void testJoinMultipleCorrelateId() {
-    for(JoinRelType joinType : JoinRelType.values()) {
-      final RelBuilder builder = RelBuilder.create(config().build());
-      CorrelationId cId1 = builder.getCluster().createCorrel();
-      CorrelationId cId2 = builder.getCluster().createCorrel();
-      try {
-        builder
-            .scan("EMP")
-            .scan("DEPT")
-            .join(joinType, builder.literal(true), ImmutableSet.of(cId1, cId2))
-            .build();
-        fail("expected error");
-      } catch (IllegalArgumentException e) {
-        assertThat(e.getMessage(),
-            containsString("Only one correlate id is supported for joins"));
-      }
-    }
-  }
-
   @Test void testJoinPushCondition() {
     final Function<RelBuilder, RelNode> f = b ->
         b.scan("EMP")
@@ -2448,6 +2429,246 @@ public class RelBuilderTest {
         + "  LogicalTableScan(table=[[scott, DEPT]])\n"
         + "  LogicalTableScan(table=[[scott, EMP]])\n";
     assertThat(root, hasTree(expected));
+  }
+
+  @Test void testInQuery() {
+    // Equivalent SQL:
+    //   SELECT *
+    //   FROM emp
+    //   WHERE deptno IN (
+    //     SELECT deptno
+    //     FROM dept
+    //     WHERE dname = 'Accounting')
+    final Function<RelBuilder, RelNode> f = b ->
+        b.scan("EMP")
+            .filter(
+                b.in(b.field("DEPTNO"),
+                    b2 ->
+                        b2.scan("DEPT")
+                            .filter(
+                                b2.equals(b2.field("DNAME"),
+                                    b2.literal("Accounting")))
+                            .project(b2.field("DEPTNO"))
+                            .build()))
+            .build();
+
+    final String expected = "LogicalFilter(condition=[IN($7, {\n"
+        + "LogicalProject(DEPTNO=[$0])\n"
+        + "  LogicalFilter(condition=[=($1, 'Accounting')])\n"
+        + "    LogicalTableScan(table=[[scott, DEPT]])\n"
+        + "})])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(f.apply(createBuilder()), hasTree(expected));
+  }
+
+  @Test void testExists() {
+    // Equivalent SQL:
+    //   SELECT *
+    //   FROM emp
+    //   WHERE EXISTS (
+    //     SELECT null
+    //     FROM dept
+    //     WHERE dname = 'Accounting')
+    final Function<RelBuilder, RelNode> f = b ->
+        b.scan("EMP")
+            .filter(
+                b.exists(b2 ->
+                    b2.scan("DEPT")
+                        .filter(
+                            b2.equals(b2.field("DNAME"),
+                                b2.literal("Accounting")))
+                        .build()))
+            .build();
+
+    final String expected = "LogicalFilter(condition=[EXISTS({\n"
+        + "LogicalFilter(condition=[=($1, 'Accounting')])\n"
+        + "  LogicalTableScan(table=[[scott, DEPT]])\n"
+        + "})])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(f.apply(createBuilder()), hasTree(expected));
+  }
+
+  @Test void testExistsCorrelated() {
+    // Equivalent SQL:
+    //   SELECT *
+    //   FROM emp
+    //   WHERE EXISTS (
+    //     SELECT null
+    //     FROM dept
+    //     WHERE deptno = emp.deptno)
+    final Function<RelBuilder, RelNode> f = b -> {
+      final Holder<@Nullable RexCorrelVariable> v = Holder.empty();
+      return b.scan("EMP")
+          .variable(v)
+          .filter(ImmutableList.of(v.get().id),
+              b.exists(b2 ->
+                  b2.scan("DEPT")
+                      .filter(
+                          b2.equals(b2.field("DEPTNO"),
+                              b2.field(v.get(), "DEPTNO")))
+                      .build()))
+          .build();
+    };
+
+    final String expected = "LogicalFilter(condition=[EXISTS({\n"
+        + "LogicalFilter(condition=[=($0, $cor0.DEPTNO)])\n"
+        + "  LogicalTableScan(table=[[scott, DEPT]])\n"
+        + "})], variablesSet=[[$cor0]])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(f.apply(createBuilder()), hasTree(expected));
+  }
+
+  @Test void testSomeAll() {
+    // Equivalent SQL:
+    //   SELECT *
+    //   FROM emp
+    //   WHERE sal > SOME (SELECT comm FROM emp)
+    final Function<RelBuilder, RelNode> f = b ->
+        b.scan("EMP")
+            .filter(
+                b.some(b.field("SAL"),
+                    SqlStdOperatorTable.GREATER_THAN,
+                    b2 ->
+                        b2.scan("EMP")
+                            .project(b2.field("COMM"))
+                        .build()))
+            .build();
+
+    // Equivalent SQL:
+    //   SELECT *
+    //   FROM emp
+    //   WHERE NOT (sal <= ALL (SELECT comm FROM emp))
+    final Function<RelBuilder, RelNode> f2 = b ->
+        b.scan("EMP")
+            .filter(
+                b.not(
+                    b.all(b.field("SAL"),
+                        SqlStdOperatorTable.LESS_THAN_OR_EQUAL,
+                        b2 ->
+                            b2.scan("EMP")
+                                .project(b2.field("COMM"))
+                                .build())))
+            .build();
+
+    final String expected = "LogicalFilter(condition=[> SOME($5, {\n"
+        + "LogicalProject(COMM=[$6])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n"
+        + "})])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(f.apply(createBuilder()), hasTree(expected));
+    assertThat(f2.apply(createBuilder()), hasTree(expected));
+  }
+
+  @Test void testUnique() {
+    // Equivalent SQL:
+    //   SELECT *
+    //   FROM dept
+    //   WHERE UNIQUE (SELECT deptno FROM emp WHERE job = 'MANAGER')
+    final Function<RelBuilder, RelNode> f = b ->
+        b.scan("DEPT")
+            .filter(
+                b.unique(b2 ->
+                    b2.scan("EMP")
+                        .filter(
+                            b2.equals(b2.field("JOB"),
+                                b2.literal("MANAGER")))
+                        .build()))
+            .build();
+
+    final String expected = "LogicalFilter(condition=[UNIQUE({\n"
+        + "LogicalFilter(condition=[=($2, 'MANAGER')])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n"
+        + "})])\n"
+        + "  LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(f.apply(createBuilder()), hasTree(expected));
+  }
+
+  @Test void testScalarQuery() {
+    // Equivalent SQL:
+    //   SELECT *
+    //   FROM emp
+    //   WHERE sal > (
+    //     SELECT AVG(sal)
+    //     FROM emp)
+    final Function<RelBuilder, RelNode> f = b ->
+        b.scan("EMP")
+            .filter(
+                b.greaterThan(b.field("SAL"),
+                    b.scalarQuery(b2 ->
+                        b2.scan("EMP")
+                            .aggregate(b2.groupKey(),
+                                b2.avg(b2.field("SAL")))
+                            .build())))
+            .build();
+
+    final String expected = "LogicalFilter(condition=[>($5, $SCALAR_QUERY({\n"
+        + "LogicalAggregate(group=[{}], agg#0=[AVG($5)])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n"
+        + "}))])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(f.apply(createBuilder()), hasTree(expected));
+  }
+
+  @Test void testArrayQuery() {
+    // Equivalent SQL:
+    //   SELECT deptno, ARRAY (SELECT * FROM Emp)
+    //   FROM Dept AS d
+    final Function<RelBuilder, RelNode> f = b ->
+        b.scan("DEPT")
+            .project(
+                b.field("DEPTNO"),
+                b.arrayQuery(b2 ->
+                        b2.scan("EMP")
+                            .build()))
+            .build();
+
+    final String expected = "LogicalProject(DEPTNO=[$0], $f1=[ARRAY({\n"
+        + "LogicalTableScan(table=[[scott, EMP]])\n"
+        + "})])\n"
+        + "  LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(f.apply(createBuilder()), hasTree(expected));
+  }
+
+  @Test void testMultisetQuery() {
+    // Equivalent SQL:
+    //   SELECT deptno, MULTISET (SELECT * FROM Emp)
+    //   FROM Dept AS d
+    final Function<RelBuilder, RelNode> f = b ->
+        b.scan("DEPT")
+            .project(
+                b.field("DEPTNO"),
+                b.multisetQuery(b2 ->
+                        b2.scan("EMP")
+                            .build()))
+            .build();
+
+    final String expected = "LogicalProject(DEPTNO=[$0], $f1=[MULTISET({\n"
+        + "LogicalTableScan(table=[[scott, EMP]])\n"
+        + "})])\n"
+        + "  LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(f.apply(createBuilder()), hasTree(expected));
+  }
+
+  @Test void testMapQuery() {
+    // Equivalent SQL:
+    //   SELECT deptno, MAP (SELECT empno, job FROM Emp)
+    //   FROM Dept AS d
+    final Function<RelBuilder, RelNode> f = b ->
+        b.scan("DEPT")
+            .project(
+                b.field("DEPTNO"),
+                b.mapQuery(b2 ->
+                        b2.scan("EMP")
+                            .project(b2.field("EMPNO"), b2.field("JOB"))
+                            .build()))
+            .build();
+
+    final String expected = "LogicalProject(DEPTNO=[$0], $f1=[MAP({\n"
+        + "LogicalProject(EMPNO=[$0], JOB=[$2])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n"
+        + "})])\n"
+        + "  LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(f.apply(createBuilder()), hasTree(expected));
   }
 
   @Test void testAlias() {
@@ -3062,7 +3283,7 @@ public class RelBuilderTest {
         "LogicalValues(tuples=[[{ null, 1, 'abc' }, { false, null, 'longer string' }]])\n";
     assertThat(root, hasTree(expected));
     final String expectedType =
-        "RecordType(BOOLEAN a, INTEGER expr$1, CHAR(13) NOT NULL c) NOT NULL";
+        "RecordType(BOOLEAN a, INTEGER EXPR$1, CHAR(13) NOT NULL c) NOT NULL";
     assertThat(root.getRowType().getFullTypeString(), is(expectedType));
   }
 
@@ -3952,20 +4173,20 @@ public class RelBuilderTest {
     final Holder<@Nullable RexCorrelVariable> v2 = Holder.empty();
 
 
-    assertThrows(IllegalArgumentException.class, () ->
-        builder
-            .scan("EMP")
-            .variable(v1)
-            .variable(v2)
-            .scan("DEPT")
-            .filter(
-                builder.equals(
-                    builder.field(v1.get(), "DEPTNO"),
-                    builder.field(v2.get(), "DEPTNO")))
-            .join(JoinRelType.INNER, builder.literal(true),
-                ImmutableSet.of(v1.get().id, v2.get().id))
-            .build(),
-          "multiple correlate ids not supported: $cor0, $cor1");
+    assertThrows(IllegalArgumentException.class, () -> {
+      builder
+          .scan("EMP")
+          .variable(v1)
+          .variable(v2)
+          .scan("DEPT")
+          .filter(
+              builder.equals(
+                  builder.field(v1.get(), "DEPTNO"),
+                  builder.field(v2.get(), "DEPTNO")))
+          .join(JoinRelType.INNER, builder.literal(true),
+              ImmutableSet.of(v1.get().id, v2.get().id))
+          .build();
+    }, "multiple correlate ids not supported: $cor0, $cor1");
   }
 
   @Test void testSimpleSemiCorrelateViaJoin() {
@@ -4062,125 +4283,6 @@ public class RelBuilderTest {
         root, hasTree(expected));
   }
 
-  @Test void testInnerJoinOnCorrelatedSubQueryBothSides() {
-    RelNode root = buildJoinOnCorrelatedSubQuery(JoinRelType.INNER);
-    final String expected = ""
-        + "LogicalCorrelate(correlation=[$cor0], joinType=[inner], requiredColumns=[{0}])\n"
-        + "  LogicalTableScan(table=[[scott, DEPT]])\n"
-        + "  LogicalFilter(condition=[EXISTS({\n"
-        + "LogicalFilter(condition=[AND(=($7, $cor0.DEPTNO), =($2, $cor1.JOB))])\n"
-        + "  LogicalTableScan(table=[[scott, EMP]])\n})], variablesSet=[[$cor1]])\n"
-        + "    LogicalTableScan(table=[[scott, BONUS]])\n";
-    assertThat(
-        "Correlated inner joins should emmit a correlate with a filter on top.",
-        root, hasTree(expected));
-  }
-
-  @Test void testLeftJoinOnCorrelatedSubQueryBothSides() {
-    RelNode root = buildJoinOnCorrelatedSubQuery(JoinRelType.LEFT);
-    final String expected = ""
-        + "LogicalCorrelate(correlation=[$cor0], joinType=[left], requiredColumns=[{0}])\n"
-        + "  LogicalTableScan(table=[[scott, DEPT]])\n"
-        + "  LogicalFilter(condition=[EXISTS({\n"
-        + "LogicalFilter(condition=[AND(=($7, $cor0.DEPTNO), =($2, $cor1.JOB))])\n"
-        + "  LogicalTableScan(table=[[scott, EMP]])\n})], variablesSet=[[$cor1]])\n"
-        + "    LogicalTableScan(table=[[scott, BONUS]])\n";
-    assertThat(
-        "Correlated inner joins should emmit a correlate with a filter on top.",
-        root, hasTree(expected));
-  }
-
-  @Test void testLeftJoinOnCorrelatedSubQueryRightSide() {
-    final RelBuilder builder = RelBuilder.create(config().build());
-    final RexBuilder rexBuilder = builder.getRexBuilder();
-    final Holder<@Nullable RexCorrelVariable> v = Holder.empty();
-    RelNode root = builder
-        .scan("DEPT")
-        .scan("BONUS")
-        .joinVariable(v)
-        .join(JoinRelType.LEFT,
-            RexSubQuery.in(builder
-                    .scan("EMP")
-                    .filter(
-                        builder.equals(
-                            builder.field(1, 0, "JOB"),
-                            rexBuilder.makeFieldAccess(v.get(),4)))
-                    .project(builder.field(1, 0, "DEPTNO"))
-                    .build(),
-                ImmutableList.of(builder.field(2, 0, "DEPTNO"))),
-            ImmutableSet.of(v.get().id))
-        .build();
-    final String expected = ""
-        + "LogicalCorrelate(correlation=[$cor0], joinType=[left], requiredColumns=[{0}])\n"
-        + "  LogicalTableScan(table=[[scott, DEPT]])\n"
-        + "  LogicalFilter(condition=[IN($cor0.DEPTNO, {\n"
-        + "LogicalProject(DEPTNO=[$7])\n"
-        + "  LogicalFilter(condition=[=($2, $cor1.JOB)])\n"
-        + "    LogicalTableScan(table=[[scott, EMP]])\n"
-        + "})], variablesSet=[[$cor1]])\n"
-        + "    LogicalTableScan(table=[[scott, BONUS]])\n";
-    assertThat(
-        "Correlated inner joins should emmit a correlate with a filter on top.",
-        root, hasTree(expected));
-  }
-
-  @Test void testLeftJoinOnCorrelatedSubQueryLeftSide() {
-    final RelBuilder builder = RelBuilder.create(config().build());
-    final RexBuilder rexBuilder = builder.getRexBuilder();
-    final Holder<@Nullable RexCorrelVariable> v = Holder.empty();
-    RelNode root = builder
-        .scan("DEPT")
-        .scan("BONUS")
-        .joinVariable(v)
-        .join(JoinRelType.LEFT,
-            RexSubQuery.in(builder
-                    .scan("EMP")
-                    .filter(
-                        builder.equals(
-                            builder.field(1, 0, "DEPTNO"),
-                            rexBuilder.makeFieldAccess(v.get(),0)))
-                    .project(builder.field(1, 0, "JOB"))
-                    .build(),
-                ImmutableList.of(builder.field(2, 1, "JOB"))),
-            ImmutableSet.of(v.get().id))
-        .build();
-    final String expected = ""
-        + "LogicalCorrelate(correlation=[$cor0], joinType=[left], requiredColumns=[{0}])\n"
-        + "  LogicalTableScan(table=[[scott, DEPT]])\n"
-        + "  LogicalFilter(condition=[IN($1, {\n"
-        + "LogicalProject(JOB=[$2])\n"
-        + "  LogicalFilter(condition=[=($7, $cor0.DEPTNO)])\n"
-        + "    LogicalTableScan(table=[[scott, EMP]])\n"
-        + "})])\n"
-        + "    LogicalTableScan(table=[[scott, BONUS]])\n";
-    assertThat(
-        "Correlated inner joins should emmit a correlate with a filter on top.",
-        root, hasTree(expected));
-  }
-
-  @Test void testLeftJoinOnCorrelatedCondition() {
-    final RelBuilder builder = RelBuilder.create(config().build());
-    final RexBuilder rexBuilder = builder.getRexBuilder();
-    final Holder<@Nullable RexCorrelVariable> v = Holder.empty();
-    RelNode root = builder
-        .scan("DEPT")
-        .scan("EMP")
-        .joinVariable(v)
-        .join(JoinRelType.LEFT,
-            builder.and(
-                rexBuilder.makeFieldAccess(v.get(),0),
-                rexBuilder.makeFieldAccess(v.get(), 10)), ImmutableSet.of(v.get().id))
-        .build();
-    final String expected = ""
-        + "LogicalCorrelate(correlation=[$cor0], joinType=[left], requiredColumns=[{0}])\n"
-        + "  LogicalTableScan(table=[[scott, DEPT]])\n"
-        + "  LogicalFilter(condition=[AND($cor0.DEPTNO, $7)])\n"
-        + "    LogicalTableScan(table=[[scott, EMP]])\n";
-    assertThat(
-        "Correlated inner joins should emmit a correlate with a filter on top.",
-        root, hasTree(expected));
-  }
-
   @Test void testSimpleRightCorrelateViaJoinThrowsException() {
     assertThrows(IllegalArgumentException.class,
         () -> buildSimpleCorrelateWithJoin(JoinRelType.RIGHT),
@@ -4210,8 +4312,8 @@ public class RelBuilderTest {
     final Holder<@Nullable RexCorrelVariable> v = Holder.empty();
     return builder
         .scan("EMP")
+        .variable(v)
         .scan("DEPT")
-        .joinVariable(v)
         .join(type,
             builder.equals(
                 builder.field(2, 0, "DEPTNO"),
@@ -4225,8 +4327,8 @@ public class RelBuilderTest {
     final Holder<@Nullable RexCorrelVariable> v = Holder.empty();
     return builder
         .scan("EMP")
+        .variable(v)
         .scan("DEPT")
-        .joinVariable(v)
         .filter(
             builder.equals(
                 rexBuilder.makeFieldAccess(v.get(), 0),
@@ -4235,52 +4337,6 @@ public class RelBuilderTest {
             builder.equals(
                 builder.field(2, 0, "DEPTNO"),
                 builder.field(2, 1, "DEPTNO")), ImmutableSet.of(v.get().id))
-        .build();
-  }
-
-  private static RelNode buildJoinOnCorrelatedSubQuery(JoinRelType type) {
-    final RelBuilder builder = RelBuilder.create(config().build());
-    final RexBuilder rexBuilder = builder.getRexBuilder();
-    final Holder<@Nullable RexCorrelVariable> v = Holder.empty();
-    return builder
-        .scan("DEPT")
-        .scan("BONUS")
-        .joinVariable(v)
-        .join(type,
-            RexSubQuery.exists(builder
-                .scan("EMP")
-                .filter(
-                    builder.and(
-                        builder.equals(
-                            builder.field(1, 0, "DEPTNO"),
-                            rexBuilder.makeFieldAccess(v.get(),0)),
-                        builder.equals(
-                            builder.field(1, 0, "JOB"),
-                            rexBuilder.makeFieldAccess(v.get(),4))
-                ))
-                .build()), ImmutableSet.of(v.get().id))
-        .build();
-  }
-
-  private static RelNode buildJoinOnCorrelatedOnLeft(JoinRelType type) {
-    final RelBuilder builder = RelBuilder.create(config().build());
-    final RexBuilder rexBuilder = builder.getRexBuilder();
-    final Holder<@Nullable RexCorrelVariable> v = Holder.empty();
-    return builder
-        .scan("DEPT")
-        .scan("BONUS")
-        .joinVariable(v)
-        .join(type,
-            RexSubQuery.in(builder
-                    .scan("EMP")
-                    .filter(
-                        builder.equals(
-                            builder.field(1, 0, "JOB"),
-                            rexBuilder.makeFieldAccess(v.get(),4)))
-                    .project(builder.field(1, 0, "DEPTNO"))
-                    .build(),
-                ImmutableList.of(builder.field(2, 0, "DEPTNO"))),
-            ImmutableSet.of(v.get().id))
         .build();
   }
 
@@ -4595,7 +4651,7 @@ public class RelBuilderTest {
    * SqlStdOperatorTable.NOT_LIKE has a wrong implementor</a>. */
   @Test void testExecuteNotLike() {
     CalciteAssert.that()
-        .withSchema("s", new ReflectiveSchema(new JdbcTest.HrSchema()))
+        .withSchema("s", new ReflectiveSchema(new HrSchema()))
         .query("?")
         .withRel(
             builder -> builder

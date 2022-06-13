@@ -71,7 +71,6 @@ import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexCallBinding;
 import org.apache.calcite.rex.RexCorrelVariable;
 import org.apache.calcite.rex.RexExecutor;
-import org.apache.calcite.rex.RexFieldAccess;
 import org.apache.calcite.rex.RexFieldCollation;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
@@ -88,9 +87,11 @@ import org.apache.calcite.schema.impl.ListTransientTable;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
+import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.SqlWindow;
 import org.apache.calcite.sql.fun.SqlCountAggFunction;
 import org.apache.calcite.sql.fun.SqlLikeOperator;
+import org.apache.calcite.sql.fun.SqlQuantifyOperator;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.SqlReturnTypeInference;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -98,7 +99,6 @@ import org.apache.calcite.sql.type.TableFunctionReturnTypeInference;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.sql2rel.SqlToRelConverter;
 import org.apache.calcite.util.Holder;
-import org.apache.calcite.util.ImmutableBeans;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.ImmutableIntList;
 import org.apache.calcite.util.ImmutableNullableList;
@@ -122,6 +122,7 @@ import com.google.common.collect.Sets;
 
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.immutables.value.Value;
 
 import java.math.BigDecimal;
 import java.util.AbstractList;
@@ -168,6 +169,7 @@ import static java.util.Objects.requireNonNull;
  *
  * <p>It is not thread-safe.
  */
+@Value.Enclosing
 public class RelBuilder {
   protected final RelOptCluster cluster;
   protected final @Nullable RelOptSchema relOptSchema;
@@ -460,20 +462,6 @@ public class RelBuilder {
     return this;
   }
 
-  /** Creates a correlation variable for the current top 2 inputs, and writes it into
-   * a Holder. */
-  public RelBuilder joinVariable(Holder<RexCorrelVariable> v) {
-    RelDataType leftType = peek(1).getRowType();
-    RelDataType rightType = peek().getRowType();
-    //inner join is used because the nullabiltiy of the join type should not be considered
-    v.set((RexCorrelVariable)
-        getRexBuilder().makeCorrel(
-            SqlValidatorUtil.deriveJoinRowType(leftType, rightType, JoinRelType.INNER,
-                getTypeFactory(), null, ImmutableList.of()),
-            cluster.createCorrel()));
-    return this;
-  }
-
   /** Creates a reference to a field by name.
    *
    * <p>Equivalent to {@code field(1, 0, fieldName)}.
@@ -703,14 +691,314 @@ public class RelBuilder {
     return call(operator, ImmutableList.copyOf(operands));
   }
 
-  /** Creates an IN. */
+  /** Creates an IN predicate with a list of values.
+   *
+   * <p>For example,
+   * <pre>{@code
+   * b.scan("Emp")
+   *     .filter(b.in(b.field("deptno"), b.literal(10), b.literal(20)))
+   * }</pre>
+   * is equivalent to SQL
+   * <pre>{@code
+   * SELECT *
+   * FROM Emp
+   * WHERE deptno IN (10, 20)
+   * }</pre> */
   public RexNode in(RexNode arg, RexNode... ranges) {
     return in(arg, ImmutableList.copyOf(ranges));
   }
 
-  /** Creates an IN. */
+  /** Creates an IN predicate with a list of values.
+   *
+   * <p>For example,
+   *
+   * <pre>{@code
+   * b.scan("Emps")
+   *     .filter(
+   *         b.in(b.field("deptno"),
+   *             Arrays.asList(b.literal(10), b.literal(20))))
+   * }</pre>
+   *
+   * <p>is equivalent to the SQL
+   *
+   * <pre>{@code
+   * SELECT *
+   * FROM Emps
+   * WHERE deptno IN (10, 20)
+   * }</pre> */
   public RexNode in(RexNode arg, Iterable<? extends RexNode> ranges) {
     return getRexBuilder().makeIn(arg, ImmutableList.copyOf(ranges));
+  }
+
+  /** Creates an IN predicate with a sub-query. */
+  @Experimental
+  public RexSubQuery in(RelNode rel, Iterable<? extends RexNode> nodes) {
+    return RexSubQuery.in(rel, ImmutableList.copyOf(nodes));
+  }
+
+  /** Creates an IN predicate with a sub-query.
+   *
+   * <p>For example,
+   *
+   * <pre>{@code
+   * b.scan("Emps")
+   *     .filter(
+   *         b.in(b.field("deptno"),
+   *             b2 -> b2.scan("Depts")
+   *                 .filter(
+   *                     b2.eq(b2.field("location"), b2.literal("Boston")))
+   *                 .project(b.field("deptno"))
+   *                 .build()))
+   * }</pre>
+   *
+   * <p>is equivalent to the SQL
+   *
+   * <pre>{@code
+   * SELECT *
+   * FROM Emps
+   * WHERE deptno IN (SELECT deptno FROM Dept WHERE location = 'Boston')
+   * }</pre> */
+  @Experimental
+  public RexNode in(RexNode arg, Function<RelBuilder, RelNode> f) {
+    final RelNode rel = f.apply(this);
+    return RexSubQuery.in(rel, ImmutableList.of(arg));
+  }
+
+  /** Creates a SOME (or ANY) predicate.
+   *
+   * <p>For example,
+   *
+   * <pre>{@code
+   * b.scan("Emps")
+   *     .filter(
+   *         b.some(b.field("commission"),
+   *             SqlStdOperatorTable.GREATER_THAN,
+   *             b2 -> b2.scan("Emps")
+   *                 .filter(
+   *                     b2.eq(b2.field("job"), b2.literal("Manager")))
+   *                 .project(b2.field("sal"))
+   *                 .build()))
+   * }</pre>
+   *
+   * <p>is equivalent to the SQL
+   *
+   * <pre>{@code
+   * SELECT *
+   * FROM Emps
+   * WHERE commission > SOME (SELECT sal FROM Emps WHERE job = 'Manager')
+   * }</pre>
+   *
+   * <p>or (since {@code SOME} and {@code ANY} are synonyms) the SQL
+   *
+   * <pre>{@code
+   * SELECT *
+   * FROM Emps
+   * WHERE commission > ANY (SELECT sal FROM Emps WHERE job = 'Manager')
+   * }</pre> */
+  @Experimental
+  public RexSubQuery some(RexNode node, SqlOperator op,
+      Function<RelBuilder, RelNode> f) {
+    return some_(node, op.kind, f);
+  }
+
+  private RexSubQuery some_(RexNode node, SqlKind kind,
+      Function<RelBuilder, RelNode> f) {
+    final RelNode rel = f.apply(this);
+    final SqlQuantifyOperator quantifyOperator =
+        SqlStdOperatorTable.some(kind);
+    return RexSubQuery.some(rel, ImmutableList.of(node), quantifyOperator);
+  }
+
+  /** Creates an ALL predicate.
+   *
+   * <p>For example,
+   *
+   * <pre>{@code
+   * b.scan("Emps")
+   *     .filter(
+   *         b.all(b.field("commission"),
+   *             SqlStdOperatorTable.GREATER_THAN,
+   *             b2 -> b2.scan("Emps")
+   *                 .filter(
+   *                     b2.eq(b2.field("job"), b2.literal("Manager")))
+   *                 .project(b2.field("sal"))
+   *                 .build()))
+   * }</pre>
+   *
+   * <p>is equivalent to the SQL
+   *
+   * <pre>{@code
+   * SELECT *
+   * FROM Emps
+   * WHERE commission > ALL (SELECT sal FROM Emps WHERE job = 'Manager')
+   * }</pre>
+   *
+   * <p>Calcite translates {@code ALL} predicates to {@code NOT SOME}. The
+   * following SQL is equivalent to the previous:
+   *
+   * <pre>{@code
+   * SELECT *
+   * FROM Emps
+   * WHERE NOT (commission <= SOME (SELECT sal FROM Emps WHERE job = 'Manager'))
+   * }</pre> */
+  @Experimental
+  public RexNode all(RexNode node, SqlOperator op,
+      Function<RelBuilder, RelNode> f) {
+    return not(some_(node, op.kind.negateNullSafe(), f));
+  }
+
+  /** Creates an EXISTS predicate.
+   *
+   * <p>For example,
+   *
+   * <pre>{@code
+   * b.scan("Depts")
+   *     .filter(
+   *         b.exists(b2 ->
+   *             b2.scan("Emps")
+   *                 .filter(
+   *                     b2.eq(b2.field("job"), b2.literal("Manager")))
+   *                 .build()))
+   * }</pre>
+   *
+   * <p>is equivalent to the SQL
+   *
+   * <pre>{@code
+   * SELECT *
+   * FROM Depts
+   * WHERE EXISTS (SELECT 1 FROM Emps WHERE job = 'Manager')
+   * }</pre> */
+  @Experimental
+  public RexSubQuery exists(Function<RelBuilder, RelNode> f) {
+    final RelNode rel = f.apply(this);
+    return RexSubQuery.exists(rel);
+  }
+
+  /** Creates a UNIQUE predicate.
+   *
+   * <p>For example,
+   *
+   * <pre>{@code
+   * b.scan("Depts")
+   *     .filter(
+   *         b.exists(b2 ->
+   *             b2.scan("Emps")
+   *                 .filter(
+   *                     b2.eq(b2.field("job"), b2.literal("Manager")))
+   *                 .project(b2.field("deptno")
+   *                 .build()))
+   * }</pre>
+   *
+   * <p>is equivalent to the SQL
+   *
+   * <pre>{@code
+   * SELECT *
+   * FROM Depts
+   * WHERE UNIQUE (SELECT deptno FROM Emps WHERE job = 'Manager')
+   * }</pre> */
+  @Experimental
+  public RexSubQuery unique(Function<RelBuilder, RelNode> f) {
+    final RelNode rel = f.apply(this);
+    return RexSubQuery.unique(rel);
+  }
+
+  /** Creates a scalar sub-query.
+   *
+   * <p>For example,
+   *
+   * <pre>{@code
+   * b.scan("Depts")
+   *     .project(
+   *         b.field("deptno")
+   *         b.scalarQuery(b2 ->
+   *             b2.scan("Emps")
+   *                 .aggregate(
+   *                     b2.eq(b2.field("job"), b2.literal("Manager")))
+   *                 .build()))
+   * }</pre>
+   *
+   * <p>is equivalent to the SQL
+   *
+   * <pre>{@code
+   * SELECT deptno, (SELECT MAX(sal) FROM Emps)
+   * FROM Depts
+   * }</pre> */
+  @Experimental
+  public RexSubQuery scalarQuery(Function<RelBuilder, RelNode> f) {
+    return RexSubQuery.scalar(f.apply(this));
+  }
+
+  /** Creates an ARRAY sub-query.
+   *
+   * <p>For example,
+   *
+   * <pre>{@code
+   * b.scan("Depts")
+   *     .project(
+   *         b.field("deptno")
+   *         b.arrayQuery(b2 ->
+   *             b2.scan("Emps")
+   *                 .build()))
+   * }</pre>
+   *
+   * <p>is equivalent to the SQL
+   *
+   * <pre>{@code
+   * SELECT deptno, ARRAY (SELECT * FROM Emps)
+   * FROM Depts
+   * }</pre> */
+  @Experimental
+  public RexSubQuery arrayQuery(Function<RelBuilder, RelNode> f) {
+    return RexSubQuery.array(f.apply(this));
+  }
+
+  /** Creates a MULTISET sub-query.
+   *
+   * <p>For example,
+   *
+   * <pre>{@code
+   * b.scan("Depts")
+   *     .project(
+   *         b.field("deptno")
+   *         b.multisetQuery(b2 ->
+   *             b2.scan("Emps")
+   *                 .build()))
+   * }</pre>
+   *
+   * <p>is equivalent to the SQL
+   *
+   * <pre>{@code
+   * SELECT deptno, MULTISET (SELECT * FROM Emps)
+   * FROM Depts
+   * }</pre> */
+  @Experimental
+  public RexSubQuery multisetQuery(Function<RelBuilder, RelNode> f) {
+    return RexSubQuery.multiset(f.apply(this));
+  }
+
+  /** Creates a MAP sub-query.
+   *
+   * <p>For example,
+   *
+   * <pre>{@code
+   * b.scan("Depts")
+   *     .project(
+   *         b.field("deptno")
+   *         b.multisetQuery(b2 ->
+   *             b2.scan("Emps")
+   *                 .project(b2.field("empno"), b2.field("job"))
+   *                 .build()))
+   * }</pre>
+   *
+   * <p>is equivalent to the SQL
+   *
+   * <pre>{@code
+   * SELECT deptno, MAP (SELECT empno, job FROM Emps)
+   * FROM Depts
+   * }</pre> */
+  @Experimental
+  public RexSubQuery mapQuery(Function<RelBuilder, RelNode> f) {
+    return RexSubQuery.map(f.apply(this));
   }
 
   /** Creates an AND. */
@@ -2476,6 +2764,7 @@ public class RelBuilder {
     Frame right = stack.pop();
     final Frame left = stack.pop();
     final RelNode join;
+    final boolean correlate = checkIfCorrelated(variablesSet, joinType, left.rel, right.rel);
     RexNode postCondition = literal(true);
     if (config.simplify()) {
       // Normalize expanded versions IS NOT DISTINCT FROM so that simplifier does not
@@ -2486,29 +2775,21 @@ public class RelBuilder {
       }
       condition = simplifier.simplifyUnknownAsFalse(condition);
     }
-    if (checkIfCorrelated(joinType, condition, left.rel, right.rel, variablesSet)) {
+    if (correlate) {
       final CorrelationId id = Iterables.getOnlyElement(variablesSet);
       // Correlate does not have an ON clause.
       switch (joinType) {
-      case INNER:
-        // For INNER, we can defer if condition is not correlated.
-        if(RelOptUtil.getVariablesUsed(condition).contains(id)) {
-          postCondition = condition;
-          break;
-        }
       case LEFT:
       case SEMI:
       case ANTI:
         // For a LEFT/SEMI/ANTI, predicate must be evaluated first.
         stack.push(right);
-        Shifter shifter = new Shifter(left.rel, id, right.rel);
-        RexNode shiftedCondition = condition.accept(shifter);
-        if (RelOptUtil.getVariablesUsed(shiftedCondition).contains(shifter.rightId)) {
-          filter(ImmutableSet.of(shifter.rightId), shiftedCondition);
-        } else {
-          filter(shiftedCondition);
-        }
+        filter(condition.accept(new Shifter(left.rel, id, right.rel)));
         right = stack.pop();
+        break;
+      case INNER:
+        // For INNER, we can defer.
+        postCondition = condition;
         break;
       default:
         throw new IllegalArgumentException("Correlated " + joinType + " join is not supported");
@@ -2708,7 +2989,7 @@ public class RelBuilder {
     assert tupleList.size() == rowCount;
     final List<String> fieldNameList =
         Util.transformIndexed(Arrays.asList(fieldNames), (name, i) ->
-            name != null ? name : "expr$" + i);
+            name != null ? name : SqlUtil.deriveAliasFromOrdinal(i));
     return values(tupleList, fieldNameList);
   }
 
@@ -3516,8 +3797,8 @@ public class RelBuilder {
    * @throws IllegalArgumentException if the {@link CorrelationId} is used by left side or if the a
    *   {@link CorrelationId} is present and the {@link JoinRelType} is FULL or RIGHT.
    */
-  private static boolean checkIfCorrelated(JoinRelType joinType, RexNode condition,
-      RelNode leftRel, RelNode rightRel, Set<CorrelationId> variablesSet) {
+  private static boolean checkIfCorrelated(Set<CorrelationId> variablesSet,
+      JoinRelType joinType, RelNode leftRel, RelNode rightRel) {
     if (variablesSet.isEmpty()) {
       return false;
     } else if (variablesSet.size() != 1) {
@@ -3536,8 +3817,8 @@ public class RelBuilder {
     case FULL:
       throw new IllegalArgumentException("Correlated " + joinType + " join is not supported");
     default:
-      return RelOptUtil.getVariablesUsed(rightRel).contains(id)
-          || RelOptUtil.getVariablesUsed(condition).contains(id);
+      Set<CorrelationId> rightIds = RelOptUtil.getVariablesUsed(rightRel);
+      return 0 != Sets.intersection(rightIds, variablesSet).size();
     }
   }
 
@@ -4182,84 +4463,24 @@ public class RelBuilder {
    * {@link RexCorrelVariable}. */
   private class Shifter extends RexShuttle {
     private final RelNode left;
-    private final int leftCount;
-    private final CorrelationId leftId;
-    private final CorrelationId rightId;
+    private final CorrelationId id;
     private final RelNode right;
-    private final RexShuttle subQueryRexShifter = new RexShuttle() {
-
-      @Override public RexNode visitSubQuery(RexSubQuery subQuery) {
-        RelNode relNode = subQuery.rel.accept(subQueryRelShuttle);
-        RexSubQuery subQueryWithNewNode;
-        if (subQuery.rel == relNode) {
-          subQueryWithNewNode = subQuery;
-        } else {
-          subQueryWithNewNode = subQuery.clone(relNode);
-        }
-        return super.visitSubQuery(subQueryWithNewNode);
-      }
-
-      @Override public RexNode visitFieldAccess(RexFieldAccess fieldAccess) {
-        if (fieldAccess.getReferenceExpr() instanceof RexCorrelVariable
-            && ((RexCorrelVariable) fieldAccess.getReferenceExpr()).id == leftId) {
-          int index = fieldAccess.getField().getIndex();
-          if (index < leftCount) {
-            final RexNode leftCorrel = getRexBuilder().makeCorrel(left.getRowType(), leftId);
-            return getRexBuilder().makeFieldAccess(leftCorrel, index);
-          } else {
-            final RexNode rightCorrel = getRexBuilder().makeCorrel(right.getRowType(), rightId);
-            return getRexBuilder().makeFieldAccess(rightCorrel, index - leftCount);
-          }
-        } else {
-          return super.visitFieldAccess(fieldAccess);
-        }
-      }
-    };
-
-    private final RelHomogeneousShuttle subQueryRelShuttle = new RelHomogeneousShuttle() {
-      @Override public RelNode visit(RelNode other) {
-        return super.visit(other.accept(subQueryRexShifter));
-      }
-    };
 
     Shifter(RelNode left, CorrelationId id, RelNode right) {
       this.left = left;
-      this.leftId = id;
-      this.leftCount = left.getRowType().getFieldCount();
+      this.id = id;
       this.right = right;
-      this.rightId = left.getCluster().createCorrel();
     }
 
     @Override public RexNode visitInputRef(RexInputRef inputRef) {
-      return rewriteField(inputRef.getIndex());
-    }
-
-    @Override public RexNode visitSubQuery(RexSubQuery subQuery) {
-      RelNode relNode = subQuery.rel.accept(subQueryRelShuttle);
-      RexSubQuery subQueryWithNewNode;
-      if (subQuery.rel == relNode) {
-        subQueryWithNewNode = subQuery;
+      final RelDataType leftRowType = left.getRowType();
+      final RexBuilder rexBuilder = getRexBuilder();
+      final int leftCount = leftRowType.getFieldCount();
+      if (inputRef.getIndex() < leftCount) {
+        final RexNode v = rexBuilder.makeCorrel(leftRowType, id);
+        return rexBuilder.makeFieldAccess(v, inputRef.getIndex());
       } else {
-        subQueryWithNewNode = subQuery.clone(relNode);
-      }
-      return super.visitSubQuery(subQueryWithNewNode);
-    }
-
-    @Override public RexNode visitFieldAccess(RexFieldAccess fieldAccess) {
-      if (fieldAccess.getReferenceExpr() instanceof RexCorrelVariable
-          && ((RexCorrelVariable) fieldAccess.getReferenceExpr()).id == leftId) {
-        return rewriteField(fieldAccess.getField().getIndex());
-      } else {
-        return super.visitFieldAccess(fieldAccess);
-      }
-    }
-
-    private RexNode rewriteField(int index) {
-      if (index < leftCount) {
-        final RexNode leftCorrel = getRexBuilder().makeCorrel(left.getRowType(), leftId);
-        return getRexBuilder().makeFieldAccess(leftCorrel, index);
-      } else {
-        return getRexBuilder().makeInputRef(right, index - leftCount);
+        return rexBuilder.makeInputRef(right, inputRef.getIndex() - leftCount);
       }
     }
   }
@@ -4270,19 +4491,10 @@ public class RelBuilder {
    *
    * <p>Start with the {@link #DEFAULT} instance,
    * and call {@code withXxx} methods to set its properties. */
+  @Value.Immutable
   public interface Config {
     /** Default configuration. */
-    Config DEFAULT = ImmutableBeans.create(Config.class);
-
-    @Deprecated // to be removed before 2.0
-    static ConfigBuilder builder() {
-      return DEFAULT.toBuilder();
-    }
-
-    @Deprecated // to be removed before 2.0
-    default ConfigBuilder toBuilder() {
-      return new ConfigBuilder(this);
-    }
+    Config DEFAULT = ImmutableRelBuilder.Config.of();
 
     /** Controls whether to merge two {@link Project} operators when inlining
      * expressions causes complexity to increase.
@@ -4321,104 +4533,73 @@ public class RelBuilder {
      * {@link org.apache.calcite.adapter.enumerable.EnumerableCalc}, will often
      * gather common sub-expressions and compute them only once.
      */
-    @ImmutableBeans.Property
-    @ImmutableBeans.IntDefault(100)
-    int bloat();
+    @Value.Default default int bloat() {
+      return 100;
+    }
 
     /** Sets {@link #bloat}. */
     Config withBloat(int bloat);
 
     /** Whether {@link RelBuilder#aggregate} should eliminate duplicate
      * aggregate calls; default true. */
-    @ImmutableBeans.Property
-    @ImmutableBeans.BooleanDefault(true)
-    boolean dedupAggregateCalls();
+    @Value.Default default boolean dedupAggregateCalls() {
+      return true;
+    }
 
     /** Sets {@link #dedupAggregateCalls}. */
     Config withDedupAggregateCalls(boolean dedupAggregateCalls);
 
     /** Whether {@link RelBuilder#aggregate} should prune unused
      * input columns; default true. */
-    @ImmutableBeans.Property
-    @ImmutableBeans.BooleanDefault(true)
-    boolean pruneInputOfAggregate();
+    @Value.Default default boolean pruneInputOfAggregate() {
+      return true;
+    }
 
     /** Sets {@link #pruneInputOfAggregate}. */
     Config withPruneInputOfAggregate(boolean pruneInputOfAggregate);
 
     /** Whether to push down join conditions; default false (but
      * {@link SqlToRelConverter#config()} by default sets this to true). */
-    @ImmutableBeans.Property
-    @ImmutableBeans.BooleanDefault(false)
-    boolean pushJoinCondition();
+    @Value.Default default boolean pushJoinCondition() {
+      return false;
+    }
 
     /** Sets {@link #pushJoinCondition()}. */
     Config withPushJoinCondition(boolean pushJoinCondition);
 
     /** Whether to simplify expressions; default true. */
-    @ImmutableBeans.Property
-    @ImmutableBeans.BooleanDefault(true)
-    boolean simplify();
+    @Value.Default default boolean simplify() {
+      return true;
+    }
 
     /** Sets {@link #simplify}. */
     Config withSimplify(boolean simplify);
 
     /** Whether to simplify LIMIT 0 to an empty relation; default true. */
-    @ImmutableBeans.Property
-    @ImmutableBeans.BooleanDefault(true)
-    boolean simplifyLimit();
+    @Value.Default default boolean simplifyLimit() {
+      return true;
+    }
 
     /** Sets {@link #simplifyLimit()}. */
     Config withSimplifyLimit(boolean simplifyLimit);
 
     /** Whether to simplify {@code Union(Values, Values)} or
      * {@code Union(Project(Values))} to {@code Values}; default true. */
-    @ImmutableBeans.Property
-    @ImmutableBeans.BooleanDefault(true)
-    boolean simplifyValues();
+    @Value.Default default boolean simplifyValues() {
+      return true;
+    }
 
     /** Sets {@link #simplifyValues()}. */
     Config withSimplifyValues(boolean simplifyValues);
 
     /** Whether to create an Aggregate even if we know that the input is
      * already unique; default false. */
-    @ImmutableBeans.Property
-    @ImmutableBeans.BooleanDefault(false)
-    boolean aggregateUnique();
+    @Value.Default default boolean aggregateUnique() {
+      return false;
+    }
 
     /** Sets {@link #aggregateUnique()}. */
     Config withAggregateUnique(boolean aggregateUnique);
   }
 
-  /** Creates a {@link RelBuilder.Config}.
-   *
-   * @deprecated Use the {@code withXxx} methods in
-   * {@link RelBuilder.Config}. */
-  @Deprecated // to be removed before 2.0
-  public static class ConfigBuilder {
-    private Config config;
-
-    private ConfigBuilder(Config config) {
-      this.config = config;
-    }
-
-    /** Creates a {@link RelBuilder.Config}. */
-    public Config build() {
-      return config;
-    }
-
-    /** Sets the value that will become
-     * {@link org.apache.calcite.tools.RelBuilder.Config#dedupAggregateCalls}. */
-    public ConfigBuilder withDedupAggregateCalls(boolean dedupAggregateCalls) {
-      config = config.withDedupAggregateCalls(dedupAggregateCalls);
-      return this;
-    }
-
-    /** Sets the value that will become
-     * {@link org.apache.calcite.tools.RelBuilder.Config#simplify}. */
-    public ConfigBuilder withSimplify(boolean simplify) {
-      config = config.withSimplify(simplify);
-      return this;
-    }
-  }
 }
