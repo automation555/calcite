@@ -31,10 +31,8 @@ import com.google.common.collect.ImmutableSet;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Deque;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,7 +43,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.function.Predicate;
 import java.util.stream.StreamSupport;
 
 import static java.util.Collections.unmodifiableMap;
@@ -98,46 +95,35 @@ final class ElasticsearchJson {
       BiConsumer<String, String> consumer) {
     Objects.requireNonNull(mapping, "mapping");
     Objects.requireNonNull(consumer, "consumer");
-    visitMappingProperties(new ArrayDeque<>(), mapping, consumer);
+    visitMappingProperties("", mapping, consumer);
   }
 
-  private static void visitMappingProperties(Deque<String> path,
+  private static void visitMappingProperties(String prefix,
       ObjectNode mapping, BiConsumer<String, String> consumer) {
     Objects.requireNonNull(mapping, "mapping");
-    if (mapping.isMissingNode()) {
+    if (mapping.findPath("properties").isMissingNode()) {
       return;
     }
 
-    // check if we have reached actual field mapping (leaf of JSON tree)
-    Predicate<JsonNode> isLeaf = node -> node.path("type").isValueNode();
-
-    if (mapping.path("properties").isObject()
-        && !isLeaf.test(mapping.path("properties"))) {
-      // recurse
-      visitMappingProperties(path, (ObjectNode) mapping.get("properties"), consumer);
-      return;
-    }
-
-    if (isLeaf.test(mapping)) {
-      // this is leaf (register field / type mapping)
-      consumer.accept(String.join(".", path), mapping.get("type").asText());
-      return;
-    }
-
-    // otherwise continue visiting mapping(s)
-    Iterable<Map.Entry<String, JsonNode>> iter = mapping::fields;
+    // only find properties node
+    ObjectNode properties = (ObjectNode) mapping.findPath("properties");
+    Iterable<Map.Entry<String, JsonNode>> iter = properties::fields;
     for (Map.Entry<String, JsonNode> entry : iter) {
-      final String name = entry.getKey();
-      final ObjectNode node = (ObjectNode) entry.getValue();
-      path.add(name);
-      visitMappingProperties(path, node, consumer);
-      path.removeLast();
+      String name = prefix + entry.getKey();
+      if (entry.getValue() instanceof ObjectNode) {
+        final ObjectNode node = (ObjectNode) entry.getValue();
+        if (node.has("type")) {
+          // this is leaf (register field / type mapping)
+          consumer.accept(name, entry.getValue().get("type").asText());
+        }
+        // recursive visit
+        visitMappingProperties(name + ".", node, consumer);
+      }
     }
   }
 
-
   /**
-   * Identifies a Calcite row (as in relational algebra).
+   * Identifies a calcite row (as in relational algebra)
    */
   private static class RowKey {
     private final Map<String, Object> keys;
@@ -207,7 +193,7 @@ final class ElasticsearchJson {
   }
 
   /**
-   * Response from Elastic.
+   * Response from Elastic
    */
   @JsonIgnoreProperties(ignoreUnknown = true)
   static class Result {
@@ -277,7 +263,7 @@ final class ElasticsearchJson {
   }
 
   /**
-   * Container for total hits.
+   * Container for total hits
    */
   @JsonDeserialize(using = SearchTotalDeserializer.class)
   static class SearchTotal {
@@ -332,7 +318,7 @@ final class ElasticsearchJson {
   static class SearchHit {
 
     /**
-     * ID of the document (not available in aggregations).
+     * ID of the document (not available in aggregations)
      */
     private final String id;
     private final Map<String, Object> source;
@@ -363,8 +349,7 @@ final class ElasticsearchJson {
     }
 
     /**
-     * Returns id of this hit (usually document id).
-     *
+     * Returns id of this hit (usually document id)
      * @return unique id
      */
     public String id() {
@@ -502,26 +487,26 @@ final class ElasticsearchJson {
   }
 
   /**
-   * Identifies all aggregations.
+   * Identifies all aggregations
    */
   interface Aggregation {
 
     /**
-     * Returns the name of this aggregation.
+     * @return The name of this aggregation.
      */
     String getName();
 
   }
 
   /**
-   * Allows traversing aggregations tree.
+   * Allows traversing aggregations tree
    */
   interface HasAggregations {
     Aggregations getAggregations();
   }
 
   /**
-   * An aggregation that returns multiple buckets.
+   * An aggregation that returns multiple buckets
    */
   static class MultiBucketsAggregation implements Aggregation {
 
@@ -535,7 +520,7 @@ final class ElasticsearchJson {
     }
 
     /**
-     * Returns the buckets of this aggregation.
+     * @return  The buckets of this aggregation.
      */
     List<Bucket> buckets() {
       return buckets;
@@ -565,14 +550,14 @@ final class ElasticsearchJson {
     }
 
     /**
-     * Returns the key associated with the bucket.
+     * @return The key associated with the bucket
      */
     Object key() {
       return key;
     }
 
     /**
-     * Returns the key associated with the bucket as a string.
+     * @return The key associated with the bucket as a string
      */
     String keyAsString() {
       return Objects.toString(key());
@@ -586,7 +571,7 @@ final class ElasticsearchJson {
     }
 
     /**
-     * Returns the sub-aggregations of this bucket.
+     * @return  The sub-aggregations of this bucket
      */
     @Override public Aggregations getAggregations() {
       return aggregations;
@@ -598,8 +583,8 @@ final class ElasticsearchJson {
   }
 
   /**
-   * Multi-value aggregation, like
-   * <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/search-aggregations-metrics-stats-aggregation.html">Stats</a>.
+   * Multi value aggregatoin like
+   * <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/search-aggregations-metrics-stats-aggregation.html">Stats</a>
    */
   static class MultiValue implements Aggregation {
     private final String name;
@@ -761,3 +746,5 @@ final class ElasticsearchJson {
   }
 
 }
+
+// End ElasticsearchJson.java
