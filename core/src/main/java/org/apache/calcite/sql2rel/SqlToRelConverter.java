@@ -2696,6 +2696,16 @@ public class SqlToRelConverter {
             validator().getValidatedNodeType(call),
             columnMappings);
 
+    final SqlValidatorScope selectScope =
+        ((DelegatingScope) bb.scope()).getParent();
+    final Blackboard seekBb = createBlackboard(selectScope, null, false);
+
+    final CorrelationUse p = getCorrelationUse(seekBb, callRel);
+    if (p != null) {
+      assert p.r instanceof LogicalTableFunctionScan;
+      callRel = (LogicalTableFunctionScan) p.r;
+    }
+
     bb.setRoot(callRel, true);
     afterTableFunction(bb, call, callRel);
   }
@@ -3039,9 +3049,7 @@ public class SqlToRelConverter {
         rightRel,
         condition,
         convertJoinType(join.getJoinType()));
-    relBuilder.push(joinRel);
-    final RelNode newProjectRel = relBuilder.project(relBuilder.fields()).build();
-    bb.setRoot(newProjectRel, false);
+    bb.setRoot(joinRel, false);
   }
 
   private RexNode convertNaturalCondition(
@@ -3105,13 +3113,6 @@ public class SqlToRelConverter {
         : bb.reRegister(rightRel);
     bb.setRoot(ImmutableList.of(leftRel, newRightRel));
     RexNode conditionExp =  bb.convertExpression(condition);
-    if (conditionExp instanceof RexInputRef && newRightRel != rightRel) {
-      int leftFieldCount = leftRel.getRowType().getFieldCount();
-      List<RelDataTypeField> rightFieldList = newRightRel.getRowType().getFieldList();
-      int rightFieldCount = newRightRel.getRowType().getFieldCount();
-      conditionExp = rexBuilder.makeInputRef(rightFieldList.get(rightFieldCount - 1).getType(),
-          leftFieldCount + rightFieldCount - 1);
-    }
     return Pair.of(conditionExp, newRightRel);
   }
 
@@ -4031,6 +4032,17 @@ public class SqlToRelConverter {
     ImmutableList.Builder<RexNode> rexNodeSourceExpressionListBuilder = ImmutableList.builder();
     for (SqlNode n : call.getSourceExpressionList()) {
       RexNode rn = bb.convertExpression(n);
+      // Update query maybe correlated, so the n maybe SqlSelect.
+      if (n instanceof SqlSelect) {
+        // One target column only from one source expression.
+        // So we only need to get first expression from sqlSelectList.
+        String fieldName = convertSelect((SqlSelect) n, false)
+            .getRowType().getFieldNames().get(0);
+        // Make new input reference because the old input reference is not belong to sourceRel.
+        RelDataType sourceRelType = sourceRel.getRowType();
+        rn = rexBuilder.makeInputRef(sourceRelType,
+            sourceRelType.getFieldNames().indexOf(fieldName));
+      }
       rexNodeSourceExpressionListBuilder.add(rn);
     }
 
@@ -4390,18 +4402,7 @@ public class SqlToRelConverter {
 
     relBuilder.push(bb.root())
         .projectNamed(exprs, fieldNames, true);
-
-    RelNode project = relBuilder.build();
-
-    final RelNode r;
-    final CorrelationUse p = getCorrelationUse(bb, project);
-    if (p != null) {
-      r = p.r;
-    } else {
-      r = project;
-    }
-
-    bb.setRoot(r, false);
+    bb.setRoot(relBuilder.build(), false);
 
     assert bb.columnMonotonicities.isEmpty();
     bb.columnMonotonicities.addAll(columnMonotonicityList);
@@ -4773,17 +4774,7 @@ public class SqlToRelConverter {
       List<RegisterArgs> registerCopy = registered;
       registered = new ArrayList<>();
       for (RegisterArgs reg: registerCopy) {
-        RelNode relNode = reg.rel;
-        relBuilder.push(relNode);
-        final RelMetadataQuery mq = relBuilder.getCluster().getMetadataQuery();
-        final Boolean unique = mq.areColumnsUnique(relBuilder.peek(),
-            ImmutableBitSet.of());
-        if (unique == null || !unique) {
-          relBuilder.aggregate(relBuilder.groupKey(),
-              relBuilder.aggregateCall(SqlStdOperatorTable.SINGLE_VALUE,
-                  relBuilder.field(0)));
-        }
-        register(relBuilder.build(), reg.joinType, reg.leftKeys);
+        register(reg.rel, reg.joinType, reg.leftKeys);
       }
       return requireNonNull(this.root, "root");
     }
