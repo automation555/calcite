@@ -28,19 +28,10 @@ import org.apache.calcite.util.Util;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 
-import org.checkerframework.checker.initialization.qual.UnknownInitialization;
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.io.Serializable;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-
-import static org.apache.calcite.linq4j.Nullness.castNonNull;
-
-import static java.util.Objects.requireNonNull;
 
 /**
  * RelDataTypeImpl is an abstract base for implementations of
@@ -51,16 +42,10 @@ import static java.util.Objects.requireNonNull;
  */
 public abstract class RelDataTypeImpl
     implements RelDataType, RelDataTypeFamily {
-
-  /**
-   * Suffix for the digests of non-nullable types.
-   */
-  public static final String NON_NULLABLE_SUFFIX = " NOT NULL";
-
   //~ Instance fields --------------------------------------------------------
 
-  protected final @Nullable List<RelDataTypeField> fieldList;
-  protected @Nullable String digest;
+  protected final List<RelDataTypeField> fieldList;
+  protected String digest;
 
   //~ Constructors -----------------------------------------------------------
 
@@ -69,7 +54,7 @@ public abstract class RelDataTypeImpl
    *
    * @param fieldList List of fields
    */
-  protected RelDataTypeImpl(@Nullable List<? extends RelDataTypeField> fieldList) {
+  protected RelDataTypeImpl(List<? extends RelDataTypeField> fieldList) {
     if (fieldList != null) {
       // Create a defensive copy of the list.
       this.fieldList = ImmutableList.copyOf(fieldList);
@@ -92,23 +77,11 @@ public abstract class RelDataTypeImpl
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public @Nullable RelDataTypeField getField(String fieldName,
-      boolean caseSensitive, boolean elideRecord) {
-    if (fieldList == null) {
-      throw new IllegalStateException("Trying to access field " + fieldName
-          + " in a type with no fields: " + this);
-    }
-    final Map<String, RelDataTypeField> fieldMap = getFieldMap();
-    if (caseSensitive && fieldMap != null) {
-      RelDataTypeField field = fieldMap.get(fieldName);
-      if (field != null) {
+  public RelDataTypeField getField(String fieldName, boolean caseSensitive,
+      boolean elideRecord) {
+    for (RelDataTypeField field : fieldList) {
+      if (Util.matches(caseSensitive, field.getName(), fieldName)) {
         return field;
-      }
-    } else {
-      for (RelDataTypeField field : fieldList) {
-        if (Util.matches(caseSensitive, field.getName(), fieldName)) {
-          return field;
-        }
       }
     }
     if (elideRecord) {
@@ -136,32 +109,13 @@ public abstract class RelDataTypeImpl
     }
 
     // a dynamic * field will match any field name.
-    if (fieldMap != null) {
-      return fieldMap.get("");
-    } else {
-      for (RelDataTypeField field : fieldList) {
-        if (field.isDynamicStar()) {
-          // the requested field could be in the unresolved star
-          return field;
-        }
+    for (RelDataTypeField field : fieldList) {
+      if (field.isDynamicStar()) {
+        // the requested field could be in the unresolved star
+        return field;
       }
     }
 
-    return null;
-  }
-
-  /** Returns a map from field names to fields.
-   *
-   * <p>Matching is case-sensitive.
-   *
-   * <p>If several fields have the same name, the map contains the first.
-   *
-   * <p>A {@link RelDataTypeField#isDynamicStar() dynamic star field} is indexed
-   * under its own name and "" (the empty string).
-   *
-   * <p>If the map is null, the type must do lookup the long way.
-   */
-  protected @Nullable Map<String, RelDataTypeField> getFieldMap() {
     return null;
   }
 
@@ -188,94 +142,96 @@ public abstract class RelDataTypeImpl
     }
   }
 
-  @Override public List<RelDataTypeField> getFieldList() {
-    assert fieldList != null : "fieldList must not be null, type = " + this;
+  public List<RelDataTypeField> getFieldList() {
+    assert isStruct();
     return fieldList;
   }
 
-  @Override public List<String> getFieldNames() {
-    assert fieldList != null : "fieldList must not be null, type = " + this;
+  public List<String> getFieldNames() {
     return Pair.left(fieldList);
   }
 
-  @Override public int getFieldCount() {
-    assert fieldList != null : "fieldList must not be null, type = " + this;
+  public int getFieldCount() {
+    assert isStruct() : this;
     return fieldList.size();
   }
 
-  @Override public StructKind getStructKind() {
+  public StructKind getStructKind() {
     return isStruct() ? StructKind.FULLY_QUALIFIED : StructKind.NONE;
   }
 
-  @Override public @Nullable RelDataType getComponentType() {
+  public RelDataType getComponentType() {
     // this is not a collection type
     return null;
   }
 
-  @Override public @Nullable RelDataType getKeyType() {
+  public RelDataType getKeyType() {
     // this is not a map type
     return null;
   }
 
-  @Override public @Nullable RelDataType getValueType() {
+  public RelDataType getValueType() {
     // this is not a map type
     return null;
   }
 
-  @Override public boolean isStruct() {
+  public boolean isStruct() {
     return fieldList != null;
   }
 
-  @Override public boolean equals(@Nullable Object obj) {
-    return this == obj
-        || obj instanceof RelDataTypeImpl
-          && Objects.equals(this.digest, ((RelDataTypeImpl) obj).digest);
-  }
-
-  @Override public int hashCode() {
-    return Objects.hashCode(digest);
-  }
-
-  @Override public String getFullTypeString() {
-    return requireNonNull(digest, "digest");
-  }
-
-  @Override public boolean isNullable() {
+  @Override public boolean equals(Object obj) {
+    if (obj instanceof RelDataTypeImpl) {
+      final RelDataTypeImpl that = (RelDataTypeImpl) obj;
+      boolean result = this.digest.equals(that.digest);
+      if (result && this.fieldList != null) {
+        result = this.fieldList.equals(that.fieldList);
+      }
+      return result;
+    }
     return false;
   }
 
-  @Override public @Nullable Charset getCharset() {
+  @Override public int hashCode() {
+    int hash = digest.hashCode();
+    if (fieldList != null) {
+      hash += 31 * fieldList.hashCode();
+    }
+    return hash;
+  }
+
+  public String getFullTypeString() {
+    return digest;
+  }
+
+  public boolean isNullable() {
+    return false;
+  }
+
+  public Charset getCharset() {
     return null;
   }
 
-  @Override public @Nullable SqlCollation getCollation() {
+  public SqlCollation getCollation() {
     return null;
   }
 
-  @Override public @Nullable SqlIntervalQualifier getIntervalQualifier() {
+  public SqlIntervalQualifier getIntervalQualifier() {
     return null;
   }
 
-  @Override public int getPrecision() {
+  public int getPrecision() {
     return PRECISION_NOT_SPECIFIED;
   }
 
-  @Override public int getScale() {
+  public int getScale() {
     return SCALE_NOT_SPECIFIED;
   }
 
-  /**
-   * Gets the {@link SqlTypeName} of this type.
-   * Sub-classes must override the method to ensure the resulting value is non-nullable.
-   *
-   * @return SqlTypeName, never null
-   */
-  @Override public SqlTypeName getSqlTypeName() {
-    // The implementations must provide non-null value, however, we keep this for compatibility
-    return castNonNull(null);
+  public SqlTypeName getSqlTypeName() {
+    return null;
   }
 
-  @Override public @Nullable SqlIdentifier getSqlIdentifier() {
+  public SqlIdentifier getSqlIdentifier() {
     SqlTypeName typeName = getSqlTypeName();
     if (typeName == null) {
       return null;
@@ -285,7 +241,7 @@ public abstract class RelDataTypeImpl
         SqlParserPos.ZERO);
   }
 
-  @Override public RelDataTypeFamily getFamily() {
+  public RelDataTypeFamily getFamily() {
     // by default, put each type into its own family
     return this;
   }
@@ -293,7 +249,7 @@ public abstract class RelDataTypeImpl
   /**
    * Generates a string representation of this type.
    *
-   * @param sb         StringBuilder into which to generate the string
+   * @param sb         StringBuffer into which to generate the string
    * @param withDetail when true, all detail information needed to compute a
    *                   unique digest (and return from getFullTypeString) should
    *                   be included;
@@ -306,14 +262,11 @@ public abstract class RelDataTypeImpl
    * Computes the digest field. This should be called in every non-abstract
    * subclass constructor once the type is fully defined.
    */
-  @SuppressWarnings("method.invocation.invalid")
-  protected void computeDigest(
-      @UnknownInitialization RelDataTypeImpl this
-  ) {
+  protected void computeDigest() {
     StringBuilder sb = new StringBuilder();
     generateTypeString(sb, true);
     if (!isNullable()) {
-      sb.append(NON_NULLABLE_SUFFIX);
+      sb.append(" NOT NULL");
     }
     digest = sb.toString();
   }
@@ -324,15 +277,15 @@ public abstract class RelDataTypeImpl
     return sb.toString();
   }
 
-  @Override public RelDataTypePrecedenceList getPrecedenceList() {
+  public RelDataTypePrecedenceList getPrecedenceList() {
     // by default, make each type have a precedence list containing
     // only other types in the same family
     return new RelDataTypePrecedenceList() {
-      @Override public boolean containsType(RelDataType type) {
+      public boolean containsType(RelDataType type) {
         return getFamily() == type.getFamily();
       }
 
-      @Override public int compareTypePrecedence(
+      public int compareTypePrecedence(
           RelDataType type1,
           RelDataType type2) {
         assert containsType(type1);
@@ -342,7 +295,7 @@ public abstract class RelDataTypeImpl
     };
   }
 
-  @Override public RelDataTypeComparability getComparability() {
+  public RelDataTypeComparability getComparability() {
     return RelDataTypeComparability.ALL;
   }
 
@@ -423,19 +376,21 @@ public abstract class RelDataTypeImpl
    * @param rowType Row type
    * @return The "extra" field, or null
    */
-  public static @Nullable RelDataTypeField extra(RelDataType rowType) {
+  public static RelDataTypeField extra(RelDataType rowType) {
     // Even in a case-insensitive connection, the name must be precisely
     // "_extra".
     return rowType.getField("_extra", true, false);
   }
 
-  @Override public boolean isDynamicStruct() {
+  public boolean isDynamicStruct() {
     return false;
   }
 
   /** Work space for {@link RelDataTypeImpl#getFieldRecurse}. */
   private static class Slot {
     int count;
-    @Nullable RelDataTypeField field;
+    RelDataTypeField field;
   }
 }
+
+// End RelDataTypeImpl.java
