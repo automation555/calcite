@@ -1288,21 +1288,6 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         + "from emp e");
   }
 
-  @Test void testCorrelatedScalarSubQueryInSelectList() {
-    Consumer<String> fn = sql -> {
-      sql(sql).withExpand(true).withDecorrelate(false)
-          .convertsTo("${planExpanded}");
-      sql(sql).withExpand(false).withDecorrelate(false)
-          .convertsTo("${planNotExpanded}");
-    };
-    fn.accept("select deptno,\n"
-        + "  (select min(1) from emp where empno > d.deptno) as i0,\n"
-        + "  (select min(0) from emp where deptno = d.deptno "
-        + "                            and ename = 'SMITH'"
-        + "                            and d.deptno > 0) as i1\n"
-        + "from dept as d");
-  }
-
   @Test void testCorrelationLateralSubQuery() {
     String sql = "SELECT deptno, ename\n"
         + "FROM\n"
@@ -1716,6 +1701,23 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
   @Test void testNotUniqueCorrelated() {
     final String sql = "select * from emp where not unique (\n"
         + "  select 1 from dept where emp.deptno=dept.deptno)";
+    sql(sql).withExpand(false).ok();
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-5156">[CALCITE-5156]
+   * Support implicit type cast for IN Sub-query</a>. */
+  @Test void testInSubQueryWithTypeCast() {
+    final String sql = "select *\n"
+        + "from dept\n"
+        + "where cast(deptno + 20 as bigint) in (select deptno from dept)";
+    sql(sql).withExpand(false).ok();
+  }
+
+  @Test void testInSubQueryWithTypeCast2() {
+    final String sql = "select *\n"
+        + "from dept\n"
+        + "where cast(deptno as bigint) in (select deptno + 20 from dept)";
     sql(sql).withExpand(false).ok();
   }
 
@@ -2550,7 +2552,7 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
     programBuilder.addRuleInstance(CoreRules.PROJECT_TO_CALC);
     final HepPlanner planner = new HepPlanner(programBuilder.build());
     planner.setRoot(rel);
-    final RelNode calc = planner.findBestExp();
+    final LogicalCalc calc = (LogicalCalc) planner.findBestExp();
     final List<RelNode> rels = new ArrayList<>();
     final RelShuttleImpl visitor = new RelShuttleImpl() {
       @Override public RelNode visit(LogicalCalc calc) {
@@ -2559,14 +2561,14 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         return visitedRel;
       }
     };
-    calc.accept(visitor);
+    visitor.visit(calc);
     assertThat(rels.size(), is(1));
     assertThat(rels.get(0), isA(LogicalCalc.class));
   }
 
   @Test void testRelShuttleForLogicalTableModify() {
     final String sql = "insert into emp select * from emp";
-    final RelNode rel = sql(sql).toRel();
+    final LogicalTableModify rel = (LogicalTableModify) sql(sql).toRel();
     final List<RelNode> rels = new ArrayList<>();
     final RelShuttleImpl visitor = new RelShuttleImpl() {
       @Override public RelNode visit(LogicalTableModify modify) {
@@ -2575,7 +2577,7 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         return visitedRel;
       }
     };
-    rel.accept(visitor);
+    visitor.visit(rel);
     assertThat(rels.size(), is(1));
     assertThat(rels.get(0), isA(LogicalTableModify.class));
   }
@@ -3283,30 +3285,6 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         + "and e1.sal > (select avg(e2.sal) from emp e2\n"
         + "  where e2.deptno = d1.deptno group by cube(comm, mgr))";
     sql(sql).withDecorrelate(true).ok();
-  }
-
-  @Test void testCorrelationInProjection1() {
-    final String sql = "select array(select e.deptno) from emp e";
-    sql(sql).withExpand(false).withDecorrelate(false).ok();
-  }
-
-  @Test void testCorrelationInProjection2() {
-    final String sql = "select array(select e.deptno)\n"
-        + "from (select deptno, ename from emp) e";
-    sql(sql).withExpand(false).withDecorrelate(false).ok();
-  }
-
-  @Test void testCorrelationInProjection3() {
-    final String sql = "select cardinality(array(select e.deptno)), array(select e.ename)[0]\n"
-        + "from (select deptno, ename from emp) e";
-    sql(sql).withExpand(false).withDecorrelate(false).ok();
-  }
-
-  @Test void testCorrelationInProjection4() {
-    final String sql = "select cardinality(arr) from"
-        + "(select array(select e.deptno) arr\n"
-        + "from (select deptno, ename from emp) e)";
-    sql(sql).withExpand(false).withDecorrelate(false).ok();
   }
 
   @Test void testCustomColumnResolving() {
@@ -4531,29 +4509,5 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
                 config.withIdentifierExpansion(false)))
         .withTrim(false)
         .ok();
-  }
-
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-5089">[CALCITE-5089]
-   * Allow GROUP BY ALL or DISTINCT set quantifier on GROUPING SETS</a>. */
-  @Test void testGroupByDistinct() {
-    final String sql = "SELECT deptno, job, count(*)\n"
-        + "FROM emp\n"
-        + "GROUP BY DISTINCT\n"
-        + "CUBE (deptno, job),\n"
-        + "ROLLUP (deptno, job)";
-    sql(sql).ok();
-  }
-
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-5089">[CALCITE-5089]
-   * Allow GROUP BY ALL or DISTINCT set quantifier on GROUPING SETS</a>. */
-  @Test void testGroupByAll() {
-    final String sql = "SELECT deptno, job, count(*)\n"
-        + "FROM emp\n"
-        + "GROUP BY ALL\n"
-        + "CUBE (deptno, job),\n"
-        + "ROLLUP (deptno, job)";
-    sql(sql).ok();
   }
 }
