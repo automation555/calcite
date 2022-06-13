@@ -49,6 +49,8 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Locale;
 import java.util.Map;
@@ -76,8 +78,7 @@ final class ElasticsearchTransport {
   final ElasticsearchMapping mapping;
 
   /**
-   * Default batch size.
-   *
+   * Default batch size
    * @see <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-scroll.html">Scrolling API</a>
    */
   final int fetchSize;
@@ -119,7 +120,14 @@ final class ElasticsearchTransport {
    * Build index mapping returning new instance of {@link ElasticsearchMapping}.
    */
   private ElasticsearchMapping fetchAndCreateMapping() {
-    final String uri = String.format(Locale.ROOT, "/%s/_mapping", indexName);
+    String encodedIndexName = indexName;
+    try {
+      encodedIndexName = URLEncoder.encode(indexName, StandardCharsets.UTF_8.toString());
+    } catch (Exception e) {
+      LOGGER.error("URL encode error", e);
+    }
+
+    final String uri = String.format(Locale.ROOT, "/%s/_mapping", encodedIndexName);
     final ObjectNode root = rawHttp(ObjectNode.class).apply(new HttpGet(uri));
     ObjectNode properties = (ObjectNode) root.elements().next().get("mappings");
 
@@ -188,8 +196,7 @@ final class ElasticsearchTransport {
     try {
       final String json = mapper().writeValueAsString(payload);
       request.setEntity(new StringEntity(json, ContentType.APPLICATION_JSON));
-      @SuppressWarnings("unused")
-      Response response = rawHttp().apply(request);
+      rawHttp().apply(request);
     } catch (IOException | UncheckedIOException e) {
       LOGGER.warn("Failed to close scroll(s): {}", scrollIds, e);
     }
