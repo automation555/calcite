@@ -55,6 +55,8 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.text.DecimalFormat;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -73,7 +75,6 @@ import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
-import java.util.stream.IntStream;
 import javax.annotation.Nonnull;
 
 import static org.apache.calcite.util.Static.RESOURCE;
@@ -1068,55 +1069,17 @@ public class SqlFunctions {
   }
 
   // &
+
   /** Helper function for implementing <code>BIT_AND</code> */
   public static long bitAnd(long b0, long b1) {
     return b0 & b1;
   }
 
   // |
+
   /** Helper function for implementing <code>BIT_OR</code> */
   public static long bitOr(long b0, long b1) {
     return b0 | b1;
-  }
-
-  // ^
-  /** Helper function for implementing <code>BIT_XOR</code> */
-  public static long bitXor(long b0, long b1) {
-    return b0 ^ b1;
-  }
-
-  // BITNOT
-
-  /** SQL <code>BITNOT</code> operator applied to byte values */
-  public static byte bitNot(byte b0) {
-    return (byte) ~b0;
-  }
-
-  /** SQL <code>BITNOT</code> operator applied to short values */
-  public static short bitNot(short b0) {
-    return (short) ~b0;
-  }
-
-  /** SQL <code>BITNOT</code> operator applied to int values */
-  public static int bitNot(int b0) {
-    return ~b0;
-  }
-
-  /** SQL <code>BITNOT</code> operator applied to long values */
-  public static long bitNot(long b0) {
-    return ~b0;
-  }
-
-  /** SQL <code>BITNOT</code> operator applied to ByteString values */
-  public static ByteString bitNot(ByteString b0) {
-    byte[] bytes = b0.getBytes();
-    byte[] result = new byte[b0.length()];
-
-    IntStream.range(0, bytes.length).forEach(i -> {
-      result[i] = (byte) ~bytes[i];
-    });
-    return new ByteString(result);
-
   }
 
   // EXP
@@ -1419,17 +1382,6 @@ public class SqlFunctions {
     return Math.atan2(b0, b1);
   }
 
-  // CBRT
-  /** SQL <code>CBRT</code> operator applied to BigDecimal values. */
-  public static double cbrt(BigDecimal b) {
-    return cbrt(b.doubleValue());
-  }
-
-  /** SQL <code>CBRT</code> operator applied to double values. */
-  public static double cbrt(double b) {
-    return Math.cbrt(b);
-  }
-
   // COS
   /** SQL <code>COS</code> operator applied to BigDecimal values. */
   public static double cos(BigDecimal b0) {
@@ -1439,17 +1391,6 @@ public class SqlFunctions {
   /** SQL <code>COS</code> operator applied to double values. */
   public static double cos(double b0) {
     return Math.cos(b0);
-  }
-
-  // COSH
-  /** SQL <code>COSH</code> operator applied to BigDecimal values. */
-  public static double cosh(BigDecimal b) {
-    return cosh(b.doubleValue());
-  }
-
-  /** SQL <code>COSH</code> operator applied to double values. */
-  public static double cosh(double b) {
-    return Math.cosh(b);
   }
 
   // COT
@@ -1606,17 +1547,6 @@ public class SqlFunctions {
   /** SQL <code>TAN</code> operator applied to double values. */
   public static double tan(double b0) {
     return Math.tan(b0);
-  }
-
-  // TANH
-  /** SQL <code>TANH</code> operator applied to BigDecimal values. */
-  public static double tanh(BigDecimal b) {
-    return tanh(b.doubleValue());
-  }
-
-  /** SQL <code>TANH</code> operator applied to double values. */
-  public static double tanh(double b) {
-    return Math.tanh(b);
   }
 
   // Helpers
@@ -1878,7 +1808,11 @@ public class SqlFunctions {
    *
    * <p>Converse of {@link #internalToTimestamp(long)}. */
   public static long toLong(Timestamp v) {
-    return toLong(v, LOCAL_TZ);
+    LocalDateTime dateTime = v.toLocalDateTime();
+    long epochDay = dateTime.toLocalDate().toEpochDay();
+    long nanoOfDay = dateTime.toLocalTime().toNanoOfDay();
+
+    return epochDay * DateTimeUtils.MILLIS_PER_DAY + nanoOfDay / 1_000_000;
   }
 
   // mainly intended for java.sql.Timestamp but works for other dates also
@@ -2039,7 +1973,17 @@ public class SqlFunctions {
   /** Converts the internal representation of a SQL TIMESTAMP (long) to the Java
    * type used for UDF parameters ({@link java.sql.Timestamp}). */
   public static java.sql.Timestamp internalToTimestamp(long v) {
-    return new java.sql.Timestamp(v - LOCAL_TZ.getOffset(v));
+    int date = (int) (v / DateTimeUtils.MILLIS_PER_DAY);
+    int time = (int) (v % DateTimeUtils.MILLIS_PER_DAY);
+    if (time < 0) {
+      --date;
+      time += DateTimeUtils.MILLIS_PER_DAY;
+    }
+    long nanoOfDay = time * 1_000_000L;
+    LocalDate localDate = LocalDate.ofEpochDay(date);
+    LocalTime localTime = LocalTime.ofNanoOfDay(nanoOfDay);
+
+    return java.sql.Timestamp.valueOf(LocalDateTime.of(localDate, localTime));
   }
 
   public static java.sql.Timestamp internalToTimestamp(Long v) {
