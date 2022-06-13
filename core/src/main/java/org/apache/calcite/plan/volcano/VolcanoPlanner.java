@@ -18,7 +18,6 @@ package org.apache.calcite.plan.volcano;
 
 import org.apache.calcite.avatica.util.Spaces;
 import org.apache.calcite.config.CalciteConnectionConfig;
-import org.apache.calcite.config.CalciteSystemProperty;
 import org.apache.calcite.linq4j.tree.Expressions;
 import org.apache.calcite.plan.AbstractRelOptPlanner;
 import org.apache.calcite.plan.Context;
@@ -40,6 +39,7 @@ import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelTrait;
 import org.apache.calcite.plan.RelTraitDef;
 import org.apache.calcite.plan.RelTraitSet;
+import org.apache.calcite.prepare.CalcitePrepareImpl;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelVisitor;
 import org.apache.calcite.rel.convert.Converter;
@@ -48,11 +48,23 @@ import org.apache.calcite.rel.externalize.RelWriterImpl;
 import org.apache.calcite.rel.metadata.JaninoRelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rel.rules.AggregateJoinTransposeRule;
+import org.apache.calcite.rel.rules.AggregateProjectMergeRule;
+import org.apache.calcite.rel.rules.AggregateRemoveRule;
+import org.apache.calcite.rel.rules.CalcRemoveRule;
+import org.apache.calcite.rel.rules.FilterJoinRule;
+import org.apache.calcite.rel.rules.JoinAssociateRule;
+import org.apache.calcite.rel.rules.JoinCommuteRule;
+import org.apache.calcite.rel.rules.ProjectRemoveRule;
+import org.apache.calcite.rel.rules.SemiJoinRule;
+import org.apache.calcite.rel.rules.SortRemoveRule;
+import org.apache.calcite.rel.rules.UnionToDistinctRule;
 import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.util.Litmus;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.PartiallyOrderedSet;
+import org.apache.calcite.util.SaffronProperties;
 import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
@@ -87,6 +99,12 @@ import java.util.regex.Pattern;
  * according to a dynamic programming algorithm.
  */
 public class VolcanoPlanner extends AbstractRelOptPlanner {
+  //~ Static fields/initializers ---------------------------------------------
+  private static final boolean DUMP_GRAPHVIZ =
+      Util.getBooleanProperty("calcite.volcano.dump.graphviz", true);
+  private static final boolean DUMP_SETS =
+      Util.getBooleanProperty("calcite.volcano.dump.sets", true);
+
   protected static final double COST_IMPROVEMENT = .5;
 
   //~ Instance fields --------------------------------------------------------
@@ -209,11 +227,6 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
    */
   private boolean locked;
 
-  /**
-   * Whether rels with Convention.NONE has infinite cost.
-   */
-  private boolean noneConventionHasInfiniteCost = true;
-
   private final List<RelOptMaterialization> materializations =
       new ArrayList<>();
 
@@ -320,7 +333,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
     return latticeByName.get(table.getQualifiedName());
   }
 
-  protected void registerMaterializations() {
+  private void registerMaterializations() {
     // Avoid using materializations while populating materializations!
     final CalciteConnectionConfig config =
         context.unwrap(CalciteConnectionConfig.class);
@@ -888,7 +901,24 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
   }
 
   public void registerAbstractRelationalRules() {
-    RelOptUtil.registerAbstractRelationalRules(this);
+    addRule(FilterJoinRule.FILTER_ON_JOIN);
+    addRule(FilterJoinRule.JOIN);
+    addRule(AbstractConverter.ExpandConversionRule.INSTANCE);
+    addRule(JoinCommuteRule.INSTANCE);
+    addRule(SemiJoinRule.PROJECT);
+    addRule(SemiJoinRule.JOIN);
+    if (CalcitePrepareImpl.COMMUTE) {
+      addRule(JoinAssociateRule.INSTANCE);
+    }
+    addRule(AggregateRemoveRule.INSTANCE);
+    addRule(UnionToDistinctRule.INSTANCE);
+    addRule(ProjectRemoveRule.INSTANCE);
+    addRule(AggregateJoinTransposeRule.INSTANCE);
+    addRule(AggregateProjectMergeRule.INSTANCE);
+    addRule(CalcRemoveRule.INSTANCE);
+    addRule(SortRemoveRule.INSTANCE);
+
+    // todo: rule which makes Project({OrdinalRef}) disappear
   }
 
   public void registerSchema(RelOptSchema schema) {
@@ -901,22 +931,13 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
     }
   }
 
-  /**
-   * Sets whether this planner should consider rel nodes with Convention.NONE
-   * to have inifinte cost or not.
-   * @param infinite Whether to make none convention rel nodes inifite cost
-   */
-  public void setNoneConventionHasInfiniteCost(boolean infinite) {
-    this.noneConventionHasInfiniteCost = infinite;
-  }
-
   public RelOptCost getCost(RelNode rel, RelMetadataQuery mq) {
     assert rel != null : "pre-condition: rel != null";
     if (rel instanceof RelSubset) {
       return ((RelSubset) rel).bestCost;
     }
-    if (noneConventionHasInfiniteCost
-        && rel.getTraitSet().getTrait(ConventionTraitDef.INSTANCE) == Convention.NONE) {
+    if (rel.getTraitSet().getTrait(ConventionTraitDef.INSTANCE)
+        == Convention.NONE) {
       return costFactory.makeInfiniteCost();
     }
     RelOptCost cost = mq.getNonCumulativeCost(rel);
@@ -977,7 +998,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
     assert fromTraits.size() >= toTraits.size();
 
     final boolean allowInfiniteCostConverters =
-        CalciteSystemProperty.ALLOW_INFINITE_COST_CONVERTERS.value();
+        SaffronProperties.INSTANCE.allowInfiniteCostConverters().get();
 
     // Traits may build on top of another...for example a collation trait
     // would typically come after a distribution trait since distribution
@@ -1140,12 +1161,12 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
       originalRoot.explain(
           new RelWriterImpl(pw, SqlExplainLevel.ALL_ATTRIBUTES, false));
     }
-    if (CalciteSystemProperty.DUMP_SETS.value()) {
+    if (DUMP_SETS) {
       pw.println();
       pw.println("Sets:");
       dumpSets(pw);
     }
-    if (CalciteSystemProperty.DUMP_GRAPHVIZ.value()) {
+    if (DUMP_GRAPHVIZ) {
       pw.println();
       pw.println("Graphviz:");
       dumpGraphviz(pw);
@@ -1229,29 +1250,13 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
       Util.printJavaString(pw, "Set " + set.id + " " + set.subsets.get(0).getRowType(), false);
       pw.print(";\n");
       for (RelNode rel : set.rels) {
+        String traits = "." + rel.getTraitSet().toString();
         pw.print("\t\trel");
         pw.print(rel.getId());
         pw.print(" [label=");
         RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
-
-        // Note: rel traitset could be different from its subset.traitset
-        // It can happen due to RelTraitset#simplify
-        // If the traits are different, we want to keep them on a graph
-        String traits = "." + getSubset(rel).getTraitSet().toString();
-        String title = rel.getDescription().replace(traits, "");
-        if (title.endsWith(")")) {
-          int openParen = title.indexOf('(');
-          if (openParen != -1) {
-            // Title is like rel#12:LogicalJoin(left=RelSubset#4,right=RelSubset#3,
-            // condition==($2, $0),joinType=inner)
-            // so we remove the parenthesis, and wrap parameters to the second line
-            // This avoids "too wide" Graphiz boxes, and makes the graph easier to follow
-            title = title.substring(0, openParen) + '\n'
-                + title.substring(openParen + 1, title.length() - 1);
-          }
-        }
         Util.printJavaString(pw,
-            title
+            rel.getDescription().replace(traits, "")
                 + "\nrows=" + mq.getRowCount(rel) + ", cost=" + getCost(rel, mq), false);
         RelSubset relSubset = getSubset(rel);
         if (!(rel instanceof AbstractConverter)) {
@@ -1851,12 +1856,14 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
 
   // implement RelOptPlanner
   public long getRelMetadataTimestamp(RelNode rel) {
-    RelSubset subset = getSubset(rel);
-    if (subset == null) {
-      return 0;
-    } else {
-      return subset.timestamp;
+    List<Long> inputSubsets = new ArrayList<>();
+    for (RelNode input : rel.getInputs()) {
+      RelSubset inputSubset = getSubset(input);
+      if (inputSubset != null) {
+        inputSubsets.add(inputSubset.timestamp);
+      }
     }
+    return inputSubsets.hashCode();
   }
 
   /**

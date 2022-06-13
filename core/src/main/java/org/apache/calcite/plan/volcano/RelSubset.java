@@ -37,12 +37,10 @@ import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
 import org.apache.calcite.util.trace.CalciteTrace;
 
-import org.apiguardian.api.API;
 import org.slf4j.Logger;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -50,11 +48,9 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * Subset of an equivalence class where all relational expressions have the
@@ -76,15 +72,8 @@ public class RelSubset extends AbstractRelNode {
   //~ Static fields/initializers ---------------------------------------------
 
   private static final Logger LOGGER = CalciteTrace.getPlannerTracer();
-  private static final int DELIVERED = 1;
-  private static final int REQUIRED = 2;
 
   //~ Instance fields --------------------------------------------------------
-
-  /**
-   * Optimization task state
-   */
-  OptimizeTask.State taskState;
 
   /**
    * cost of best known plan (it may have improved since)
@@ -104,21 +93,13 @@ public class RelSubset extends AbstractRelNode {
   /**
    * Timestamp for metadata validity
    */
-  long timestamp;
+  long timestamp = 0;
 
   /**
-   * Physical property state of current subset
-   * 0: logical operators, NONE convention is neither DELIVERED nor REQUIRED
-   * 1: traitSet DELIVERED from child operators or itself
-   * 2: traitSet REQUIRED from parent operators
-   * 3: both DELIVERED and REQUIRED
+   * Flag indicating whether this RelSubset's importance was artificially
+   * boosted.
    */
-  private int state = 0;
-
-  /**
-   * This subset should trigger rules when it becomes delivered.
-   */
-  boolean triggerRule = false;
+  boolean boosted;
 
   //~ Constructors -----------------------------------------------------------
 
@@ -128,6 +109,7 @@ public class RelSubset extends AbstractRelNode {
       RelTraitSet traits) {
     super(cluster, traits);
     this.set = set;
+    this.boosted = false;
     assert traits.allSimple();
     computeBestCost(cluster.getPlanner());
     recomputeDigest();
@@ -160,32 +142,12 @@ public class RelSubset extends AbstractRelNode {
     }
   }
 
-  void setDelivered() {
-    triggerRule = !isDelivered();
-    state |= DELIVERED;
-  }
-
-  void setRequired() {
-    triggerRule = false;
-    state |= REQUIRED;
-  }
-
-  @API(since = "1.23", status = API.Status.EXPERIMENTAL)
-  public boolean isDelivered() {
-    return (state & DELIVERED) == DELIVERED;
-  }
-
-  @API(since = "1.23", status = API.Status.EXPERIMENTAL)
-  public boolean isRequired() {
-    return (state & REQUIRED) == REQUIRED;
-  }
-
   public RelNode getBest() {
     return best;
   }
 
   public RelNode getOriginal() {
-    return set.originalRel;
+    return set.rel;
   }
 
   public RelNode copy(RelTraitSet traitSet, List<RelNode> inputs) {
@@ -194,7 +156,7 @@ public class RelSubset extends AbstractRelNode {
       if (traitSet1.equals(this.traitSet)) {
         return this;
       }
-      return set.getOrCreateSubset(getCluster(), traitSet1, isRequired());
+      return set.getOrCreateSubset(getCluster(), traitSet1);
     }
     throw new UnsupportedOperationException();
   }
@@ -207,14 +169,15 @@ public class RelSubset extends AbstractRelNode {
     if (best != null) {
       return mq.getRowCount(best);
     } else {
-      return mq.getRowCount(set.originalRel);
+      return mq.getRowCount(set.rel);
     }
   }
 
   @Override public void explain(RelWriter pw) {
     // Not a typical implementation of "explain". We don't gather terms &
     // values to be printed later. We actually do the work.
-    pw.item("subset", toString());
+    String s = getDescription();
+    pw.item("subset", s);
     final AbstractRelNode input =
         (AbstractRelNode) Util.first(getBest(), getOriginal());
     if (input == null) {
@@ -234,7 +197,7 @@ public class RelSubset extends AbstractRelNode {
   }
 
   @Override protected RelDataType deriveRowType() {
-    return set.originalRel.getRowType();
+    return set.rel.getRowType();
   }
 
   /**
@@ -245,8 +208,7 @@ public class RelSubset extends AbstractRelNode {
     final Set<RelNode> list = new LinkedHashSet<>();
     for (RelNode parent : set.getParentRels()) {
       for (RelSubset rel : inputSubsets(parent)) {
-        // see usage of this method in propagateCostImprovements0()
-        if (rel == this) {
+        if (rel.set == set && traitSet.satisfies(rel.getTraitSet())) {
           list.add(parent);
         }
       }
@@ -306,19 +268,19 @@ public class RelSubset extends AbstractRelNode {
     }
 
     VolcanoPlanner planner = (VolcanoPlanner) rel.getCluster().getPlanner();
-    if (planner.getListener() != null) {
+    if (planner.listener != null) {
       RelOptListener.RelEquivalenceEvent event =
           new RelOptListener.RelEquivalenceEvent(
               planner,
               rel,
               this,
               true);
-      planner.getListener().relEquivalenceFound(event);
+      planner.listener.relEquivalenceFound(event);
     }
 
     // If this isn't the first rel in the set, it must have compatible
     // row type.
-    if (set.originalRel != null) {
+    if (set.rel != null) {
       RelOptUtil.equal("rowtype of new rel", rel.getRowType(),
           "rowtype of set", getRowType(), Litmus.THROW);
     }
@@ -341,12 +303,12 @@ public class RelSubset extends AbstractRelNode {
     CheapestPlanReplacer replacer = new CheapestPlanReplacer(planner);
     final RelNode cheapest = replacer.visit(this, -1, null);
 
-    if (planner.getListener() != null) {
+    if (planner.listener != null) {
       RelOptListener.RelChosenEvent event =
           new RelOptListener.RelChosenEvent(
               planner,
               null);
-      planner.getListener().relChosen(event);
+      planner.listener.relChosen(event);
     }
 
     return cheapest;
@@ -354,7 +316,7 @@ public class RelSubset extends AbstractRelNode {
 
   /**
    * Checks whether a relexp has made its subset cheaper, and if it so,
-   * propagate new cost to parent rel nodes using breadth first manner.
+   * recursively checks whether that subset's parents have gotten cheaper.
    *
    * @param planner   Planner
    * @param mq        Metadata query
@@ -363,23 +325,15 @@ public class RelSubset extends AbstractRelNode {
    */
   void propagateCostImprovements(VolcanoPlanner planner, RelMetadataQuery mq,
       RelNode rel, Set<RelSubset> activeSet) {
-    Queue<Pair<RelSubset, RelNode>> propagationQueue = new ArrayDeque<>();
     for (RelSubset subset : set.subsets) {
       if (rel.getTraitSet().satisfies(subset.traitSet)) {
-        propagationQueue.offer(Pair.of(subset, rel));
+        subset.propagateCostImprovements0(planner, mq, rel, activeSet);
       }
-    }
-
-    while (!propagationQueue.isEmpty()) {
-      Pair<RelSubset, RelNode> p = propagationQueue.poll();
-      p.left.propagateCostImprovements0(planner, mq, p.right, activeSet, propagationQueue);
     }
   }
 
   void propagateCostImprovements0(VolcanoPlanner planner, RelMetadataQuery mq,
-      RelNode rel, Set<RelSubset> activeSet,
-      Queue<Pair<RelSubset, RelNode>> propagationQueue) {
-    ++timestamp;
+      RelNode rel, Set<RelSubset> activeSet) {
 
     if (!activeSet.add(this)) {
       // This subset is already in the chain being propagated to. This
@@ -389,35 +343,38 @@ public class RelSubset extends AbstractRelNode {
       return;
     }
     try {
-      RelOptCost cost = planner.getCost(rel, mq);
-
-      // Update subset best cost when we find a cheaper rel or the current
-      // best's cost is changed
+      ++timestamp;
+      final RelOptCost cost = planner.getCost(rel, mq);
       if (cost.isLt(bestCost)) {
-        LOGGER.trace("Subset cost changed: subset [{}] cost was {} now {}",
-            this, bestCost, cost);
+        LOGGER.trace("Subset cost improved: subset [{}] cost was {} now {}", this, bestCost, cost);
 
         bestCost = cost;
         best = rel;
-        // since best was changed, cached metadata for this subset should be removed
-        mq.clearCache(this);
 
-        // Propagate cost change to parents
+        // Lower cost means lower importance. Other nodes will change
+        // too, but we'll get to them later.
+        planner.ruleQueue.recompute(this);
         for (RelNode parent : getParents()) {
-          // removes parent cached metadata since its input was changed
-          mq.clearCache(parent);
           final RelSubset parentSubset = planner.getSubset(parent);
-
-          // parent subset will clear its cache in propagateCostImprovements0 method itself
-          for (RelSubset subset : parentSubset.set.subsets) {
-            if (parent.getTraitSet().satisfies(subset.traitSet)) {
-              propagationQueue.offer(Pair.of(subset, parent));
-            }
-          }
+          parentSubset.propagateCostImprovements(planner, mq, parent,
+              activeSet);
         }
+        planner.checkForSatisfiedConverters(set, rel);
       }
     } finally {
       activeSet.remove(this);
+    }
+  }
+
+  public void propagateBoostRemoval(VolcanoPlanner planner) {
+    planner.ruleQueue.recompute(this);
+
+    if (boosted) {
+      boosted = false;
+
+      for (RelSubset parentSubset : getParentSubsets(planner)) {
+        parentSubset.propagateBoostRemoval(planner);
+      }
     }
   }
 
@@ -452,26 +409,6 @@ public class RelSubset extends AbstractRelNode {
       }
     }
     return list;
-  }
-
-  /**
-   * Returns stream of subsets whose traitset satisfies
-   * current subset's traitset.
-   */
-  @API(since = "1.23", status = API.Status.EXPERIMENTAL)
-  public Stream<RelSubset> getSubsetsSatisfyingThis() {
-    return set.subsets.stream()
-      .filter(s -> s.getTraitSet().satisfies(traitSet));
-  }
-
-  /**
-   * Returns stream of subsets whose traitset is satisfied
-   * by current subset's traitset.
-   */
-  @API(since = "1.23", status = API.Status.EXPERIMENTAL)
-  public Stream<RelSubset> getSatisfyingSubsets() {
-    return set.subsets.stream()
-      .filter(s -> traitSet.satisfies(s.getTraitSet()));
   }
 
   //~ Inner Classes ----------------------------------------------------------
@@ -656,12 +593,12 @@ public class RelSubset extends AbstractRelNode {
       }
 
       if (ordinal != -1) {
-        if (planner.getListener() != null) {
+        if (planner.listener != null) {
           RelOptListener.RelChosenEvent event =
               new RelOptListener.RelChosenEvent(
                   planner,
                   p);
-          planner.getListener().relChosen(event);
+          planner.listener.relChosen(event);
         }
       }
 
@@ -682,3 +619,5 @@ public class RelSubset extends AbstractRelNode {
     }
   }
 }
+
+// End RelSubset.java
