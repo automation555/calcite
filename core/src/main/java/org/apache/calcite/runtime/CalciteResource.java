@@ -42,16 +42,13 @@ public interface CalciteResource {
   @BaseMessage("''LIMIT start, count'' is not allowed under the current SQL conformance level")
   ExInst<CalciteException> limitStartCountNotAllowed();
 
-  @BaseMessage("''OFFSET start LIMIT count'' is not allowed under the current SQL conformance level")
-  ExInst<CalciteException> offsetLimitNotAllowed();
-
   @BaseMessage("APPLY operator is not allowed under the current SQL conformance level")
   ExInst<CalciteException> applyNotAllowed();
 
   @BaseMessage("JSON path expression must be specified after the JSON value expression")
   ExInst<CalciteException> jsonPathMustBeSpecified();
 
-  @BaseMessage("Illegal {0} literal ''{1}'': {2}")
+  @BaseMessage("Illegal {0} literal {1}: {2}")
   ExInst<CalciteException> illegalLiteral(String a0, String a1, String a2);
 
   @BaseMessage("Length of identifier ''{0}'' must be less than or equal to {1,number,#} characters")
@@ -81,12 +78,6 @@ public interface CalciteResource {
 
   @BaseMessage("Query expression encountered in illegal context")
   ExInst<CalciteException> illegalQueryExpression();
-
-  @BaseMessage("Join expression encountered in illegal context")
-  ExInst<CalciteException> illegalJoinExpression();
-
-  @BaseMessage("Expected query or join")
-  ExInst<CalciteException> expectedQueryOrJoinExpression();
 
   @BaseMessage("CURSOR expression encountered in illegal context")
   ExInst<CalciteException> illegalCursorExpression();
@@ -319,7 +310,7 @@ public interface CalciteResource {
   @BaseMessage("Cannot specify NATURAL keyword with ON or USING clause")
   ExInst<SqlValidatorException> naturalDisallowsOnOrUsing();
 
-  @BaseMessage("Column name ''{0}'' in NATURAL join or USING clause is not unique on one side of join")
+  @BaseMessage("Column name ''{0}'' in USING clause is not unique on one side of join")
   ExInst<SqlValidatorException> columnInUsingNotUnique(String a0);
 
   @BaseMessage("Column ''{0}'' matched using NATURAL keyword or USING clause has incompatible types: cannot compare ''{1}'' to ''{2}''")
@@ -979,5 +970,11 @@ public interface CalciteResource {
 
   @BaseMessage("No operator for ''{0}'' with kind: ''{1}'', syntax: ''{2}'' during JSON deserialization")
   ExInst<CalciteException> noOperator(String name, String kind, String syntax);
+
+  @BaseMessage("DECIMAL precision ''{0}'' must be between 1 and 1000")
+  ExInst<CalciteException> invalidPrescisionForDecimalType(int precision);
+
+  @BaseMessage("DECIMAL scale ''{0}'' must be between 0 and precision ''{1}''")
+  ExInst<CalciteException> invalidScaleForDecimalType(int scale, int precision);
 
 }
