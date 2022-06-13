@@ -80,14 +80,12 @@ import org.apache.calcite.sql.SqlSpecialOperator;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.parser.impl.SqlParserImpl;
-import org.apache.calcite.sql2rel.SqlToRelConverter.Config;
 import org.apache.calcite.test.schemata.catchall.CatchallSchema;
 import org.apache.calcite.test.schemata.foodmart.FoodmartSchema;
 import org.apache.calcite.test.schemata.hr.Department;
 import org.apache.calcite.test.schemata.hr.Employee;
 import org.apache.calcite.test.schemata.hr.HrSchema;
 import org.apache.calcite.util.Bug;
-import org.apache.calcite.util.Holder;
 import org.apache.calcite.util.JsonBuilder;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Smalls;
@@ -146,7 +144,6 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.sql.DataSource;
 
-import static org.apache.calcite.test.CalciteAssert.checkResult;
 import static org.apache.calcite.test.Matchers.isLinux;
 import static org.apache.calcite.util.Static.RESOURCE;
 
@@ -244,16 +241,6 @@ public class JdbcTest {
 
   static Stream<String> explainFormats() {
     return Stream.of("text", "dot");
-  }
-
-  /** Runs a task (such as a test) with and without expansion. */
-  static void forEachExpand(Runnable r) {
-    try (TryThreadLocal.Memo ignored = Prepare.THREAD_EXPAND.push(false)) {
-      r.run();
-    }
-    try (TryThreadLocal.Memo ignored = Prepare.THREAD_EXPAND.push(true)) {
-      r.run();
-    }
   }
 
   /** Tests a modifiable view. */
@@ -826,7 +813,7 @@ public class JdbcTest {
     final int driverMajor = metaData.getDriverMajorVersion();
     final int driverMinor = metaData.getDriverMinorVersion();
     assertEquals(1, driverMajor);
-    assertTrue(driverMinor >= 0 && driverMinor < 40);
+    assertTrue(driverMinor >= 0 && driverMinor < 30);
 
     assertEquals("Calcite", metaData.getDatabaseProductName());
     final String databaseVersion =
@@ -1770,6 +1757,7 @@ public class JdbcTest {
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-35">[CALCITE-35]
    * Support parenthesized sub-clause in JOIN</a>. */
+  @Disabled
   @Test void testJoinJoin() {
     CalciteAssert.that()
         .with(CalciteAssert.Config.FOODMART_CLONE)
@@ -1794,22 +1782,24 @@ public class JdbcTest {
             + " or \"promotion\".\"media_type\" = 'Sunday Paper'\n"
             + " or \"promotion\".\"media_type\" = 'Street Handout')\n"
             + " and (\"product_class\".\"product_family\" = 'Drink')\n"
-            + " and (\"customer\".\"country\" = 'USA'\n"
-            + "   and \"customer\".\"state_province\" = 'WA'\n"
-            + "   and \"customer\".\"city\" = 'Bellingham')\n"
+            + " and (\"customer\".\"country\" = 'USA' and \"customer\".\"state_province\""
+            + " = 'WA' and \"customer\".\"city\" = 'Bellingham')\n"
             + "group by \"product_class\".\"product_family\",\n"
             + "   \"product_class\".\"product_department\",\n"
             + "   \"customer\".\"country\",\n"
             + "   \"customer\".\"state_province\",\n"
             + "   \"customer\".\"city\"\n"
-            + "order by \"product_class\".\"product_family\" asc nulls first,\n"
-            + "   \"product_class\".\"product_department\" asc nulls first,\n"
-            + "   \"customer\".\"country\" asc nulls first,\n"
-            + "   \"customer\".\"state_province\" asc nulls first,\n"
-            + "   \"customer\".\"city\" asc nulls first")
-        .returnsUnordered(
-            "c0=Drink; c1=Alcoholic Beverages; c2=USA; c3=WA; c4=Bellingham",
-            "c0=Drink; c1=Dairy; c2=USA; c3=WA; c4=Bellingham");
+            + "order by ISNULL(\"product_class\".\"product_family\") ASC,   \"product_class\".\"product_family\" ASC,\n"
+            + "   ISNULL(\"product_class\".\"product_department\") ASC,   \"product_class\".\"product_department\" ASC,\n"
+            + "   ISNULL(\"customer\".\"country\") ASC,   \"customer\".\"country\" ASC,\n"
+            + "   ISNULL(\"customer\".\"state_province\") ASC,   \"customer\".\"state_province\" ASC,\n"
+            + "   ISNULL(\"customer\".\"city\") ASC,   \"customer\".\"city\" ASC")
+        .returns("+-------+---------------------+-----+------+------------+\n"
+            + "| c0    | c1                  | c2  | c3   | c4         |\n"
+            + "+-------+---------------------+-----+------+------------+\n"
+            + "| Drink | Alcoholic Beverages | USA | WA   | Bellingham |\n"
+            + "| Drink | Dairy               | USA | WA   | Bellingham |\n"
+            + "+-------+---------------------+-----+------+------------+");
   }
 
   /** Four-way join. Used to take 80 seconds. */
@@ -1836,29 +1826,31 @@ public class JdbcTest {
             + " \"time_by_day\".\"the_year\",\n"
             + " \"product_class\".\"product_family\"")
         .explainContains(""
-            + "EnumerableAggregateRel(group=[{0, 1, 2}], m0=[COUNT($3)])\n"
-            + "  EnumerableCalcRel(expr#0..61=[{inputs}], c0=[$t19], c1=[$t4], c2=[$t46], product_id=[$t34])\n"
-            + "    EnumerableJoinRel(condition=[=($35, $0)], joinType=[inner])\n"
-            + "      EnumerableCalcRel(expr#0..9=[{inputs}], expr#10=[CAST($t4):INTEGER], expr#11=[1997], expr#12=[=($t10, $t11)], proj#0..9=[{exprs}], $condition=[$t12])\n"
-            + "        EnumerableTableScan(table=[[foodmart2, time_by_day]])\n"
-            + "      EnumerableCalcRel(expr#0..51=[{inputs}], proj#0..23=[{exprs}], product_id=[$t44], time_id=[$t45], customer_id=[$t46], promotion_id=[$t47], store_id0=[$t48], store_sales=[$t49], store_cost=[$t50], unit_sales=[$t51], product_class_id=[$t24], product_subcategory=[$t25], product_category=[$t26], product_department=[$t27], product_family=[$t28], product_class_id0=[$t29], product_id0=[$t30], brand_name=[$t31], product_name=[$t32], SKU=[$t33], SRP=[$t34], gross_weight=[$t35], net_weight=[$t36], recyclable_package=[$t37], low_fat=[$t38], units_per_case=[$t39], cases_per_pallet=[$t40], shelf_width=[$t41], shelf_height=[$t42], shelf_depth=[$t43])\n"
-            + "        EnumerableJoinRel(condition=[=($48, $0)], joinType=[inner])\n"
-            + "          EnumerableCalcRel(expr#0..23=[{inputs}], expr#24=['USA'], expr#25=[=($t9, $t24)], proj#0..23=[{exprs}], $condition=[$t25])\n"
-            + "            EnumerableTableScan(table=[[foodmart2, store]])\n"
-            + "          EnumerableCalcRel(expr#0..27=[{inputs}], proj#0..4=[{exprs}], product_class_id0=[$t13], product_id=[$t14], brand_name=[$t15], product_name=[$t16], SKU=[$t17], SRP=[$t18], gross_weight=[$t19], net_weight=[$t20], recyclable_package=[$t21], low_fat=[$t22], units_per_case=[$t23], cases_per_pallet=[$t24], shelf_width=[$t25], shelf_height=[$t26], shelf_depth=[$t27], product_id0=[$t5], time_id=[$t6], customer_id=[$t7], promotion_id=[$t8], store_id=[$t9], store_sales=[$t10], store_cost=[$t11], unit_sales=[$t12])\n"
-            + "            EnumerableJoinRel(condition=[=($13, $0)], joinType=[inner])\n"
-            + "              EnumerableTableScan(table=[[foodmart2, product_class]])\n"
-            + "              EnumerableJoinRel(condition=[=($0, $9)], joinType=[inner])\n"
-            + "                EnumerableTableScan(table=[[foodmart2, sales_fact_1997]])\n"
-            + "                EnumerableTableScan(table=[[foodmart2, product]])\n"
-            + "\n"
-            + "]>")
-        .returns("+-------+---------------------+-----+------+------------+\n"
-            + "| c0    | c1                  | c2  | c3   | c4         |\n"
-            + "+-------+---------------------+-----+------+------------+\n"
-            + "| Drink | Alcoholic Beverages | USA | WA   | Bellingham |\n"
-            + "| Drink | Dairy               | USA | WA   | Bellingham |\n"
-            + "+-------+---------------------+-----+------+------------+");
+            + "EnumerableAggregate(group=[{1, 6, 10}], m0=[COUNT()])\n"
+            + "  EnumerableMergeJoin(condition=[=($2, $8)], joinType=[inner])\n"
+            + "    EnumerableSort(sort0=[$2], dir0=[ASC])\n"
+            + "      EnumerableMergeJoin(condition=[=($3, $5)], joinType=[inner])\n"
+            + "        EnumerableSort(sort0=[$3], dir0=[ASC])\n"
+            + "          EnumerableHashJoin(condition=[=($0, $4)], joinType=[inner])\n"
+            + "            EnumerableCalc(expr#0..23=[{inputs}], expr#24=['USA':VARCHAR(30)], "
+            + "expr#25=[=($t9, $t24)], store_id=[$t0], store_country=[$t9], $condition=[$t25])\n"
+            + "              EnumerableTableScan(table=[[foodmart2, store]])\n"
+            + "            EnumerableCalc(expr#0..7=[{inputs}], proj#0..1=[{exprs}], "
+            + "store_id=[$t4])\n"
+            + "              EnumerableTableScan(table=[[foodmart2, sales_fact_1997]])\n"
+            + "        EnumerableCalc(expr#0..9=[{inputs}], expr#10=[CAST($t4):INTEGER], "
+            + "expr#11=[1997], expr#12=[=($t10, $t11)], time_id=[$t0], the_year=[$t4], "
+            + "$condition=[$t12])\n"
+            + "          EnumerableTableScan(table=[[foodmart2, time_by_day]])\n"
+            + "    EnumerableHashJoin(condition=[=($0, $2)], joinType=[inner])\n"
+            + "      EnumerableCalc(expr#0..14=[{inputs}], proj#0..1=[{exprs}])\n"
+            + "        EnumerableTableScan(table=[[foodmart2, product]])\n"
+            + "      EnumerableCalc(expr#0..4=[{inputs}], product_class_id=[$t0], "
+            + "product_family=[$t4])\n"
+            + "        EnumerableTableScan(table=[[foodmart2, product_class]])")
+        .returns("c0=USA; c1=1997; c2=Non-Consumable; m0=16414\n"
+            + "c0=USA; c1=1997; c2=Drink; m0=7978\n"
+            + "c0=USA; c1=1997; c2=Food; m0=62445\n");
   }
 
   /** Tests a simple (primary key to primary key) N-way join, with arbitrary
@@ -2092,10 +2084,6 @@ public class JdbcTest {
   }
 
   @Test void testMultisetQuery() {
-    forEachExpand(this::checkMultisetQuery);
-  }
-
-  void checkMultisetQuery() {
     CalciteAssert.hr()
         .query("select multiset(\n"
             + "  select \"deptno\", \"empid\" from \"hr\".\"emps\") as a\n"
@@ -2104,10 +2092,6 @@ public class JdbcTest {
   }
 
   @Test void testMultisetQueryWithSingleColumn() {
-    forEachExpand(this::checkMultisetQueryWithSingleColumn);
-  }
-
-  void checkMultisetQueryWithSingleColumn() {
     CalciteAssert.hr()
         .query("select multiset(\n"
             + "  select \"deptno\" from \"hr\".\"emps\") as a\n"
@@ -5427,28 +5411,6 @@ public class JdbcTest {
         });
   }
 
-  /**
-   * Test case for <a href="https://issues.apache.org/jira/browse/CALCITE-5048">[CALCITE-5048]
-   * Query with parameterized LIMIT and correlated sub-query throws AssertionError "not a
-   * literal"</a>.
-   */
-  @Test void testDynamicParameterInLimitOffset() {
-    CalciteAssert.hr()
-        .query("SELECT * FROM \"hr\".\"emps\" AS a "
-            + "WHERE \"deptno\" = "
-            + "(SELECT MAX(\"deptno\") "
-            + "FROM \"hr\".\"emps\" AS b "
-            + "WHERE a.\"empid\" = b.\"empid\""
-            + ") ORDER BY \"salary\" LIMIT ? OFFSET ?")
-        .explainContains("EnumerableLimit(offset=[?1], fetch=[?0])")
-        .consumesPreparedStatement(p -> {
-          p.setInt(1, 2);
-          p.setInt(2, 1);
-        })
-        .returns("empid=200; deptno=20; name=Eric; salary=8000.0; commission=500\n"
-            + "empid=100; deptno=10; name=Bill; salary=10000.0; commission=1000\n");
-  }
-
   /** Tests a JDBC connection that provides a model (a single schema based on
    * a JDBC database). */
   @Test void testModel() {
@@ -5900,178 +5862,6 @@ public class JdbcTest {
     });
   }
 
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-4323">[CALCITE-4323]
-   * View with ORDER BY throws AssertionError during view expansion</a>. */
-  @Test void testSortedView() {
-    final String viewSql = "select * from \"EMPLOYEES\" order by \"deptno\"";
-    final CalciteAssert.AssertThat with = modelWithView(viewSql, null);
-    // Keep sort, because view is top node
-    with.query("select * from \"adhoc\".V")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalProject(empid=[$0], deptno=[$1], name=[$2], "
-                + "salary=[$3], commission=[$4])\n"
-                + "  LogicalSort(sort0=[$1], dir0=[ASC])\n"
-                + "    LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "      LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    // Remove sort, because view not is top node
-    with.query("select * from \"adhoc\".V union all select * from  \"adhoc\".\"EMPLOYEES\"")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalUnion(all=[true])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from "
-            + "(select \"empid\", \"deptno\" from  \"adhoc\".V) where \"deptno\" > 10")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalProject(empid=[$0], deptno=[$1])\n"
-                + "  LogicalFilter(condition=[>($1, 10)])\n"
-                + "    LogicalProject(empid=[$0], deptno=[$1])\n"
-                + "      LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from \"adhoc\".\"EMPLOYEES\" where exists (select * from \"adhoc\".V)")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalProject(empid=[$0], deptno=[$1], name=[$2], "
-                + "salary=[$3], commission=[$4])\n"
-                + "  LogicalFilter(condition=[EXISTS({\n"
-                + "LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n"
-                + "})])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    // View is used in a query at top level，but it's not the top plan
-    // Still remove sort
-    with.query("select * from \"adhoc\".V order by \"empid\"")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(sort0=[$0], dir0=[ASC])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from \"adhoc\".V, \"adhoc\".\"EMPLOYEES\"")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalProject(empid=[$0], deptno=[$1], name=[$2], "
-                + "salary=[$3], commission=[$4], empid0=[$5], deptno0=[$6], name0=[$7], salary0=[$8],"
-                + " commission0=[$9])\n"
-                + "  LogicalJoin(condition=[true], joinType=[inner])\n"
-                + "    LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "      LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select \"empid\", count(*) from \"adhoc\".V group by \"empid\"")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalAggregate(group=[{0}], EXPR$1=[COUNT()])\n"
-                + "  LogicalProject(empid=[$0])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select distinct * from \"adhoc\".V")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalAggregate(group=[{0, 1, 2, 3, 4}])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-  }
-
-  @Test void testCustomRemoveSortInView() {
-    final String viewSql = "select * from \"EMPLOYEES\" order by \"deptno\"";
-    final CalciteAssert.AssertThat with = modelWithView(viewSql, null);
-    // Some cases where we may or may not want to keep the Sort
-    with.query("select * from \"adhoc\".V where \"deptno\" > 10")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalProject(empid=[$0], deptno=[$1], name=[$2], "
-                + "salary=[$3], commission=[$4])\n"
-                + "  LogicalFilter(condition=[>($1, 10)])\n"
-                + "    LogicalSort(sort0=[$1], dir0=[ASC])\n"
-                + "      LogicalProject(empid=[$0], deptno=[$1], name=[$2], "
-                + "salary=[$3], commission=[$4])\n"
-                + "        LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from \"adhoc\".V where \"deptno\" > 10")
-        .withHook(Hook.SQL2REL_CONVERTER_CONFIG_BUILDER,
-            (Consumer<Holder<Config>>) configHolder ->
-                configHolder.set(configHolder.get().withRemoveSortInSubQuery(false)))
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalProject(empid=[$0], deptno=[$1], name=[$2], "
-                + "salary=[$3], commission=[$4])\n"
-                + "  LogicalFilter(condition=[>($1, 10)])\n"
-                + "    LogicalSort(sort0=[$1], dir0=[ASC])\n"
-                + "      LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "        LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-
-    with.query("select * from \"adhoc\".V limit 10")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(fetch=[10])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from \"adhoc\".V limit 10")
-        .withHook(Hook.SQL2REL_CONVERTER_CONFIG_BUILDER,
-            (Consumer<Holder<Config>>) configHolder ->
-                configHolder.set(configHolder.get().withRemoveSortInSubQuery(false)))
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(fetch=[10])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalSort(sort0=[$1], dir0=[ASC])\n"
-                + "      LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "        LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-
-    with.query("select * from \"adhoc\".V offset 10")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(offset=[10])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from \"adhoc\".V offset 10")
-        .withHook(Hook.SQL2REL_CONVERTER_CONFIG_BUILDER,
-            (Consumer<Holder<Config>>) configHolder ->
-                configHolder.set(configHolder.get().withRemoveSortInSubQuery(false)))
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(offset=[10])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalSort(sort0=[$1], dir0=[ASC])\n"
-                + "      LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "        LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-
-
-    with.query("select * from \"adhoc\".V limit 5 offset 5")
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(offset=[5], fetch=[5])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-    with.query("select * from \"adhoc\".V limit 5 offset 5")
-        .withHook(Hook.SQL2REL_CONVERTER_CONFIG_BUILDER,
-            (Consumer<Holder<Config>>) configHolder ->
-                configHolder.set(configHolder.get().withRemoveSortInSubQuery(false)))
-        .explainMatches(" without implementation ",
-            checkResult("PLAN="
-                + "LogicalSort(offset=[5], fetch=[5])\n"
-                + "  LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "    LogicalSort(sort0=[$1], dir0=[ASC])\n"
-                + "      LogicalProject(empid=[$0], deptno=[$1], name=[$2], salary=[$3], "
-                + "commission=[$4])\n"
-                + "        LogicalTableScan(table=[[adhoc, EMPLOYEES]])\n\n"));
-  }
-
   /** Tests a view with ORDER BY and LIMIT clauses. */
   @Test void testOrderByView() throws Exception {
     final CalciteAssert.AssertThat with =
@@ -6171,16 +5961,19 @@ public class JdbcTest {
   @Test void testAutomaticTemporaryTable() throws Exception {
     final List<Object> objects = new ArrayList<>();
     CalciteAssert.that()
-        .with(() -> {
-          CalciteConnection connection = (CalciteConnection)
-              new AutoTempDriver(objects)
-                  .connect("jdbc:calcite:", new Properties());
-          final SchemaPlus rootSchema = connection.getRootSchema();
-          rootSchema.add("hr",
-              new ReflectiveSchema(new HrSchema()));
-          connection.setSchema("hr");
-          return connection;
-        })
+        .with(
+            new CalciteAssert.ConnectionFactory() {
+              public CalciteConnection createConnection() throws SQLException {
+                CalciteConnection connection = (CalciteConnection)
+                    new AutoTempDriver(objects)
+                        .connect("jdbc:calcite:", new Properties());
+                final SchemaPlus rootSchema = connection.getRootSchema();
+                rootSchema.add("hr",
+                    new ReflectiveSchema(new HrSchema()));
+                connection.setSchema("hr");
+                return connection;
+              }
+            })
         .doWithConnection(connection -> {
           try {
             final String sql = "select * from \"hr\".\"emps\" "
@@ -6940,7 +6733,7 @@ public class JdbcTest {
         .throws_("No match found for function signature NVL(<NUMERIC>, <NUMERIC>)");
   }
 
-  @Test void testIf() {
+  @Test public void testIf() {
     CalciteAssert.that(CalciteAssert.Config.REGULAR)
         .with(CalciteConnectionProperty.FUN, "bigquery")
         .query("select if(1 = 1,1,2) as r")
@@ -6955,7 +6748,7 @@ public class JdbcTest {
         .returnsUnordered("R=1");
   }
 
-  @Test void testIfWithExpression() {
+  @Test public void testIfWithExpression() {
     CalciteAssert.that(CalciteAssert.Config.REGULAR)
         .with(CalciteConnectionProperty.FUN, "bigquery")
         .query("select if(TRIM('a ') = 'a','a','b') as r")
@@ -7113,7 +6906,7 @@ public class JdbcTest {
     assertThat(aSchema.getSubSchemaNames().size(), is(2));
   }
 
-  @Test void testCaseSensitiveConfigurableSimpleCalciteSchema() throws Exception {
+  @Test public void testCaseSensitiveConfigurableSimpleCalciteSchema() throws Exception {
     final SchemaPlus rootSchema = CalciteSchema.createRootSchema(false, false).plus();
     // create schema "/a"
     final Map<String, Schema> dummySubSchemaMap = new HashMap<>();
@@ -7581,7 +7374,7 @@ public class JdbcTest {
     }
   }
 
-  @Test void testBindableIntersect() {
+  @Test public void testBindableIntersect() {
     try (Hook.Closeable ignored = Hook.ENABLE_BINDABLE.addThread(Hook.propertyJ(true))) {
       final String sql0 = "select \"empid\", \"deptno\" from \"hr\".\"emps\"";
       final String sql = sql0 + " intersect all " + sql0;
@@ -7601,7 +7394,7 @@ public class JdbcTest {
     }
   }
 
-  @Test void testBindableMinus() {
+  @Test public void testBindableMinus() {
     try (Hook.Closeable ignored = Hook.ENABLE_BINDABLE.addThread(Hook.propertyJ(true))) {
       final String sql0 = "select \"empid\", \"deptno\" from \"hr\".\"emps\"";
       final String sql = sql0 + " except all " + sql0;
@@ -7708,7 +7501,7 @@ public class JdbcTest {
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-2010">[CALCITE-2010]
    * Fails to plan query that is UNION ALL applied to VALUES</a>. */
-  @Test void testUnionAllValues() {
+  @Test public void testUnionAllValues() {
     CalciteAssert.hr()
         .query("select x, y from (values (1, 2)) as t(x, y)\n"
             + "union all\n"
@@ -7746,13 +7539,14 @@ public class JdbcTest {
         + "  pattern (up s)\n"
         + "  define up as up.\"empid\" = 100)";
     final String convert = ""
-        + "LogicalMatch(partition=[[]], order=[[0 DESC]], "
+        + "LogicalProject(C=[$0], EMPID=[$1], TWO=[$2])\n"
+        + "  LogicalMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID, TWO]], allRows=[false], "
         + "after=[FLAG(SKIP TO NEXT ROW)], pattern=[('UP', 'S')], "
         + "isStrictStarts=[false], isStrictEnds=[false], subsets=[[]], "
         + "patternDefinitions=[[=(CAST(PREV(UP.$0, 0)):INTEGER NOT NULL, 100)]], "
         + "inputFields=[[empid, deptno, name, salary, commission]])\n"
-        + "  LogicalTableScan(table=[[hr, emps]])\n";
+        + "    LogicalTableScan(table=[[hr, emps]])\n";
     final String plan = "PLAN="
         + "EnumerableMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID, TWO]], allRows=[false], "
@@ -7778,13 +7572,14 @@ public class JdbcTest {
         + "  pattern (s up)\n"
         + "  define up as up.\"commission\" < prev(up.\"commission\"))";
     final String convert = ""
-        + "LogicalMatch(partition=[[]], order=[[0 DESC]], "
+        + "LogicalProject(C=[$0], EMPID=[$1])\n"
+        + "  LogicalMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID]], allRows=[false], "
         + "after=[FLAG(SKIP TO NEXT ROW)], pattern=[('S', 'UP')], "
         + "isStrictStarts=[false], isStrictEnds=[false], subsets=[[]], "
         + "patternDefinitions=[[<(PREV(UP.$4, 0), PREV(UP.$4, 1))]], "
         + "inputFields=[[empid, deptno, name, salary, commission]])\n"
-        + "  LogicalTableScan(table=[[hr, emps]])\n";
+        + "    LogicalTableScan(table=[[hr, emps]])\n";
     final String plan = "PLAN="
         + "EnumerableMatch(partition=[[]], order=[[0 DESC]], "
         + "outputFields=[[C, EMPID]], allRows=[false], "
@@ -7949,7 +7744,7 @@ public class JdbcTest {
    * <a href="https://issues.apache.org/jira/browse/CALCITE-3894">[CALCITE-3894]
    * SET operation between DATE and TIMESTAMP returns a wrong result</a>.
    */
-  @Test void testUnionDateTime() {
+  @Test public void testUnionDateTime() {
     CalciteAssert.AssertThat assertThat = CalciteAssert.that();
     String query = "select * from (\n"
         + "select \"id\" from (VALUES(DATE '2018-02-03')) \"foo\"(\"id\")\n"
@@ -7958,7 +7753,7 @@ public class JdbcTest {
     assertThat.query(query).returns("id=2008-03-31 12:23:34\nid=2018-02-03 00:00:00\n");
   }
 
-  @Test void testNestedCastBigInt() {
+  @Test public void testNestedCastBigInt() {
     CalciteAssert.AssertThat assertThat = CalciteAssert.that();
     String query = "SELECT CAST(CAST(4200000000 AS BIGINT) AS ANY) FROM (VALUES(1))";
     assertThat.query(query).returns("EXPR$0=4200000000\n");
@@ -7970,7 +7765,7 @@ public class JdbcTest {
    * Check for internal content in case of ROW in
    * RelDataTypeFactoryImpl#leastRestrictiveStructuredType should be after isStruct check</a>.
    */
-  @Test void testCoalesceNullAndRow() {
+  @Test public void testCoalesceNullAndRow() {
     CalciteAssert.that()
         .query("SELECT COALESCE(NULL, ROW(1)) AS F")
         .typeIs("[F STRUCT]")
@@ -7981,7 +7776,7 @@ public class JdbcTest {
    * <a href="https://issues.apache.org/jira/browse/CALCITE-4600">[CALCITE-4600]
    * ClassCastException retrieving from an ARRAY that has DATE, TIME or
    * TIMESTAMP elements</a>. */
-  @Test void testArrayOfDates() {
+  @Test public void testArrayOfDates() {
     CalciteAssert.that()
         .query("select array[cast('1900-1-1' as date)]")
         .returns("EXPR$0=[1900-01-01]\n");
@@ -7991,7 +7786,7 @@ public class JdbcTest {
    * <a href="https://issues.apache.org/jira/browse/CALCITE-4602">[CALCITE-4602]
    * ClassCastException retrieving from ARRAY that has mixed INTEGER and DECIMAL
    * elements</a>. */
-  @Test void testIntAndBigDecimalInArray() {
+  @Test public void testIntAndBigDecimalInArray() {
     // Result should be "EXPR$0=[1, 1.1]\n"; [CALCITE-4850] logged.
     CalciteAssert.that()
         .query("select array[1, 1.1]")
