@@ -31,16 +31,16 @@ adapters.
 
 ## Building from a source distribution
 
-Prerequisite is Java (JDK 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 or 18)
-and Gradle (version 7.3) on your path.
+Prerequisite is Java (JDK 8, 9, 10, 11, 12, 13, 14 or 15)
+and Gradle (version 7.2) on your path.
 
 Unpack the source distribution `.tar.gz` file,
 `cd` to the root directory of the unpacked source,
 then build using Gradle:
 
 {% highlight bash %}
-$ tar xvfz apache-calcite-1.30.0-src.tar.gz
-$ cd apache-calcite-1.30.0-src
+$ tar xvfz apache-calcite-1.28.0-src.tar.gz
+$ cd apache-calcite-1.28.0-src
 $ gradle build
 {% endhighlight %}
 
@@ -51,7 +51,7 @@ tests  (but you should use the `gradle` command rather than
 ## Building from Git
 
 Prerequisites are git
-and Java (JDK 8, 9, 10, 11, 12, 13, 14, 15, 16, 17 or 18) on your path.
+and Java (JDK 8, 9, 10, 11, 12, 13, 14 or 15) on your path.
 
 Create a local copy of the GitHub repository,
 `cd` to its root directory,
@@ -109,7 +109,7 @@ You can use `./gradlew assemble` to build the artifacts and skip all tests and v
 There are other options that control which tests are run, and in what
 environment, as follows.
 
-* `-Dcalcite.test.db=DB` (where DB is `h2`, `hsqldb`, `mysql`, or `postgresql`) allows you
+* `-Dcalcite.test.db=DB` (where db is `h2`, `hsqldb`, `mysql`, or `postgresql`) allows you
   to change the JDBC data source for the test suite. Calcite's test
   suite requires a JDBC data source populated with the foodmart data
   set.
@@ -545,6 +545,16 @@ or with different predicates) the config *may* contain a method `withOperandFor`
 to make it easier to build common operand patterns.
 (See `FilterAggregateTransposeRule` for an example.)
 
+## Using Nighlty Snapshots
+
+As part of Calcite's CI, snapshots of the master branch are uploaded regularly to Apache's
+[Maven repository](https://repository.apache.org/content/groups/snapshots/org/apache/calcite/).
+These snapshots are made available to ease downstream projects adoption of new Calcite features.
+These snapshots are not official Apache releases and we strongly recommend against the use of them
+for any purpose beyond bleeding-edge development and integration testing. These builds go through
+nominal tests and may change or break at any time. Additionally, no compatibility between snapshots
+versions and released versions should be expected.
+
 # Advanced topics for committers
 
 The following sections are of interest to Calcite committers and in
@@ -579,7 +589,7 @@ protocol that you are using (HTTPS vs. SSH).
 ## Merging pull requests
 
 These are instructions for a Calcite committer who has reviewed a pull request
-from a contributor, found it satisfactory, and is about to merge it to main.
+from a contributor, found it satisfactory, and is about to merge it to master.
 Usually the contributor is not a committer (otherwise they would be committing
 it themselves, after you gave approval in a review).
 
@@ -605,7 +615,7 @@ must:
  * resolve the issue (do not close it as this will be done by the release
 manager);
  * select "Fixed" as resolution cause;
- * mark the appropriate version (e.g., 1.30.0) in the "Fix version" field;
+ * mark the appropriate version (e.g., 1.28.0) in the "Fix version" field;
  * add a comment (e.g., "Fixed in ...") with a hyperlink pointing to the commit
 which resolves the issue (in GitHub or GitBox), and also thank the contributor
 for their contribution.
@@ -690,9 +700,12 @@ Note: release artifacts (dist.apache.org and repository.apache.org) are managed 
 Before you start:
 
 * Send an email to [dev@calcite.apache.org](mailto:dev@calcite.apache.org) notifying that RC build process
-  is starting and therefore `main` branch is in code freeze until further notice.
+  is starting and therefore `master` branch is in code freeze until further notice.
 * Set up signing keys as described above.
 * Make sure you are using JDK 8 (not 9 or 10).
+* Make sure `master` branch and `site` branch are in sync, i.e. there is no commit on `site` that has not
+  been applied also to `master`.
+  This can be achieved by doing `git switch site && git rebase --empty=drop master && git switch master && git reset --hard site`.
 * Check that `README` and `site/_docs/howto.md` have the correct version number.
 * Check that `site/_docs/howto.md` has the correct Gradle version.
 * Check that `NOTICE` has the current copyright year.
@@ -715,10 +728,9 @@ Before you start:
   * `-Dcalcite.test.splunk`
 * Optional tests using tasks:
   * `./gradlew testSlow`
-* Add release notes to `site/_docs/history.md`. If release notes already exist for the version to be released, but
-  are commented out, remove the comments (`{% raw %}{% comment %}{% endraw %}` and `{% raw %}{% endcomment %}{% endraw %}`). Include the commit history,
-  names of people who contributed to the release, and say which versions of Java, Guava and operating systems the
-  release is tested against.
+* Add release notes to `site/_docs/history.md`. Include the commit history,
+  and say which versions of Java, Guava and operating systems the release is
+  tested against.
 * Make sure that
   <a href="https://issues.apache.org/jira/issues/?jql=project%20%3D%20CALCITE%20AND%20status%20%3D%20Resolved%20and%20fixVersion%20is%20null">
   every "resolved" JIRA case</a> (including duplicates) has
@@ -925,8 +937,7 @@ Remember that UTC date changes at 4 pm Pacific time.
 
 Svnpubsub will publish to the
 [release repo](https://dist.apache.org/repos/dist/release/calcite) and propagate to the
-[mirrors](https://www.apache.org/dyn/closer.cgi/calcite) almost immediately.
-So there is no need to wait more than fifteen minutes before announcing the release.
+[mirrors](https://www.apache.org/dyn/closer.cgi/calcite) within 24 hours.
 
 If there are now more than 2 releases, clear out the oldest ones:
 
@@ -948,9 +959,7 @@ Add a release announcement by copying
 Generate the javadoc, and [preview](http://localhost:4000/news/) the site by following the
 instructions in [site/README.md]({{ site.sourceRoot }}/site/README.md). Ensure the announcement,
 javadoc, and release note appear correctly and then publish the site following the instructions
-in the same file. Rebase the `site` branch with `main` (e.g., `git checkout site && git rebase main`);
-at this point there shouldn't be any commits in `site` that are not in `main`, so the rebase is
-essentially a noop.
+in the same file.
 
 In JIRA, search for
 [all issues resolved in this release](https://issues.apache.org/jira/issues/?jql=project%20%3D%20CALCITE%20and%20fixVersion%20%3D%201.5.0%20and%20status%20%3D%20Resolved%20and%20resolution%20%3D%20Fixed),
@@ -972,8 +981,8 @@ Increase the `calcite.version` value in `/gradle.properties`, commit and push
 the change with the message "Prepare for next development iteration"
 (see [ed1470a](https://github.com/apache/calcite/commit/ed1470a3ea53a78c667354a5ec066425364eca73) as a reference)
 
-Re-open the `main` branch. Send an email to [dev@calcite.apache.org](mailto:dev@calcite.apache.org) notifying
-that `main` code freeze is over and commits can resume.
+Re-open the `master` branch. Send an email to [dev@calcite.apache.org](mailto:dev@calcite.apache.org) notifying
+that `master` code freeze is over and commits can resume.
 
 ## Publishing the web site
 {: #publish-the-web-site}
