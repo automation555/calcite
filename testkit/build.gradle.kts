@@ -29,12 +29,8 @@ dependencies {
     implementation("net.hydromatic:foodmart-queries")
     implementation("net.hydromatic:scott-data-hsqldb")
     implementation("org.apache.commons:commons-dbcp2")
-    implementation("org.apache.commons:commons-lang3")
     implementation("org.apache.commons:commons-pool2")
     implementation("org.hamcrest:hamcrest")
-    implementation("org.hsqldb:hsqldb")
-    annotationProcessor("org.immutables:value")
-    compileOnly("org.immutables:value-annotations")
     implementation("org.incava:java-diff")
     implementation("org.junit.jupiter:junit-jupiter")
 
