@@ -16,14 +16,12 @@
  */
 package org.apache.calcite.test;
 
-import com.datastax.driver.core.Session;
+import org.apache.calcite.util.Sources;
+
 import com.google.common.collect.ImmutableMap;
 
-import org.cassandraunit.CQLDataLoader;
-import org.cassandraunit.dataset.cql.ClassPathCQLDataSet;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 
@@ -38,28 +36,31 @@ import org.junit.jupiter.api.parallel.ExecutionMode;
  * <a href="https://issues.apache.org/jira/browse/CASSANDRA-9608">CASSANDRA-9608</a>.
  *
  */
+
+// force tests to run sequentially (maven surefire and failsafe are running them in parallel)
+// seems like some of our code is sharing static variables (like Hooks) which causes tests
+// to fail non-deterministically (flaky tests).
 @Execution(ExecutionMode.SAME_THREAD)
-@ExtendWith(CassandraExtension.class)
-class CassandraAdapterTest {
+public class CassandraAdapterTest {
+
+  @RegisterExtension
+  public static final CassandraCQLUnit RULE = new CassandraCQLUnit().initCassandraIfEnabled();
 
   /** Connection factory based on the "mongo-zips" model. */
   private static final ImmutableMap<String, String> TWISSANDRA =
-          CassandraExtension.getDataset("/model.json");
+      ImmutableMap.of("model",
+          Sources.of(
+              CassandraAdapterTest.class.getResource("/model.json"))
+              .file().getAbsolutePath());
 
-  @BeforeAll
-  static void load(Session session) {
-    new CQLDataLoader(session)
-        .load(new ClassPathCQLDataSet("twissandra.cql"));
-  }
-
-  @Test void testSelect() {
+  @Test public void testSelect() {
     CalciteAssert.that()
         .with(TWISSANDRA)
         .query("select * from \"users\"")
         .returnsCount(10);
   }
 
-  @Test void testFilter() {
+  @Test public void testFilter() {
     CalciteAssert.that()
         .with(TWISSANDRA)
         .query("select * from \"userline\" where \"username\"='!PUBLIC!'")
@@ -71,7 +72,7 @@ class CassandraAdapterTest {
            + "    CassandraTableScan(table=[[twissandra, userline]]");
   }
 
-  @Test void testFilterUUID() {
+  @Test public void testFilterUUID() {
     CalciteAssert.that()
         .with(TWISSANDRA)
         .query("select * from \"tweets\" where \"tweet_id\"='f3cd759c-d05b-11e5-b58b-90e2ba530b12'")
@@ -83,7 +84,7 @@ class CassandraAdapterTest {
            + "    CassandraTableScan(table=[[twissandra, tweets]]");
   }
 
-  @Test void testSort() {
+  @Test public void testSort() {
     CalciteAssert.that()
         .with(TWISSANDRA)
         .query("select * from \"userline\" where \"username\" = '!PUBLIC!' order by \"time\" desc")
@@ -93,19 +94,19 @@ class CassandraAdapterTest {
             + "    CassandraFilter(condition=[=($0, '!PUBLIC!')])\n");
   }
 
-  @Test void testProject() {
+  @Test public void testProject() {
     CalciteAssert.that()
         .with(TWISSANDRA)
         .query("select \"tweet_id\" from \"userline\" where \"username\" = '!PUBLIC!' limit 2")
         .returns("tweet_id=f3c329de-d05b-11e5-b58b-90e2ba530b12\n"
                + "tweet_id=f3dbb03a-d05b-11e5-b58b-90e2ba530b12\n")
         .explainContains("PLAN=CassandraToEnumerableConverter\n"
-                + "  CassandraProject(tweet_id=[$2])\n"
-                + "    CassandraLimit(fetch=[2])\n"
+                + "  CassandraLimit(fetch=[2])\n"
+                + "    CassandraProject(tweet_id=[$2])\n"
                 + "      CassandraFilter(condition=[=($0, '!PUBLIC!')])\n");
   }
 
-  @Test void testProjectAlias() {
+  @Test public void testProjectAlias() {
     CalciteAssert.that()
         .with(TWISSANDRA)
         .query("select \"tweet_id\" as \"foo\" from \"userline\" "
@@ -113,21 +114,21 @@ class CassandraAdapterTest {
         .returns("foo=f3c329de-d05b-11e5-b58b-90e2ba530b12\n");
   }
 
-  @Test void testProjectConstant() {
+  @Test public void testProjectConstant() {
     CalciteAssert.that()
         .with(TWISSANDRA)
         .query("select 'foo' as \"bar\" from \"userline\" limit 1")
         .returns("bar=foo\n");
   }
 
-  @Test void testLimit() {
+  @Test public void testLimit() {
     CalciteAssert.that()
         .with(TWISSANDRA)
         .query("select \"tweet_id\" from \"userline\" where \"username\" = '!PUBLIC!' limit 8")
         .explainContains("CassandraLimit(fetch=[8])\n");
   }
 
-  @Test void testSortLimit() {
+  @Test public void testSortLimit() {
     CalciteAssert.that()
         .with(TWISSANDRA)
         .query("select * from \"userline\" where \"username\"='!PUBLIC!' "
@@ -136,7 +137,7 @@ class CassandraAdapterTest {
                        + "    CassandraSort(sort0=[$1], dir0=[DESC])");
   }
 
-  @Test void testSortOffset() {
+  @Test public void testSortOffset() {
     CalciteAssert.that()
         .with(TWISSANDRA)
         .query("select \"tweet_id\" from \"userline\" where "
@@ -146,7 +147,7 @@ class CassandraAdapterTest {
                + "tweet_id=f3e4182e-d05b-11e5-b58b-90e2ba530b12\n");
   }
 
-  @Test void testMaterializedView() {
+  @Test public void testMaterializedView() {
     CalciteAssert.that()
         .with(TWISSANDRA)
         .query("select \"tweet_id\" from \"tweets\" where \"username\"='JmuhsAaMdw'")
