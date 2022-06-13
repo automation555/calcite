@@ -22,10 +22,6 @@ import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelTraitDef;
 import org.apache.calcite.plan.hep.HepPlanner;
 import org.apache.calcite.plan.hep.HepProgramBuilder;
-import org.apache.calcite.rel.RelCollations;
-import org.apache.calcite.rel.RelFieldCollation;
-import org.apache.calcite.rel.RelFieldCollation.Direction;
-import org.apache.calcite.rel.RelFieldCollation.NullDirection;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.hint.HintPredicates;
@@ -62,13 +58,14 @@ import org.apache.calcite.sql.dialect.MysqlSqlDialect;
 import org.apache.calcite.sql.dialect.OracleSqlDialect;
 import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
 import org.apache.calcite.sql.fun.SqlLibrary;
+import org.apache.calcite.sql.fun.SqlLibraryOperatorTableFactory;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.sql.util.SqlOperatorTables;
 import org.apache.calcite.sql.util.SqlShuttle;
 import org.apache.calcite.sql.validate.SqlConformance;
-import org.apache.calcite.sql.validate.SqlConformanceEnum;
 import org.apache.calcite.sql2rel.SqlToRelConverter;
 import org.apache.calcite.test.CalciteAssert;
 import org.apache.calcite.test.MockSqlOperatorTable;
@@ -139,15 +136,19 @@ class RelToSqlConverterTest {
       SqlParser.Config parserConfig, SchemaPlus schema,
       SqlToRelConverter.Config sqlToRelConf, Collection<SqlLibrary> librarySet,
       RelDataTypeSystem typeSystem, Program... programs) {
+    final MockSqlOperatorTable operatorTable =
+        new MockSqlOperatorTable(
+            SqlOperatorTables.chain(SqlStdOperatorTable.instance(),
+                SqlLibraryOperatorTableFactory.INSTANCE
+                    .getOperatorTable(librarySet)));
+    MockSqlOperatorTable.addRamp(operatorTable);
     final FrameworkConfig config = Frameworks.newConfigBuilder()
         .parserConfig(parserConfig)
         .defaultSchema(schema)
         .traitDefs(traitDefs)
         .sqlToRelConverterConfig(sqlToRelConf)
         .programs(programs)
-        .operatorTable(MockSqlOperatorTable.standard()
-            .plus(librarySet)
-            .extend())
+        .operatorTable(operatorTable)
         .typeSystem(typeSystem)
         .build();
     return Frameworks.getPlanner(config);
@@ -1594,56 +1595,6 @@ class RelToSqlConverterTest {
     sql(query).ok(expected);
   }
 
-  /** A dialect that doesn't treat integer literals in the ORDER BY as field
-   * references. */
-  private SqlDialect nonOrdinalDialect() {
-    return new SqlDialect(SqlDialect.EMPTY_CONTEXT) {
-      @Override public SqlConformance getConformance() {
-        return SqlConformanceEnum.STRICT_99;
-      }
-    };
-  }
-
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-5044">[CALCITE-5044]
-   * JDBC adapter generates integer literal in ORDER BY, which some dialects
-   * wrongly interpret as a reference to a field</a>. */
-  @Test void testRewriteOrderByWithNumericConstants() {
-    final Function<RelBuilder, RelNode> relFn = b -> b
-        .scan("EMP")
-        .project(b.literal(1), b.field(1), b.field(2), b.literal("23"),
-            b.alias(b.literal(12), "col1"), b.literal(34))
-        .sort(
-            RelCollations.of(
-                ImmutableList.of(
-                    new RelFieldCollation(0), new RelFieldCollation(3), new RelFieldCollation(4),
-                    new RelFieldCollation(1),
-                    new RelFieldCollation(5, Direction.DESCENDING, NullDirection.LAST))))
-        .project(b.field(2), b.field(1))
-        .build();
-    // Default dialect rewrite numeric constant keys to string literal in the order-by.
-    // case1: numeric constant - rewrite it.
-    // case2: string constant - no need rewrite it.
-    // case3: wrap alias to numeric constant - rewrite it.
-    // case4: wrap collation's info to numeric constant - rewrite it.
-    relFn(relFn)
-        .ok("SELECT \"JOB\", \"ENAME\"\n"
-            + "FROM \"scott\".\"EMP\"\n"
-            + "ORDER BY '1', '23', '12', \"ENAME\", '34' DESC NULLS LAST")
-        .dialect(nonOrdinalDialect())
-        .ok("SELECT JOB, ENAME\n"
-            + "FROM scott.EMP\n"
-            + "ORDER BY 1, '23', 12, ENAME, 34 DESC NULLS LAST");
-  }
-
-  @Test void testNoNeedRewriteOrderByConstantsForOver() {
-    final String query = "select row_number() over "
-        + "(order by 1 nulls last) from \"employee\"";
-    // Default dialect keep numeric constant keys in the over of order-by.
-    sql(query).ok("SELECT ROW_NUMBER() OVER (ORDER BY 1)\n"
-        + "FROM \"foodmart\".\"employee\"");
-  }
-
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-3440">[CALCITE-3440]
    * RelToSqlConverter does not properly alias ambiguous ORDER BY</a>. */
@@ -2451,30 +2402,6 @@ class RelToSqlConverterTest {
     sql(query).withMysql().ok(expected);
   }
 
-  @Test void testMySqlUnparseListAggCall() {
-    final String query = "select\n"
-        + "listagg(distinct \"product_name\", ',') within group(order by \"cases_per_pallet\"),\n"
-        + "listagg(\"product_name\", ',') within group(order by \"cases_per_pallet\"),\n"
-        + "listagg(distinct \"product_name\") within group(order by \"cases_per_pallet\" desc),\n"
-        + "listagg(distinct \"product_name\", ',') within group(order by \"cases_per_pallet\"),\n"
-        + "listagg(\"product_name\"),\n"
-        + "listagg(\"product_name\", ',')\n"
-        + "from \"product\"\n"
-        + "group by \"product_id\"\n";
-    final String expected = "SELECT GROUP_CONCAT(DISTINCT `product_name` "
-        + "ORDER BY `cases_per_pallet` IS NULL, `cases_per_pallet` SEPARATOR ','), "
-        + "GROUP_CONCAT(`product_name` "
-        + "ORDER BY `cases_per_pallet` IS NULL, `cases_per_pallet` SEPARATOR ','), "
-        + "GROUP_CONCAT(DISTINCT `product_name` "
-        + "ORDER BY `cases_per_pallet` IS NULL DESC, `cases_per_pallet` DESC), "
-        + "GROUP_CONCAT(DISTINCT `product_name` "
-        + "ORDER BY `cases_per_pallet` IS NULL, `cases_per_pallet` SEPARATOR ','), "
-        + "GROUP_CONCAT(`product_name`), GROUP_CONCAT(`product_name` SEPARATOR ',')\n"
-        + "FROM `foodmart`.`product`\n"
-        + "GROUP BY `product_id`";
-    sql(query).withMysql().ok(expected);
-  }
-
   @Test void testMySqlWithHighNullsSelectWithOrderByAscNullsLastAndNoEmulation() {
     final String query = "select \"product_id\" from \"product\"\n"
         + "order by \"product_id\" nulls last";
@@ -2917,7 +2844,7 @@ class RelToSqlConverterTest {
         + "from (select \"customer_id\" from \"sales_fact_1997\") as t1\n"
         + "inner join (select \"customer_id\" from \"sales_fact_1997\") t2\n"
         + "on t1.\"customer_id\" = t2.\"customer_id\"";
-    final String expected = "SELECT *\n"
+    final String expected = "SELECT t.customer_id, t0.customer_id AS customer_id0\n"
         + "FROM (SELECT sales_fact_1997.customer_id\n"
         + "FROM foodmart.sales_fact_1997 AS sales_fact_1997) AS t\n"
         + "INNER JOIN (SELECT sales_fact_19970.customer_id\n"
@@ -2927,8 +2854,11 @@ class RelToSqlConverterTest {
   }
 
   @Test void testCartesianProductWithCommaSyntax() {
-    String query = "select * from \"department\" , \"employee\"";
-    String expected = "SELECT *\n"
+    String query = "select \"employee\".\"position_id\", "
+        + "\"department\".\"department_description\"\n"
+        + "from \"department\" , \"employee\"";
+    String expected = "SELECT \"employee\".\"position_id\", "
+        + "\"department\".\"department_description\"\n"
         + "FROM \"foodmart\".\"department\",\n"
         + "\"foodmart\".\"employee\"";
     sql(query).ok(expected);
@@ -2971,18 +2901,24 @@ class RelToSqlConverterTest {
   }
 
   @Test void testCartesianProductWithInnerJoinSyntax() {
-    String query = "select * from \"department\"\n"
+    String query = "select \"employee\".\"position_id\", "
+        + "\"department\".\"department_description\"\n"
+        + "from \"department\"\n"
         + "INNER JOIN \"employee\" ON TRUE";
-    String expected = "SELECT *\n"
+    String expected = "SELECT \"employee\".\"position_id\", "
+        + "\"department\".\"department_description\"\n"
         + "FROM \"foodmart\".\"department\",\n"
         + "\"foodmart\".\"employee\"";
     sql(query).ok(expected);
   }
 
   @Test void testFullJoinOnTrueCondition() {
-    String query = "select * from \"department\"\n"
+    String query = "select \"employee\".\"position_id\", "
+        + "\"department\".\"department_description\"\n"
+        + "from \"department\"\n"
         + "FULL JOIN \"employee\" ON TRUE";
-    String expected = "SELECT *\n"
+    String expected = "SELECT \"employee\".\"position_id\", "
+        + "\"department\".\"department_description\"\n"
         + "FROM \"foodmart\".\"department\"\n"
         + "FULL JOIN \"foodmart\".\"employee\" ON TRUE";
     sql(query).ok(expected);
@@ -3023,11 +2959,12 @@ class RelToSqlConverterTest {
    * <a href="https://issues.apache.org/jira/browse/CALCITE-1332">[CALCITE-1332]
    * DB2 should always use aliases for tables: x.y.z AS z</a>. */
   @Test void testDb2DialectJoinStar() {
-    String query = "select * "
+    String query = "select \"position_id\", \"department_description\"\n"
         + "from \"foodmart\".\"employee\" A "
         + "join \"foodmart\".\"department\" B\n"
         + "on A.\"department_id\" = B.\"department_id\"";
-    final String expected = "SELECT *\n"
+    final String expected = "SELECT employee.position_id, "
+        + "department.department_description\n"
         + "FROM foodmart.employee AS employee\n"
         + "INNER JOIN foodmart.department AS department "
         + "ON employee.department_id = department.department_id";
@@ -3035,10 +2972,11 @@ class RelToSqlConverterTest {
   }
 
   @Test void testDb2DialectSelfJoinStar() {
-    String query = "select * "
+    String query = "select \"A\".\"position_id\", \"B\".\"position_id\"\n"
         + "from \"foodmart\".\"employee\" A join \"foodmart\".\"employee\" B\n"
         + "on A.\"department_id\" = B.\"department_id\"";
-    final String expected = "SELECT *\n"
+    final String expected = "SELECT employee.position_id, "
+        + "employee0.position_id AS position_id0\n"
         + "FROM foodmart.employee AS employee\n"
         + "INNER JOIN foodmart.employee AS employee0 "
         + "ON employee.department_id = employee0.department_id";
@@ -3237,7 +3175,8 @@ class RelToSqlConverterTest {
    * In JDBC adapter, allow IS NULL and IS NOT NULL operators in generated SQL
    * join condition</a>. */
   @Test void testSimpleJoinConditionWithIsNullOperators() {
-    String query = "select *\n"
+    String query = "select \"t1\".\"time_id\", \"t2\".\"birthdate\", "
+        + "\"t3\".\"product_name\"\n"
         + "from \"foodmart\".\"sales_fact_1997\" as \"t1\"\n"
         + "inner join \"foodmart\".\"customer\" as \"t2\"\n"
         + "on \"t1\".\"customer_id\" = \"t2\".\"customer_id\" or "
@@ -3248,7 +3187,8 @@ class RelToSqlConverterTest {
         + "on \"t1\".\"product_id\" = \"t3\".\"product_id\" or "
         + "(\"t1\".\"product_id\" is not null or "
         + "\"t3\".\"product_id\" is not null)";
-    String expected = "SELECT *\n"
+    String expected = "SELECT \"sales_fact_1997\".\"time_id\", \"customer\".\"birthdate\", "
+        + "\"product\".\"product_name\"\n"
         + "FROM \"foodmart\".\"sales_fact_1997\"\n"
         + "INNER JOIN \"foodmart\".\"customer\" "
         + "ON \"sales_fact_1997\".\"customer_id\" = \"customer\".\"customer_id\""
@@ -3687,10 +3627,8 @@ class RelToSqlConverterTest {
         + "FROM \"foodmart\".\"employee\"";
     String expectedPresto = "SELECT DATE_TRUNC('MINUTE', \"hire_date\")\n"
         + "FROM \"foodmart\".\"employee\"";
-    String expectedFirebolt = expectedPostgresql;
     sql(query)
         .withClickHouse().ok(expectedClickHouse)
-        .withFirebolt().ok(expectedFirebolt)
         .withHsqldb().ok(expectedHsqldb)
         .withOracle().ok(expectedOracle)
         .withPostgresql().ok(expectedPostgresql)
@@ -3934,10 +3872,8 @@ class RelToSqlConverterTest {
         + " DATE_FORMAT(`hire_date`, '%Y-%m-%d %H:%i:00')\n"
         + "FROM `foodmart`.`employee`\n"
         + "GROUP BY DATE_FORMAT(`hire_date`, '%Y-%m-%d %H:%i:00')";
-    final String expectedFirebolt = expectedPostgresql;
     sql(query)
         .withClickHouse().ok(expectedClickHouse)
-        .withFirebolt().ok(expectedFirebolt)
         .withHsqldb().ok(expected)
         .withMysql().ok(expectedMysql)
         .withOracle().ok(expectedOracle)
@@ -3957,12 +3893,10 @@ class RelToSqlConverterTest {
         + "FROM \"foodmart\".\"product\"";
     final String expectedSnowflake = expectedPostgresql;
     final String expectedRedshift = expectedPostgresql;
-    final String expectedFirebolt = expectedPresto;
     final String expectedMysql = "SELECT SUBSTRING(`brand_name` FROM 2)\n"
         + "FROM `foodmart`.`product`";
     sql(query)
         .withClickHouse().ok(expectedClickHouse)
-        .withFirebolt().ok(expectedFirebolt)
         .withMssql()
         // mssql does not support this syntax and so should fail
         .throws_("MSSQL SUBSTRING requires FROM and FOR arguments")
@@ -3987,14 +3921,12 @@ class RelToSqlConverterTest {
         + "FROM \"foodmart\".\"product\"";
     final String expectedSnowflake = expectedPostgresql;
     final String expectedRedshift = expectedPostgresql;
-    final String expectedFirebolt = expectedPresto;
     final String expectedMysql = "SELECT SUBSTRING(`brand_name` FROM 2 FOR 3)\n"
         + "FROM `foodmart`.`product`";
     final String expectedMssql = "SELECT SUBSTRING([brand_name], 2, 3)\n"
         + "FROM [foodmart].[product]";
     sql(query)
         .withClickHouse().ok(expectedClickHouse)
-        .withFirebolt().ok(expectedFirebolt)
         .withMysql().ok(expectedMysql)
         .withMssql().ok(expectedMssql)
         .withOracle().ok(expectedOracle)
@@ -5187,14 +5119,12 @@ class RelToSqlConverterTest {
         + "FROM (SELECT 1 AS a, 'x ' AS b\n"
         + "UNION ALL\n"
         + "SELECT 2 AS a, 'yy' AS b)";
-    final String expectedFirebolt = expectedPostgresql;
     final String expectedSnowflake = expectedPostgresql;
     final String expectedRedshift = "SELECT \"a\"\n"
         + "FROM (SELECT 1 AS \"a\", 'x ' AS \"b\"\n"
         + "UNION ALL\nSELECT 2 AS \"a\", 'yy' AS \"b\")";
     sql(sql)
         .withClickHouse().ok(expectedClickHouse)
-        .withFirebolt().ok(expectedFirebolt)
         .withBigQuery().ok(expectedBigQuery)
         .withHive().ok(expectedHive)
         .withHsqldb().ok(expectedHsqldb)
@@ -5203,23 +5133,6 @@ class RelToSqlConverterTest {
         .withPostgresql().ok(expectedPostgresql)
         .withRedshift().ok(expectedRedshift)
         .withSnowflake().ok(expectedSnowflake);
-  }
-
-  /**
-   * Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-5179">[CALCITE-5179]
-   * In RelToSqlConverter, AssertionError for values with more than two items
-   * when SqlDialect#supportsAliasedValues is false</a>.
-   */
-  @Test void testThreeValues() {
-    final String sql = "select * from (values (1), (2), (3)) as t(\"a\")\n";
-    sql(sql)
-        .withRedshift().ok("SELECT *\n"
-            + "FROM (SELECT 1 AS \"a\"\n"
-            + "UNION ALL\n"
-            + "SELECT 2 AS \"a\"\n"
-            + "UNION ALL\n"
-            + "SELECT 3 AS \"a\")");
   }
 
   @Test void testValuesEmpty() {
@@ -5684,19 +5597,23 @@ class RelToSqlConverterTest {
    * @see SqlDialect#emulateJoinTypeForCrossJoin()
    */
   @Test void testCrossJoinEmulation() {
-    final String expectedSpark = "SELECT *\n"
+    final String expectedSpark = "SELECT employee.position_id, department.department_description\n"
         + "FROM foodmart.employee\n"
         + "CROSS JOIN foodmart.department";
-    final String expectedMysql = "SELECT *\n"
+    final String expectedMysql = "SELECT `employee`.`position_id`, "
+        + "`department`.`department_description`\n"
         + "FROM `foodmart`.`employee`,\n"
         + "`foodmart`.`department`";
     Consumer<String> fn = sql ->
         sql(sql)
             .withSpark().ok(expectedSpark)
             .withMysql().ok(expectedMysql);
-    fn.accept("select * from \"employee\", \"department\"");
-    fn.accept("select * from \"employee\" cross join \"department\"");
-    fn.accept("select * from \"employee\" join \"department\" on true");
+    fn.accept("select \"position_id\", \"department_description\"\n"
+        + "FROM \"employee\", \"department\"");
+    fn.accept("select \"position_id\", \"department_description\"\n "
+        + "FROM \"employee\" cross join \"department\"");
+    fn.accept("select \"position_id\", \"department_description\"\n "
+        + "FROM \"employee\" join \"department\" on true");
   }
 
   /** Similar to {@link #testCommaCrossJoin()} (but uses SQL)
@@ -5704,15 +5621,17 @@ class RelToSqlConverterTest {
    * join if the only joins are {@code CROSS JOIN} or
    * {@code INNER JOIN ... ON TRUE}, and if we're not on Spark. */
   @Test void testCommaCrossJoin3way() {
-    String sql = "select *\n"
+    String sql = "select \"store_type\", \"position_id\", \"department_description\"\n"
         + "from \"store\" as s\n"
         + "inner join \"employee\" as e on true\n"
         + "cross join \"department\" as d";
-    final String expectedMysql = "SELECT *\n"
+    final String expectedMysql = "SELECT `store`.`store_type`, `employee`.`position_id`, "
+        + "`department`.`department_description`\n"
         + "FROM `foodmart`.`store`,\n"
         + "`foodmart`.`employee`,\n"
         + "`foodmart`.`department`";
-    final String expectedSpark = "SELECT *\n"
+    final String expectedSpark = "SELECT store.store_type, employee.position_id, "
+        + "department.department_description\n"
         + "FROM foodmart.store\n"
         + "CROSS JOIN foodmart.employee\n"
         + "CROSS JOIN foodmart.department";
@@ -5724,11 +5643,12 @@ class RelToSqlConverterTest {
   /** As {@link #testCommaCrossJoin3way()}, but shows that if there is a
    * {@code LEFT JOIN} in the FROM clause, we can't use comma-join. */
   @Test void testLeftJoinPreventsCommaJoin() {
-    String sql = "select *\n"
+    String sql = "select \"store_type\", \"position_id\", \"department_description\"\n"
         + "from \"store\" as s\n"
         + "left join \"employee\" as e on true\n"
         + "cross join \"department\" as d";
-    final String expectedMysql = "SELECT *\n"
+    final String expectedMysql = "SELECT `store`.`store_type`, `employee`.`position_id`, "
+        + "`department`.`department_description`\n"
         + "FROM `foodmart`.`store`\n"
         + "LEFT JOIN `foodmart`.`employee` ON TRUE\n"
         + "CROSS JOIN `foodmart`.`department`";
@@ -5738,11 +5658,12 @@ class RelToSqlConverterTest {
   /** As {@link #testLeftJoinPreventsCommaJoin()}, but the non-cross-join
    * occurs later in the FROM clause. */
   @Test void testRightJoinPreventsCommaJoin() {
-    String sql = "select *\n"
+    String sql = "select \"store_type\", \"position_id\", \"department_description\"\n"
         + "from \"store\" as s\n"
         + "cross join \"employee\" as e\n"
         + "right join \"department\" as d on true";
-    final String expectedMysql = "SELECT *\n"
+    final String expectedMysql = "SELECT `store`.`store_type`, `employee`.`position_id`, "
+        + "`department`.`department_description`\n"
         + "FROM `foodmart`.`store`\n"
         + "CROSS JOIN `foodmart`.`employee`\n"
         + "RIGHT JOIN `foodmart`.`department` ON TRUE";
@@ -5752,11 +5673,12 @@ class RelToSqlConverterTest {
   /** As {@link #testLeftJoinPreventsCommaJoin()}, but the impediment is a
    * {@code JOIN} whose condition is not {@code TRUE}. */
   @Test void testOnConditionPreventsCommaJoin() {
-    String sql = "select *\n"
+    String sql = "select \"store_type\", \"position_id\", \"department_description\"\n"
         + "from \"store\" as s\n"
         + "join \"employee\" as e on s.\"store_id\" = e.\"store_id\"\n"
         + "cross join \"department\" as d";
-    final String expectedMysql = "SELECT *\n"
+    final String expectedMysql = "SELECT `store`.`store_type`, `employee`.`position_id`, "
+        + "`department`.`department_description`\n"
         + "FROM `foodmart`.`store`\n"
         + "INNER JOIN `foodmart`.`employee`"
         + " ON `store`.`store_id` = `employee`.`store_id`\n"
@@ -5893,8 +5815,8 @@ class RelToSqlConverterTest {
         + "(SELECT \"department_id\"\n"
         + "FROM \"foodmart\".\"employee\"\n"
         + "GROUP BY \"department_id\") \"t1\"\n"
-        + "GROUP BY \"t1\".\"department_id\"\n"
-        + "HAVING \"t1\".\"department_id\" = MIN(\"t1\".\"department_id\")) \"t4\" ON \"employee\".\"department_id\" = \"t4\".\"department_id0\"";
+        + "GROUP BY \"t1\".\"department_id\") \"t3\" ON \"employee\".\"department_id\" = \"t3\".\"department_id0\""
+        + " AND \"employee\".\"department_id\" = \"t3\".\"EXPR$0\"";
     sql(query).withOracle().ok(expected);
   }
 
@@ -5904,15 +5826,18 @@ class RelToSqlConverterTest {
         + " where A.\"department_id\" = ( select min( A.\"department_id\") from \"foodmart\".\"department\" B where 1=2 )";
     final String expected = "SELECT \"employee\".\"department_id\"\n"
         + "FROM \"foodmart\".\"employee\"\n"
-        + "INNER JOIN (SELECT \"t1\".\"department_id\" AS \"department_id0\", MIN(\"t1\".\"department_id\") AS \"EXPR$0\"\n"
+        + "INNER JOIN (SELECT \"t1\".\"department_id\" AS \"department_id0\","
+        + " MIN(\"t1\".\"department_id\") AS \"EXPR$0\"\n"
         + "FROM (SELECT *\n"
-        + "FROM (VALUES (NULL, NULL)) AS \"t\" (\"department_id\", \"department_description\")\n"
+        + "FROM (VALUES (NULL, NULL))"
+        + " AS \"t\" (\"department_id\", \"department_description\")\n"
         + "WHERE 1 = 0) AS \"t\",\n"
         + "(SELECT \"department_id\"\n"
         + "FROM \"foodmart\".\"employee\"\n"
         + "GROUP BY \"department_id\") AS \"t1\"\n"
-        + "GROUP BY \"t1\".\"department_id\"\n"
-        + "HAVING \"t1\".\"department_id\" = MIN(\"t1\".\"department_id\")) AS \"t4\" ON \"employee\".\"department_id\" = \"t4\".\"department_id0\"";
+        + "GROUP BY \"t1\".\"department_id\") AS \"t3\" "
+        + "ON \"employee\".\"department_id\" = \"t3\".\"department_id0\""
+        + " AND \"employee\".\"department_id\" = \"t3\".\"EXPR$0\"";
     sql(query).ok(expected);
   }
 
@@ -6388,6 +6313,18 @@ class RelToSqlConverterTest {
         .withBigQuery().ok(expected);
   }
 
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-5023">[CALCITE-5023]
+   * JOIN whose inputs projecting same field names shouldn't generate SELECT STAR
+   * when converting rel to sql</a>. */
+  @Test void testJoinInputsProjectingSameFieldName() {
+    final String query = "SELECT \"t\".\"id\", \"t0\".\"id\" AS \"id0\"\n"
+        + "FROM (VALUES (NULL)) AS \"t\" (\"id\"),\n"
+        + "(VALUES (NULL)) AS \"t0\" (\"id\")";
+    final String expected = query;
+    sql(query).ok(expected);
+  }
+
   /** Fluid interface to run tests. */
   static class Sql {
     private final CalciteAssert.SchemaSpec schemaSpec;
@@ -6446,10 +6383,6 @@ class RelToSqlConverterTest {
 
     Sql withExasol() {
       return dialect(DatabaseProduct.EXASOL.getDialect());
-    }
-
-    Sql withFirebolt() {
-      return dialect(DatabaseProduct.FIREBOLT.getDialect());
     }
 
     Sql withHive() {
