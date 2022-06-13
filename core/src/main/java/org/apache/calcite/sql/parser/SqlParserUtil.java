@@ -140,8 +140,9 @@ public final class SqlParserUtil {
   }
 
   public static SqlDateLiteral parseDateLiteral(String s, SqlParserPos pos) {
+    final String dateStr = parseString(s);
     final Calendar cal =
-        DateTimeUtils.parseDateFormat(s, Format.get().date,
+        DateTimeUtils.parseDateFormat(dateStr, Format.get().date,
             DateTimeUtils.UTC_ZONE);
     if (cal == null) {
       throw SqlUtil.newContextException(pos,
@@ -153,8 +154,9 @@ public final class SqlParserUtil {
   }
 
   public static SqlTimeLiteral parseTimeLiteral(String s, SqlParserPos pos) {
+    final String dateStr = parseString(s);
     final DateTimeUtils.PrecisionTime pt =
-        DateTimeUtils.parsePrecisionDateTimeLiteral(s,
+        DateTimeUtils.parsePrecisionDateTimeLiteral(dateStr,
             Format.get().time, DateTimeUtils.UTC_ZONE, -1);
     if (pt == null) {
       throw SqlUtil.newContextException(pos,
@@ -168,13 +170,14 @@ public final class SqlParserUtil {
 
   public static SqlTimestampLiteral parseTimestampLiteral(String s,
       SqlParserPos pos) {
+    final String dateStr = parseString(s);
     final Format format = Format.get();
     DateTimeUtils.PrecisionTime pt = null;
     // Allow timestamp literals with and without time fields (as does
     // PostgreSQL); TODO: require time fields except in Babel's lenient mode
     final DateFormat[] dateFormats = {format.timestamp, format.date};
     for (DateFormat dateFormat : dateFormats) {
-      pt = DateTimeUtils.parsePrecisionDateTimeLiteral(s,
+      pt = DateTimeUtils.parsePrecisionDateTimeLiteral(dateStr,
           dateFormat, DateTimeUtils.UTC_ZONE, -1);
       if (pt != null) {
         break;
@@ -193,12 +196,13 @@ public final class SqlParserUtil {
 
   public static SqlIntervalLiteral parseIntervalLiteral(SqlParserPos pos,
       int sign, String s, SqlIntervalQualifier intervalQualifier) {
-    if (s.equals("")) {
+    final String intervalStr = parseString(s);
+    if (intervalStr.equals("")) {
       throw SqlUtil.newContextException(pos,
           RESOURCE.illegalIntervalLiteral(s + " "
               + intervalQualifier.toString(), pos.toString()));
     }
-    return SqlLiteral.createInterval(sign, s, intervalQualifier, pos);
+    return SqlLiteral.createInterval(sign, intervalStr, intervalQualifier, pos);
   }
 
   /**
@@ -233,7 +237,7 @@ public final class SqlParserUtil {
     int[] ret;
     try {
       ret = intervalQualifier.evaluateIntervalLiteral(literal,
-          intervalQualifier.getParserPosition(), RelDataTypeSystem.DEFAULT);
+          intervalQualifier.getParserPosition());
       assert ret != null;
     } catch (CalciteContextException e) {
       throw new RuntimeException("while parsing day-to-second interval "

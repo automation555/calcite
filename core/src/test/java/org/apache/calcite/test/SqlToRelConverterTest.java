@@ -19,6 +19,7 @@ package org.apache.calcite.test;
 import org.apache.calcite.config.CalciteConnectionConfigImpl;
 import org.apache.calcite.config.CalciteConnectionProperty;
 import org.apache.calcite.config.NullCollation;
+import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
 import org.apache.calcite.plan.Contexts;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelTrait;
@@ -38,6 +39,8 @@ import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalSort;
 import org.apache.calcite.rel.logical.LogicalTableModify;
 import org.apache.calcite.rel.rules.CoreRules;
+import org.apache.calcite.rel.type.RelDataTypeSystem;
+import org.apache.calcite.rel.type.RelDataTypeSystemImpl;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -4433,34 +4436,25 @@ class SqlToRelConverterTest extends SqlToRelTestBase {
         .ok();
   }
 
-  /**
-   * Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-4512">[CALCITE-4512]
-   * GROUP BY expression with argument name same with SELECT field and alias causes
-   * validation error</a>.
-   */
-  @Test void testGroupByExprArgFieldSameWithAlias() {
-    final String sql = "SELECT floor(deptno / 2) AS deptno\n"
-        + "FROM emp\n"
-        + "GROUP BY floor(deptno / 2)";
-    sql(sql)
-        .withConformance(SqlConformanceEnum.LENIENT)
-        .ok();
-  }
-
-  /**
-   * Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-4512">[CALCITE-4512]
-   * GROUP BY expression with argument name same with SELECT field and alias causes
-   * validation error</a>.
-   */
-  @Test void testGroupByExprArgFieldSameWithAlias2() {
-    final String sql = ""
-        + "SELECT deptno / 2 AS deptno, deptno / 2 as empno, sum(sal)\n"
-        + "FROM emp\n"
-        + "GROUP BY GROUPING SETS ((deptno), (empno, deptno / 2), (2, 1))";
-    sql(sql)
-        .withConformance(SqlConformanceEnum.LENIENT)
-        .ok();
+  @Test void testBigIntervalHourPrecision() {
+    String expr = "interval '1000000' hour";
+    expr(expr).withFactory(
+        t -> t.withTypeFactoryFactory(
+          f -> new JavaTypeFactoryImpl() {
+            @Override public RelDataTypeSystem getTypeSystem() {
+              return new RelDataTypeSystemImpl() {
+                @Override public int getDefaultPrecision(SqlTypeName typeName) {
+                  switch (typeName) {
+                  case INTERVAL_HOUR:
+                    return SqlTypeName.MAX_INTERVAL_START_PRECISION;
+                  default:
+                    break;
+                  }
+                  return super.getDefaultPrecision(typeName);
+                }
+              };
+            }
+          }
+    )).ok();
   }
 }
