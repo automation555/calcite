@@ -1018,6 +1018,13 @@ public class SqlDialect {
   }
 
   /**
+   * Returns whether this dialect supports "GROUP BY()" clause.
+   */
+  public boolean supportEmptyGroupBy() {
+    return false;
+  }
+
+  /**
    * Returns whether this dialect support the specified type of join.
    */
   public boolean supportsJoinType(JoinRelType joinType) {
@@ -1081,13 +1088,6 @@ public class SqlDialect {
   public boolean supportsImplicitTypeCoercion(RexCall call) {
     final RexNode operand0 = call.getOperands().get(0);
     return SqlTypeUtil.isCharacter(operand0.getType());
-  }
-
-  /**
-   * Returns whether the dialect supports having IS TRUE operations inside the CASE WHEN operators.
-   */
-  public boolean supportsIsTrueInsideCaseWhen() {
-    return true;
   }
 
   /** Returns the name of the system table that has precisely one row.
