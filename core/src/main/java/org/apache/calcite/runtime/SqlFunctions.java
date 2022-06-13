@@ -34,11 +34,15 @@ import org.apache.calcite.linq4j.function.NonDeterministic;
 import org.apache.calcite.linq4j.tree.Primitive;
 import org.apache.calcite.runtime.FlatLists.ComparableList;
 import org.apache.calcite.util.Bug;
-import org.apache.calcite.util.DateString;
 import org.apache.calcite.util.NumberUtil;
 import org.apache.calcite.util.TimeWithTimeZoneString;
-import org.apache.calcite.util.TimestampString;
 import org.apache.calcite.util.TimestampWithTimeZoneString;
+import org.apache.calcite.util.Util;
+
+import org.apache.commons.codec.language.Soundex;
+
+import com.google.common.base.Splitter;
+import com.google.common.base.Strings;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
@@ -48,8 +52,11 @@ import java.math.RoundingMode;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.text.DecimalFormat;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
@@ -59,10 +66,16 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
+import javax.annotation.Nonnull;
+
+import static org.apache.calcite.util.Static.RESOURCE;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /**
  * Helper methods to implement SQL functions in generated code.
@@ -83,8 +96,25 @@ public class SqlFunctions {
 
   private static final TimeZone LOCAL_TZ = TimeZone.getDefault();
 
+  private static final DateTimeFormatter ROOT_DAY_FORMAT =
+      DateTimeFormatter.ofPattern("EEEE", Locale.ROOT);
+
+  private static final DateTimeFormatter ROOT_MONTH_FORMAT =
+      DateTimeFormatter.ofPattern("MMMM", Locale.ROOT);
+
+  private static final Soundex SOUNDEX = new Soundex();
+
+  private static final int SOUNDEX_LENGTH = 4;
+
+  private static final Pattern FROM_BASE64_REGEXP = Pattern.compile("[\\t\\n\\r\\s]");
+
   private static final Function1<List<Object>, Enumerable<Object>> LIST_AS_ENUMERABLE =
       Linq4j::asEnumerable;
+
+  // It's important to have XDigit before Digit to match XDigit first
+  // (i.e. see the posixRegex method)
+  private static final String[] POSIX_CHARACTER_CLASSES = new String[] { "Lower", "Upper", "ASCII",
+      "Alpha", "XDigit", "Digit", "Alnum", "Punct", "Graph", "Print", "Blank", "Cntrl", "Space" };
 
   private static final Function1<Object[], Enumerable<Object[]>> ARRAY_CARTESIAN_PRODUCT =
       lists -> {
@@ -112,6 +142,36 @@ public class SqlFunctions {
   private SqlFunctions() {
   }
 
+  /** SQL TO_BASE64(string) function. */
+  public static String toBase64(String string) {
+    return toBase64_(string.getBytes(UTF_8));
+  }
+
+  /** SQL TO_BASE64(string) function for binary string. */
+  public static String toBase64(ByteString string) {
+    return toBase64_(string.getBytes());
+  }
+
+  private static String toBase64_(byte[] bytes) {
+    String base64 = Base64.getEncoder().encodeToString(bytes);
+    StringBuilder str = new StringBuilder(base64.length() + base64.length() / 76);
+    Splitter.fixedLength(76).split(base64).iterator().forEachRemaining(s -> {
+      str.append(s);
+      str.append("\n");
+    });
+    return str.substring(0, str.length() - 1);
+  }
+
+  /** SQL FROM_BASE64(string) function. */
+  public static ByteString fromBase64(String base64) {
+    try {
+      base64 = FROM_BASE64_REGEXP.matcher(base64).replaceAll("");
+      return new ByteString(Base64.getDecoder().decode(base64));
+    } catch (IllegalArgumentException e) {
+      return null;
+    }
+  }
+
   /** SQL SUBSTRING(string FROM ... FOR ...) function. */
   public static String substring(String c, int s, int l) {
     int lc = c.length();
@@ -120,7 +180,7 @@ public class SqlFunctions {
     }
     int e = s + l;
     if (e < s) {
-      throw new IllegalArgumentException("substring error: negative substring length not allowed");
+      throw RESOURCE.illegalNegativeSubstringLength().ex();
     }
     if (s > lc || e < 1) {
       return "";
@@ -143,7 +203,7 @@ public class SqlFunctions {
     }
     int e = s + l;
     if (e < s) {
-      throw new IllegalArgumentException("substring error: negative substring length not allowed");
+      throw RESOURCE.illegalNegativeSubstringLength().ex();
     }
     if (s > lc || e < 1) {
       return ByteString.EMPTY;
@@ -205,6 +265,101 @@ public class SqlFunctions {
     return newS.toString();
   }
 
+  /** SQL REVERSE(string) function. */
+  public static String reverse(String s) {
+    final StringBuilder buf = new StringBuilder(s);
+    return buf.reverse().toString();
+  }
+
+  /** SQL ASCII(string) function. */
+  public static int ascii(String s) {
+    return s.isEmpty()
+        ? 0 : s.codePointAt(0);
+  }
+
+  /** SQL REPEAT(string, int) function. */
+  public static String repeat(String s, int n) {
+    if (n < 1) {
+      return "";
+    }
+    return Strings.repeat(s, n);
+  }
+
+  /** SQL SPACE(int) function. */
+  public static String space(int n) {
+    return repeat(" ", n);
+  }
+
+  /** SQL SOUNDEX(string) function. */
+  public static String soundex(String s) {
+    return SOUNDEX.soundex(s);
+  }
+
+  /** SQL DIFFERENCE(string, string) function. */
+  public static int difference(String s0, String s1) {
+    String result0 = soundex(s0);
+    String result1 = soundex(s1);
+    for (int i = 0; i < SOUNDEX_LENGTH; i++) {
+      if (result0.charAt(i) != result1.charAt(i)) {
+        return i;
+      }
+    }
+    return SOUNDEX_LENGTH;
+  }
+
+  /** SQL LEFT(string, integer) function. */
+  public static @Nonnull String left(@Nonnull String s, int n) {
+    if (n <= 0) {
+      return "";
+    }
+    int len = s.length();
+    if (n >= len) {
+      return s;
+    }
+    return s.substring(0, n);
+  }
+
+  /** SQL LEFT(ByteString, integer) function. */
+  public static @Nonnull ByteString left(@Nonnull ByteString s, int n) {
+    if (n <= 0) {
+      return ByteString.EMPTY;
+    }
+    int len = s.length();
+    if (n >= len) {
+      return s;
+    }
+    return s.substring(0, n);
+  }
+
+  /** SQL RIGHT(string, integer) function. */
+  public static @Nonnull String right(@Nonnull String s, int n) {
+    if (n <= 0) {
+      return "";
+    }
+    int len = s.length();
+    if (n >= len) {
+      return s;
+    }
+    return s.substring(len - n);
+  }
+
+  /** SQL RIGHT(ByteString, integer) function. */
+  public static @Nonnull ByteString right(@Nonnull ByteString s, int n) {
+    if (n <= 0) {
+      return ByteString.EMPTY;
+    }
+    final int len = s.length();
+    if (n >= len) {
+      return s;
+    }
+    return s.substring(len - n);
+  }
+
+  /** SQL CHR(long) function. */
+  public static String chr(long n) {
+    return String.valueOf(Character.toChars((int) n));
+  }
+
   /** SQL CHARACTER_LENGTH(string) function. */
   public static int charLength(String s) {
     return s.length();
@@ -239,7 +394,7 @@ public class SqlFunctions {
   public static String trim(boolean left, boolean right, String seek,
       String s, boolean strict) {
     if (strict && seek.length() != 1) {
-      throw new IllegalArgumentException("trim error: trim character must be exactly 1 character");
+      throw RESOURCE.trimError().ex();
     }
     int j = s.length();
     if (right) {
@@ -309,9 +464,6 @@ public class SqlFunctions {
 
   /** SQL {@code OVERLAY} function. */
   public static String overlay(String s, String r, int start) {
-    if (s == null || r == null) {
-      return null;
-    }
     return s.substring(0, start - 1)
         + r
         + s.substring(start - 1 + r.length());
@@ -319,9 +471,6 @@ public class SqlFunctions {
 
   /** SQL {@code OVERLAY} function. */
   public static String overlay(String s, String r, int start, int length) {
-    if (s == null || r == null) {
-      return null;
-    }
     return s.substring(0, start - 1)
         + r
         + s.substring(start - 1 + length);
@@ -329,23 +478,17 @@ public class SqlFunctions {
 
   /** SQL {@code OVERLAY} function applied to binary strings. */
   public static ByteString overlay(ByteString s, ByteString r, int start) {
-    if (s == null || r == null) {
-      return null;
-    }
     return s.substring(0, start - 1)
-           .concat(r)
-           .concat(s.substring(start - 1 + r.length()));
+        .concat(r)
+        .concat(s.substring(start - 1 + r.length()));
   }
 
   /** SQL {@code OVERLAY} function applied to binary strings. */
   public static ByteString overlay(ByteString s, ByteString r, int start,
       int length) {
-    if (s == null || r == null) {
-      return null;
-    }
     return s.substring(0, start - 1)
-           .concat(r)
-           .concat(s.substring(start - 1 + length));
+        .concat(r)
+        .concat(s.substring(start - 1 + length));
   }
 
   /** SQL {@code LIKE} function. */
@@ -370,6 +513,19 @@ public class SqlFunctions {
   public static boolean similar(String s, String pattern, String escape) {
     final String regex = Like.sqlToRegexSimilar(pattern, escape);
     return Pattern.matches(regex, s);
+  }
+
+  public static boolean posixRegex(String s, String regex, Boolean caseSensitive) {
+    // Replace existing character classes with java equivalent ones
+    String originalRegex = regex;
+    String[] existingExpressions = Arrays.stream(POSIX_CHARACTER_CLASSES)
+        .filter(v -> originalRegex.contains(v.toLowerCase(Locale.ROOT))).toArray(String[]::new);
+    for (String v : existingExpressions) {
+      regex = regex.replaceAll(v.toLowerCase(Locale.ROOT), "\\\\p{" + v + "}");
+    }
+
+    int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE;
+    return Pattern.compile(regex, flags).matcher(s).find();
   }
 
   // =
@@ -814,16 +970,30 @@ public class SqlFunctions {
     throw notArithmetic("*", b0, b1);
   }
 
-  private static IllegalArgumentException notArithmetic(String op, Object b0,
+  private static RuntimeException notArithmetic(String op, Object b0,
       Object b1) {
-    return new IllegalArgumentException("Invalid types for arithmetic: "
-        + b0.getClass() + " " + op + " " + b1.getClass());
+    return RESOURCE.invalidTypesForArithmetic(b0.getClass().toString(),
+        op, b1.getClass().toString()).ex();
   }
 
-  private static IllegalArgumentException notComparable(String op, Object b0,
+  private static RuntimeException notComparable(String op, Object b0,
       Object b1) {
-    return new IllegalArgumentException("Invalid types for comparison: "
-        + b0.getClass() + " " + op + " " + b1.getClass());
+    return RESOURCE.invalidTypesForComparison(b0.getClass().toString(),
+        op, b1.getClass().toString()).ex();
+  }
+
+  // &
+
+  /** Helper function for implementing <code>BIT_AND</code> */
+  public static long bitAnd(long b0, long b1) {
+    return b0 & b1;
+  }
+
+  // |
+
+  /** Helper function for implementing <code>BIT_OR</code> */
+  public static long bitOr(long b0, long b1) {
+    return b0 | b1;
   }
 
   // EXP
@@ -837,10 +1007,6 @@ public class SqlFunctions {
     return Math.exp(b0.doubleValue());
   }
 
-  public static double exp(long b0) {
-    return Math.exp(b0);
-  }
-
   // POWER
 
   /** SQL <code>POWER</code> operator applied to double values. */
@@ -852,20 +1018,14 @@ public class SqlFunctions {
     return Math.pow(b0, b1.doubleValue());
   }
 
-  public static double power(long b0, long b1) {
-    return Math.pow(b0, b1);
-  }
-
-  public static double power(BigDecimal b0, BigDecimal b1) {
-    return Math.pow(b0.doubleValue(), b1.doubleValue());
-  }
-
-  public static double power(long b0, BigDecimal b1) {
-    return Math.pow(b0, b1.doubleValue());
-  }
-
-  public static double power(BigDecimal b0, long b1) {
+  public static double power(BigDecimal b0, double b1) {
     return Math.pow(b0.doubleValue(), b1);
+  }
+
+  public static BigDecimal power(BigDecimal b0, BigDecimal b1) {
+    return b0 == null || b1 == null
+        ? null
+        : new BigDecimal(Math.pow(b0.doubleValue(), b1.doubleValue()));
   }
 
   // LN
@@ -873,11 +1033,6 @@ public class SqlFunctions {
   /** SQL {@code LN(number)} function applied to double values. */
   public static double ln(double d) {
     return Math.log(d);
-  }
-
-  /** SQL {@code LN(number)} function applied to long values. */
-  public static double ln(long b0) {
-    return Math.log(b0);
   }
 
   /** SQL {@code LN(number)} function applied to BigDecimal values. */
@@ -889,11 +1044,6 @@ public class SqlFunctions {
 
   /** SQL <code>LOG10(numeric)</code> operator applied to double values. */
   public static double log10(double b0) {
-    return Math.log10(b0);
-  }
-
-  /** SQL {@code LOG10(number)} function applied to long values. */
-  public static double log10(long b0) {
     return Math.log10(b0);
   }
 
@@ -1095,11 +1245,6 @@ public class SqlFunctions {
   }
 
   // ACOS
-  /** SQL <code>ACOS</code> operator applied to long values. */
-  public static double acos(long b0) {
-    return Math.acos(b0);
-  }
-
   /** SQL <code>ACOS</code> operator applied to BigDecimal values. */
   public static double acos(BigDecimal b0) {
     return Math.acos(b0.doubleValue());
@@ -1111,11 +1256,6 @@ public class SqlFunctions {
   }
 
   // ASIN
-  /** SQL <code>ASIN</code> operator applied to long values. */
-  public static double asin(long b0) {
-    return Math.asin(b0);
-  }
-
   /** SQL <code>ASIN</code> operator applied to BigDecimal values. */
   public static double asin(BigDecimal b0) {
     return Math.asin(b0.doubleValue());
@@ -1127,11 +1267,6 @@ public class SqlFunctions {
   }
 
   // ATAN
-  /** SQL <code>ATAN</code> operator applied to long values. */
-  public static double atan(long b0) {
-    return Math.atan(b0);
-  }
-
   /** SQL <code>ATAN</code> operator applied to BigDecimal values. */
   public static double atan(BigDecimal b0) {
     return Math.atan(b0.doubleValue());
@@ -1143,18 +1278,13 @@ public class SqlFunctions {
   }
 
   // ATAN2
-  /** SQL <code>ATAN2</code> operator applied to long values. */
-  public static double atan2(long b0, long b1) {
-    return Math.atan2(b0, b1);
-  }
-
-  /** SQL <code>ATAN2</code> operator applied to long/BigDecimal values. */
-  public static double atan2(long b0, BigDecimal b1) {
+  /** SQL <code>ATAN2</code> operator applied to double/BigDecimal values. */
+  public static double atan2(double b0, BigDecimal b1) {
     return Math.atan2(b0, b1.doubleValue());
   }
 
-  /** SQL <code>ATAN2</code> operator applied to BigDecimal/long values. */
-  public static double atan2(BigDecimal b0, long b1) {
+  /** SQL <code>ATAN2</code> operator applied to BigDecimal/double values. */
+  public static double atan2(BigDecimal b0, double b1) {
     return Math.atan2(b0.doubleValue(), b1);
   }
 
@@ -1169,11 +1299,6 @@ public class SqlFunctions {
   }
 
   // COS
-  /** SQL <code>COS</code> operator applied to long values. */
-  public static double cos(long b0) {
-    return Math.cos(b0);
-  }
-
   /** SQL <code>COS</code> operator applied to BigDecimal values. */
   public static double cos(BigDecimal b0) {
     return Math.cos(b0.doubleValue());
@@ -1185,11 +1310,6 @@ public class SqlFunctions {
   }
 
   // COT
-  /** SQL <code>COT</code> operator applied to long values. */
-  public static double cot(long b0) {
-    return 1.0d / Math.tan(b0);
-  }
-
   /** SQL <code>COT</code> operator applied to BigDecimal values. */
   public static double cot(BigDecimal b0) {
     return 1.0d / Math.tan(b0.doubleValue());
@@ -1201,11 +1321,6 @@ public class SqlFunctions {
   }
 
   // DEGREES
-  /** SQL <code>DEGREES</code> operator applied to long values. */
-  public static double degrees(long b0) {
-    return Math.toDegrees(b0);
-  }
-
   /** SQL <code>DEGREES</code> operator applied to BigDecimal values. */
   public static double degrees(BigDecimal b0) {
     return Math.toDegrees(b0.doubleValue());
@@ -1217,11 +1332,6 @@ public class SqlFunctions {
   }
 
   // RADIANS
-  /** SQL <code>RADIANS</code> operator applied to long values. */
-  public static double radians(long b0) {
-    return Math.toRadians(b0);
-  }
-
   /** SQL <code>RADIANS</code> operator applied to BigDecimal values. */
   public static double radians(BigDecimal b0) {
     return Math.toRadians(b0.doubleValue());
@@ -1334,11 +1444,6 @@ public class SqlFunctions {
   }
 
   // SIN
-  /** SQL <code>SIN</code> operator applied to long values. */
-  public static double sin(long b0) {
-    return Math.sin(b0);
-  }
-
   /** SQL <code>SIN</code> operator applied to BigDecimal values. */
   public static double sin(BigDecimal b0) {
     return Math.sin(b0.doubleValue());
@@ -1350,11 +1455,6 @@ public class SqlFunctions {
   }
 
   // TAN
-  /** SQL <code>TAN</code> operator applied to long values. */
-  public static double tan(long b0) {
-    return Math.tan(b0);
-  }
-
   /** SQL <code>TAN</code> operator applied to BigDecimal values. */
   public static double tan(BigDecimal b0) {
     return Math.tan(b0.doubleValue());
@@ -1500,7 +1600,7 @@ public class SqlFunctions {
 
   @NonDeterministic
   private static Object cannotConvert(Object o, Class toType) {
-    throw new RuntimeException("Cannot convert " + o + " to " + toType);
+    throw RESOURCE.cannotConvert(o.toString(), toType.toString()).ex();
   }
 
   /** CAST(VARCHAR AS BOOLEAN). */
@@ -1511,7 +1611,7 @@ public class SqlFunctions {
     } else if (s.equalsIgnoreCase("FALSE")) {
       return false;
     } else {
-      throw new RuntimeException("Invalid character for cast");
+      throw RESOURCE.invalidCharacterForCast(s).ex();
     }
   }
 
@@ -1670,8 +1770,8 @@ public class SqlFunctions {
   public static float toFloat(Object o) {
     return o instanceof Float ? (Float) o
         : o instanceof Number ? toFloat((Number) o)
-            : o instanceof String ? toFloat((String) o)
-                : (Float) cannotConvert(o, float.class);
+        : o instanceof String ? toFloat((String) o)
+        : (Float) cannotConvert(o, float.class);
   }
 
   public static double toDouble(String s) {
@@ -1830,23 +1930,6 @@ public class SqlFunctions {
         .getMillisSinceEpoch();
   }
 
-  public static Timestamp fromTimestampStringToTimestamp(TimestampString timestampString) {
-    return new Timestamp(timestampString.getMillisSinceEpoch());
-  }
-
-
-  public static Timestamp fromDateStringToTimestamp(DateString dateString) {
-    return new Timestamp(dateString.getMillisSinceEpoch());
-  }
-
-  public static java.sql.Date fromTimestampStringToDate(TimestampString timestampString) {
-    return new java.sql.Date(timestampString.getMillisSinceEpoch());
-  }
-
-  public static java.sql.Date fromDateStringToDate(DateString dateString) {
-    return new java.sql.Date(dateString.getMillisSinceEpoch());
-  }
-
   // Don't need shortValueOf etc. - Short.valueOf is sufficient.
 
   /** Helper for CAST(... AS VARCHAR(maxLength)). */
@@ -1967,6 +2050,105 @@ public class SqlFunctions {
     return v - remainder;
   }
 
+  /**
+   * SQL {@code LAST_DAY} function.
+   *
+   * @param date days since epoch
+   * @return days of the last day of the month since epoch
+   */
+  public static int lastDay(int date) {
+    int y0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.YEAR, date);
+    int m0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.MONTH, date);
+    int last = lastDay(y0, m0);
+    return DateTimeUtils.ymdToUnixDate(y0, m0, last);
+  }
+
+  /**
+   * SQL {@code LAST_DAY} function.
+   *
+   * @param timestamp milliseconds from epoch
+   * @return milliseconds of the last day of the month since epoch
+   */
+  public static int lastDay(long timestamp) {
+    int date = (int) (timestamp / DateTimeUtils.MILLIS_PER_DAY);
+    int y0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.YEAR, date);
+    int m0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.MONTH, date);
+    int last = lastDay(y0, m0);
+    return DateTimeUtils.ymdToUnixDate(y0, m0, last);
+  }
+
+  /**
+   * SQL {@code DAYNAME} function, applied to a TIMESTAMP argument.
+   *
+   * @param timestamp Milliseconds from epoch
+   * @param locale Locale
+   * @return Name of the weekday in the given locale
+   */
+  public static String dayNameWithTimestamp(long timestamp, Locale locale) {
+    return timeStampToLocalDate(timestamp)
+        .format(ROOT_DAY_FORMAT.withLocale(locale));
+  }
+
+  /**
+   * SQL {@code DAYNAME} function, applied to a DATE argument.
+   *
+   * @param date Days since epoch
+   * @param locale Locale
+   * @return Name of the weekday in the given locale
+   */
+  public static String dayNameWithDate(int date, Locale locale) {
+    return dateToLocalDate(date)
+        .format(ROOT_DAY_FORMAT.withLocale(locale));
+  }
+
+  /**
+   * SQL {@code MONTHNAME} function, applied to a TIMESTAMP argument.
+   *
+   * @param timestamp Milliseconds from epoch
+   * @param locale Locale
+   * @return Name of the month in the given locale
+   */
+  public static String monthNameWithTimestamp(long timestamp, Locale locale) {
+    return timeStampToLocalDate(timestamp)
+        .format(ROOT_MONTH_FORMAT.withLocale(locale));
+  }
+
+  /**
+   * SQL {@code MONTHNAME} function, applied to a DATE argument.
+   *
+   * @param date Days from epoch
+   * @param locale Locale
+   * @return Name of the month in the given locale
+   */
+  public static String monthNameWithDate(int date, Locale locale) {
+    return dateToLocalDate(date)
+        .format(ROOT_MONTH_FORMAT.withLocale(locale));
+  }
+
+  /**
+   * Converts a date (days since epoch) to a {@link LocalDate}.
+   *
+   * @param date days since epoch
+   * @return localDate
+   */
+  private static LocalDate dateToLocalDate(int date) {
+    int y0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.YEAR, date);
+    int m0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.MONTH, date);
+    int d0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.DAY, date);
+    return LocalDate.of(y0, m0, d0);
+  }
+
+  /**
+   * Converts a timestamp (milliseconds since epoch) to a {@link LocalDate}.
+   *
+   * @param timestamp milliseconds from epoch
+   * @return localDate
+   */
+  private static LocalDate timeStampToLocalDate(long timestamp) {
+    int date = (int) (timestamp / DateTimeUtils.MILLIS_PER_DAY);
+    return dateToLocalDate(date);
+  }
+
   /** SQL {@code CURRENT_TIMESTAMP} function. */
   @NonDeterministic
   public static long currentTimestamp(DataContext root) {
@@ -2012,6 +2194,23 @@ public class SqlFunctions {
   @NonDeterministic
   public static TimeZone timeZone(DataContext root) {
     return (TimeZone) DataContext.Variable.TIME_ZONE.get(root);
+  }
+
+  /** SQL {@code USER} function. */
+  @Deterministic
+  public static String user(DataContext root) {
+    return Objects.requireNonNull(DataContext.Variable.USER.get(root));
+  }
+
+  /** SQL {@code SYSTEM_USER} function. */
+  @Deterministic
+  public static String systemUser(DataContext root) {
+    return Objects.requireNonNull(DataContext.Variable.SYSTEM_USER.get(root));
+  }
+
+  @NonDeterministic
+  public static Locale locale(DataContext root) {
+    return (Locale) DataContext.Variable.LOCALE.get(root);
   }
 
   /** SQL {@code TRANSLATE(string, search_chars, replacement_chars)}
@@ -2111,7 +2310,7 @@ public class SqlFunctions {
     try {
       return Primitive.asList(a.getArray());
     } catch (SQLException e) {
-      throw new RuntimeException(e);
+      throw Util.toUnchecked(e);
     }
   }
 
@@ -2139,7 +2338,11 @@ public class SqlFunctions {
 
   /** Support the SLICE function. */
   public static List slice(List list) {
-    return list;
+    List result = new ArrayList(list.size());
+    for (Object e : list) {
+      result.add(structAccess(e, 0, null));
+    }
+    return result;
   }
 
   /** Support the ELEMENT function. */
@@ -2150,7 +2353,7 @@ public class SqlFunctions {
     case 1:
       return list.get(0);
     default:
-      throw new RuntimeException("more than one value");
+      throw RESOURCE.moreThanOneValueInList(list.toString()).ex();
     }
   }
 
@@ -2258,7 +2461,7 @@ public class SqlFunctions {
         return (Function1) LIST_AS_ENUMERABLE;
       } else {
         return row -> p2(new Object[] { row }, fieldCounts, withOrdinality,
-              inputTypes);
+            inputTypes);
       }
     }
     return lists -> p2((Object[]) lists, fieldCounts, withOrdinality,
@@ -2438,8 +2641,7 @@ public class SqlFunctions {
         Field structField = beanClass.getDeclaredField(fieldName);
         return structField.get(structObject);
       } catch (NoSuchFieldException | IllegalAccessException ex) {
-        throw new IllegalStateException("Failed to access field '" + fieldName
-            + "' of object of type " + beanClass.getName(), ex);
+        throw RESOURCE.failedToAccessField(fieldName, beanClass.getName()).ex(ex);
       }
     }
   }
