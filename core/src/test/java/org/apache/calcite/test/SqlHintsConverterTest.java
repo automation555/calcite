@@ -36,13 +36,10 @@ import org.apache.calcite.rel.RelVisitor;
 import org.apache.calcite.rel.convert.ConverterRule;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
-import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.hint.HintStrategies;
 import org.apache.calcite.rel.hint.HintStrategyTable;
-import org.apache.calcite.rel.hint.Hintable;
 import org.apache.calcite.rel.hint.RelHint;
-import org.apache.calcite.rel.logical.LogicalAggregate;
 import org.apache.calcite.rel.logical.LogicalJoin;
 import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rel.rules.FilterMergeRule;
@@ -65,22 +62,21 @@ import org.apache.calcite.util.Util;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
-import org.junit.jupiter.api.Test;
+import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.Is.is;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.fail;
 
 /**
  * Unit test for {@link org.apache.calcite.rel.hint.RelHint}.
@@ -128,60 +124,12 @@ public class SqlHintsConverterTest extends SqlToRelTestBase {
     sql(sql).ok();
   }
 
-  @Test public void testSortHints() {
-    final String sql = "select /*+ resource(mem='1024MB')*/"
-        + "ename, sal, deptno from emp order by deptno";
-    final RelNode rel = tester.convertSqlToRel(sql).rel;
-    final RelHint hint = RelHint.of(
-        Collections.emptyList(),
-        "RESOURCE",
-        new HashMap<String, String>() {{ put("MEM", "1024MB"); }});
-    HepProgram program = new HepProgramBuilder()
-        .build();
-    HepPlanner planner = new HepPlanner(program);
-    planner.setRoot(rel);
-    RelNode newRel = planner.findBestExp();
-    new ValidateHintVisitor(hint, Sort.class).go(newRel);
-  }
-
-  @Test public void testAggregateHints() {
-    final String sql = "select /*+ AGG_STRATEGY(TWO_PHASE), RESOURCE(mem='1024') */\n"
-        + "count(deptno), avg_sal from (\n"
-        + "select /*+ AGG_STRATEGY(ONE_PHASE) */ avg(sal) as avg_sal, deptno\n"
-        + "from emp group by deptno) group by avg_sal";
-    sql(sql).ok();
-  }
-
   @Test public void testHintsInSubQueryWithDecorrelation() {
-    final String sql = "select /*+ resource(parallelism='3'), AGG_STRATEGY(TWO_PHASE) */\n"
+    final String sql = "select /*+ resource(parallelism='3') */\n"
         + "sum(e1.empno) from emp e1, dept d1\n"
         + "where e1.deptno = d1.deptno\n"
         + "and e1.sal> (\n"
         + "select /*+ resource(cpu='2') */ avg(e2.sal) from emp e2 where e2.deptno = d1.deptno)";
-    sql(sql).withTester(t -> t.withDecorrelation(true)).ok();
-  }
-
-  @Test public void testHintsInSubQueryWithDecorrelation2() {
-    final String sql = "select /*+ properties(k1='v1', k2='v2'), index(ename), no_hash_join */\n"
-        + "sum(e1.empno) from emp e1, dept d1\n"
-        + "where e1.deptno = d1.deptno\n"
-        + "and e1.sal> (\n"
-        + "select /*+ properties(k1='v1', k2='v2'), index(ename), no_hash_join */\n"
-        + "  avg(e2.sal)\n"
-        + "  from emp e2\n"
-        + "  where e2.deptno = d1.deptno)";
-    sql(sql).withTester(t -> t.withDecorrelation(true)).ok();
-  }
-
-  @Test public void testHintsInSubQueryWithDecorrelation3() {
-    final String sql = "select /*+ resource(parallelism='3'), index(ename), no_hash_join */\n"
-        + "sum(e1.empno) from emp e1, dept d1\n"
-        + "where e1.deptno = d1.deptno\n"
-        + "and e1.sal> (\n"
-        + "select /*+ resource(cpu='2'), index(ename), no_hash_join */\n"
-        + "  avg(e2.sal)\n"
-        + "  from emp e2\n"
-        + "  where e2.deptno = d1.deptno)";
     sql(sql).withTester(t -> t.withDecorrelation(true)).ok();
   }
 
@@ -360,9 +308,9 @@ public class SqlHintsConverterTest extends SqlToRelTestBase {
     // Validate Volcano planner.
     RuleSet ruleSet = RuleSets.ofList(
         new MockEnumerableJoinRule(hint), // Rule to validate the hint.
-        FilterProjectTransposeRule.INSTANCE,
+        FilterProjectTransposeRule.LOGICAL_INSTANCE,
         FilterMergeRule.INSTANCE,
-        ProjectMergeRule.INSTANCE,
+        ProjectMergeRule.LOGICAL_INSTANCE,
         EnumerableRules.ENUMERABLE_JOIN_RULE,
         EnumerableRules.ENUMERABLE_PROJECT_RULE,
         EnumerableRules.ENUMERABLE_FILTER_RULE,
@@ -439,10 +387,10 @@ public class SqlHintsConverterTest extends SqlToRelTestBase {
 
     MockEnumerableJoinRule(RelHint hint) {
       super(
-          LogicalJoin.class,
-          Convention.NONE,
-          EnumerableConvention.INSTANCE,
-          "MockEnumerableJoinRule");
+        LogicalJoin.class,
+        Convention.NONE,
+        EnumerableConvention.INSTANCE,
+        "MockEnumerableJoinRule");
       this.expectedHint = hint;
     }
 
@@ -495,9 +443,9 @@ public class SqlHintsConverterTest extends SqlToRelTestBase {
         int ordinal,
         RelNode parent) {
       if (clazz.isInstance(node)) {
-        Hintable rel = (Hintable) node;
-        assertThat(rel.getHints().size(), is(1));
-        assertThat(rel.getHints().get(0), is(expectedHint));
+        Join join = (Join) node;
+        assertThat(join.getHints().size(), is(1));
+        assertThat(join.getHints().get(0), is(expectedHint));
       }
       super.visit(node, ordinal, parent);
     }
@@ -581,13 +529,6 @@ public class SqlHintsConverterTest extends SqlToRelTestBase {
         }
         return super.visit(project);
       }
-
-      @Override public RelNode visit(LogicalAggregate aggregate) {
-        if (aggregate.getHints().size() > 0) {
-          this.hintsCollect.add("Aggregate:" + aggregate.getHints().toString());
-        }
-        return super.visit(aggregate);
-      }
     }
   }
 
@@ -621,13 +562,9 @@ public class SqlHintsConverterTest extends SqlToRelTestBase {
         .addHintStrategy("time_zone", HintStrategies.SET_VAR)
         .addHintStrategy("index", HintStrategies.TABLE_SCAN)
         .addHintStrategy("properties", HintStrategies.TABLE_SCAN)
-        .addHintStrategy(
-            "resource", HintStrategies.or(
-            HintStrategies.PROJECT, HintStrategies.AGGREGATE,
-                HintStrategies.SORT))
-        .addHintStrategy("AGG_STRATEGY", HintStrategies.AGGREGATE)
+        .addHintStrategy("resource", HintStrategies.PROJECT)
         .addHintStrategy("use_hash_join",
-          HintStrategies.and(HintStrategies.JOIN,
+          HintStrategies.cascade(HintStrategies.JOIN,
             HintStrategies.explicit((hint, rel) -> {
               if (!(rel instanceof LogicalJoin)) {
                 return false;
@@ -649,3 +586,5 @@ public class SqlHintsConverterTest extends SqlToRelTestBase {
     }
   }
 }
+
+// End SqlHintsConverterTest.java
