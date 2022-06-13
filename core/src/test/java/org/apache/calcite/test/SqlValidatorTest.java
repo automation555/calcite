@@ -8043,14 +8043,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .columnType("CHAR(3) ARRAY NOT NULL");
   }
 
-  @Test void testArrayQueryConstructor() {
-    sql("select array(select 1)")
-        .columnType("INTEGER NOT NULL ARRAY NOT NULL");
-    sql("select array(select ROW(1,2))")
-        .columnType(
-            "RecordType(INTEGER NOT NULL EXPR$0, INTEGER NOT NULL EXPR$1) NOT NULL ARRAY NOT NULL");
-  }
-
   @Test void testCastAsCollectionType() {
     sql("select cast(array[1,null,2] as int array) from (values (1))")
         .columnType("INTEGER NOT NULL ARRAY NOT NULL");
@@ -8134,14 +8126,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .columnType("INTEGER MULTISET NOT NULL");
   }
 
-  @Test void testMultisetQueryConstructor() {
-    sql("select multiset(select 1)")
-        .columnType("INTEGER NOT NULL MULTISET NOT NULL");
-    sql("select multiset(select ROW(1,2))")
-        .columnType(
-            "RecordType(INTEGER NOT NULL EXPR$0, INTEGER NOT NULL EXPR$1) NOT NULL MULTISET NOT NULL");
-  }
-
   @Test void testUnnestArrayColumn() {
     final String sql1 = "select d.deptno, e.*\n"
         + "from dept_nested as d,\n"
@@ -8191,14 +8175,14 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     sql("select c from unnest(\n"
         + "  array(select deptno from dept)) with ordinality as t(^c^)")
         .fails("List of column aliases must have same degree as table; table has 2 "
-            + "columns \\('EXPR\\$0', 'ORDINALITY'\\), "
+            + "columns \\('DEPTNO', 'ORDINALITY'\\), "
             + "whereas alias list has 1 columns");
     sql("select c from unnest(\n"
         + "  array(select deptno from dept)) with ordinality as t(c, d)").ok();
     sql("select c from unnest(\n"
         + "  array(select deptno from dept)) with ordinality as t(^c, d, e^)")
         .fails("List of column aliases must have same degree as table; table has 2 "
-            + "columns \\('EXPR\\$0', 'ORDINALITY'\\), "
+            + "columns \\('DEPTNO', 'ORDINALITY'\\), "
             + "whereas alias list has 3 columns");
     sql("select c\n"
         + "from unnest(array(select * from dept)) with ordinality as t(^c, d, e, f^)")
@@ -8387,6 +8371,16 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     s.withSql("SELECT ^bool_or(ename)^ from emp")
         .fails("(?s).*Cannot apply 'BOOL_OR' to arguments of type "
             + "'BOOL_OR\\(<VARCHAR\\(20\\)>\\)'.*");
+  }
+
+  @Test void testConvertFunction() {
+    sql("select convert(ename, utf16, utf8) from emp").ok();
+    sql("select convert(cast(deptno as varchar), utf16, utf8) from emp");
+    sql("select convert(null, gbk, utf8) from emp");
+    sql("select ^convert(deptno, utf8, latin1)^ from emp")
+            .fails("Invalid type 'INTEGER NOT NULL' in 'CONVERT' function\\. "
+                    + "Only 'CHARACTER' type is supported");
+    sql("select convert(ename, utf8, utf9) from emp").fails("UTF9");
   }
 
   @Test void testFunctionalDistinct() {

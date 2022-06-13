@@ -208,6 +208,7 @@ public class StandardConvertletTable extends ReflectiveConvertletTable {
     // "AS" has no effect, so expand "x AS id" into "x".
     registerOp(SqlStdOperatorTable.AS,
         (cx, call) -> cx.convertExpression(call.operand(0)));
+    registerOp(SqlStdOperatorTable.CONVERT, this::convertCharset);
     // "SQRT(x)" is equivalent to "POWER(x, .5)"
     registerOp(SqlStdOperatorTable.SQRT,
         (cx, call) -> cx.convertExpression(
@@ -528,10 +529,20 @@ public class StandardConvertletTable extends ReflectiveConvertletTable {
         cx.getRexBuilder().makeInputRef(
             msType,
             rr.getOffset());
-    assert msType.getComponentType() != null
-        : "componentType of " + msType + " must not be null";
+    assert msType.getComponentType() != null && msType.getComponentType().isStruct()
+        : "componentType of " + msType + " must be struct";
     assert originalType.getComponentType() != null
-        : "componentType of " + originalType + " must not be null";
+        : "componentType of " + originalType + " must be struct";
+    if (!originalType.getComponentType().isStruct()) {
+      // If the type is not a struct, the multiset operator will have
+      // wrapped the type as a record. Add a call to the $SLICE operator
+      // to compensate. For example,
+      // if '<ms>' has type 'RECORD (INTEGER x) MULTISET',
+      // then '$SLICE(<ms>) has type 'INTEGER MULTISET'.
+      // This will be removed as the expression is translated.
+      expr =
+          cx.getRexBuilder().makeCall(SqlStdOperatorTable.SLICE, expr);
+    }
     return expr;
   }
 
@@ -658,6 +669,20 @@ public class StandardConvertletTable extends ReflectiveConvertletTable {
 
     // normal floor, ceil function
     return convertFunction(cx, (SqlFunction) call.getOperator(), call);
+  }
+
+  protected RexNode convertCharset(
+          @UnknownInitialization StandardConvertletTable this,
+          SqlRexContext cx,
+          SqlCall call) {
+    final SqlNode expr = call.operand(0);
+    final String src_charset = call.operand(1).toString();
+    final String dest_charset = call.operand(2).toString();
+    RexBuilder rexBuilder = cx.getRexBuilder();
+    RexNode var0 = cx.convertExpression(expr);
+    RexNode var1 = rexBuilder.makeLiteral(src_charset);
+    RexNode var2 = rexBuilder.makeLiteral(dest_charset);
+    return rexBuilder.makeCall(SqlStdOperatorTable.CONVERT, var0, var1, var2);
   }
 
   /**

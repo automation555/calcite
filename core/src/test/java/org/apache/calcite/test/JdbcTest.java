@@ -1152,6 +1152,27 @@ public class JdbcTest {
             CalciteAssert.checkResultContains("EnumerableCorrelate"));
   }
 
+  @Test void testConvertFunc() {
+    CalciteAssert.that()
+        .with(CalciteAssert.Config.FOODMART_CLONE)
+        .query("select convert(cast(\"employee_id\" as varchar), utf8, latin1) as alia\n"
+            + "from \"employee\"\n"
+            + "limit 3")
+        .returns("ALIA=1\n"
+            + "ALIA=2\n"
+            + "ALIA=4\n");
+
+    CalciteAssert.that()
+        .with(CalciteAssert.Config.FOODMART_CLONE)
+        .query("select \"employee_id\"\n"
+            + "from \"employee\"\n"
+            + "where convert(cast(\"employee_id\" as varchar), utf8, latin1) <> 1"
+            + "limit 3")
+        .returns("employee_id=2\n"
+            + "employee_id=4\n"
+            + "employee_id=5\n");
+  }
+
   /** Just short of bushy. */
   @Test void testAlmostBushy() {
     CalciteAssert.that()
@@ -2115,7 +2136,7 @@ public class JdbcTest {
         .query("select multiset(\n"
             + "  select \"deptno\" from \"hr\".\"emps\") as a\n"
             + "from (values (1))")
-        .returnsUnordered("A=[10, 20, 10, 10]");
+        .returnsUnordered("A=[{10}, {20}, {10}, {10}]");
   }
 
   @Test void testUnnestArray() {
@@ -5430,28 +5451,6 @@ public class JdbcTest {
         });
   }
 
-  /**
-   * Test case for <a href="https://issues.apache.org/jira/browse/CALCITE-5048">[CALCITE-5048]
-   * Query with parameterized LIMIT and correlated sub-query throws AssertionError "not a
-   * literal"</a>.
-   */
-  @Test void testDynamicParameterInLimitOffset() {
-    CalciteAssert.hr()
-        .query("SELECT * FROM \"hr\".\"emps\" AS a "
-            + "WHERE \"deptno\" = "
-            + "(SELECT MAX(\"deptno\") "
-            + "FROM \"hr\".\"emps\" AS b "
-            + "WHERE a.\"empid\" = b.\"empid\""
-            + ") ORDER BY \"salary\" LIMIT ? OFFSET ?")
-        .explainContains("EnumerableLimit(offset=[?1], fetch=[?0])")
-        .consumesPreparedStatement(p -> {
-          p.setInt(1, 2);
-          p.setInt(2, 1);
-        })
-        .returns("empid=200; deptno=20; name=Eric; salary=8000.0; commission=500\n"
-            + "empid=100; deptno=10; name=Bill; salary=10000.0; commission=1000\n");
-  }
-
   /** Tests a JDBC connection that provides a model (a single schema based on
    * a JDBC database). */
   @Test void testModel() {
@@ -6635,13 +6634,6 @@ public class JdbcTest {
         "select * from \"employee\" where \"full_name\" = _UTF16'\u82f1\u56fd'")
         .throws_(
             "Cannot apply = to the two different charsets ISO-8859-1 and UTF-16LE");
-
-    // The CONVERT function (what SQL:2011 calls "character transliteration") is
-    // not implemented yet. See
-    // https://issues.apache.org/jira/browse/CALCITE-111.
-    with.query("select * from \"employee\"\n"
-        + "where convert(\"full_name\" using UTF16) = _UTF16'\u82f1\u56fd'")
-        .throws_("Column 'UTF16' not found in any table");
   }
 
   /** Tests metadata for the MySQL lexical scheme. */

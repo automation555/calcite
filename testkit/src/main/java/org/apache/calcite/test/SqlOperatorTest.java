@@ -3430,6 +3430,20 @@ public class SqlOperatorTest {
   @Test void testConvertFunc() {
     final SqlOperatorFixture f = fixture();
     f.setFor(SqlStdOperatorTable.CONVERT, VM_FENNEL, VM_JAVA);
+    f.checkFails("convert('a', utf8, utf10)", "UTF10", false);
+    f.checkFails("select ^convert(col, latin1, utf8)^\n"
+                    + "from (select 1 as col\n"
+                    + " from (values(true)))",
+            "Invalid type 'INTEGER NOT NULL' in 'CONVERT' function\\. Only 'CHARACTER' type is supported",
+            false);
+    f.check("select convert(col, latin1, utf8)\n"
+                    + "from (select 'a' as col\n"
+                    + " from (values(true)))",
+            SqlTests.ANY_TYPE_CHECKER, 'a');
+
+    f.checkType("convert('a', utf16, gbk)", "CHAR(1) NOT NULL");
+    f.checkType("convert(null, utf16, gbk)", "NULL");
+    f.checkType("convert(cast(1 as varchar(2)), utf8, latin1)", "VARCHAR(2) NOT NULL");
   }
 
   @Test void testTranslateFunc() {
@@ -4394,7 +4408,7 @@ public class SqlOperatorTest {
     f.checkString("json_object('foo': 100)",
         "{\"foo\":100}", "VARCHAR(2000) NOT NULL");
     f.checkString("json_object('foo': json_object('foo': 'bar'))",
-        "{\"foo\":{\"foo\":\"bar\"}}", "VARCHAR(2000) NOT NULL");
+        "{\"foo\":\"{\\\"foo\\\":\\\"bar\\\"}\"}", "VARCHAR(2000) NOT NULL");
     f.checkString("json_object('foo': json_object('foo': 'bar') format json)",
         "{\"foo\":{\"foo\":\"bar\"}}", "VARCHAR(2000) NOT NULL");
   }
@@ -4425,7 +4439,7 @@ public class SqlOperatorTest {
   @Test void testJsonValueExpressionOperator() {
     final SqlOperatorFixture f = fixture();
     f.checkScalar("'{}' format json", "{}", "ANY NOT NULL");
-    f.checkScalar("'[1, 2, 3]' format json", "[1,2,3]", "ANY NOT NULL");
+    f.checkScalar("'[1, 2, 3]' format json", "[1, 2, 3]", "ANY NOT NULL");
     f.checkNull("cast(null as varchar) format json");
     f.checkScalar("'null' format json", "null", "ANY NOT NULL");
     f.enableTypeCoercion(false)
@@ -4449,7 +4463,7 @@ public class SqlOperatorTest {
     f.checkString("json_array(100)",
         "[100]", "VARCHAR(2000) NOT NULL");
     f.checkString("json_array(json_array('foo'))",
-        "[[\"foo\"]]", "VARCHAR(2000) NOT NULL");
+        "[\"[\\\"foo\\\"]\"]", "VARCHAR(2000) NOT NULL");
     f.checkString("json_array(json_array('foo') format json)",
         "[[\"foo\"]]", "VARCHAR(2000) NOT NULL");
   }
@@ -4875,8 +4889,6 @@ public class SqlOperatorTest {
             + "array[cast(null as char)])",
         "[hello, world, !, null]", "CHAR(5) ARRAY NOT NULL");
     f.checkNull("array_concat(cast(null as integer array), array[1])");
-    f.checkScalar("array_concat(array(select 1), array[2, 3])", "[1, 2, 3]",
-        "INTEGER NOT NULL ARRAY NOT NULL");
   }
 
   /** Tests {@code ARRAY_REVERSE} function from BigQuery. */
@@ -7106,25 +7118,6 @@ public class SqlOperatorTest {
     // empty array is illegal per SQL spec. presumably because one can't
     // infer type
     f.checkFails("^Array[]^", "Require at least 1 argument", false);
-  }
-
-  @Test void testArrayQueryConstructor() {
-    final SqlOperatorFixture f = fixture();
-    f.setFor(SqlStdOperatorTable.ARRAY_QUERY, SqlOperatorFixture.VmName.EXPAND);
-    f.checkScalar("array(select 1)", "[1]",
-        "INTEGER NOT NULL ARRAY NOT NULL");
-    f.check("select array(select ROW(1,2))",
-        "RecordType(INTEGER NOT NULL EXPR$0, INTEGER NOT NULL EXPR$1) NOT NULL ARRAY NOT NULL",
-        "[{1, 2}]");
-  }
-
-  @Test void testMultisetQueryConstructor() {
-    final SqlOperatorFixture f = fixture();
-    f.setFor(SqlStdOperatorTable.MULTISET_QUERY, SqlOperatorFixture.VmName.EXPAND);
-    f.checkScalar("multiset(select 1)", "[1]", "INTEGER NOT NULL MULTISET NOT NULL");
-    f.check("select multiset(select ROW(1,2))",
-        "RecordType(INTEGER NOT NULL EXPR$0, INTEGER NOT NULL EXPR$1) NOT NULL MULTISET NOT NULL",
-        "[{1, 2}]");
   }
 
   @Test void testItemOp() {

@@ -42,16 +42,13 @@ public interface CalciteResource {
   @BaseMessage("''LIMIT start, count'' is not allowed under the current SQL conformance level")
   ExInst<CalciteException> limitStartCountNotAllowed();
 
-  @BaseMessage("''OFFSET start LIMIT count'' is not allowed under the current SQL conformance level")
-  ExInst<CalciteException> offsetLimitNotAllowed();
-
   @BaseMessage("APPLY operator is not allowed under the current SQL conformance level")
   ExInst<CalciteException> applyNotAllowed();
 
   @BaseMessage("JSON path expression must be specified after the JSON value expression")
   ExInst<CalciteException> jsonPathMustBeSpecified();
 
-  @BaseMessage("Illegal {0} literal ''{1}'': {2}")
+  @BaseMessage("Illegal {0} literal {1}: {2}")
   ExInst<CalciteException> illegalLiteral(String a0, String a1, String a2);
 
   @BaseMessage("Length of identifier ''{0}'' must be less than or equal to {1,number,#} characters")
@@ -81,12 +78,6 @@ public interface CalciteResource {
 
   @BaseMessage("Query expression encountered in illegal context")
   ExInst<CalciteException> illegalQueryExpression();
-
-  @BaseMessage("Join expression encountered in illegal context")
-  ExInst<CalciteException> illegalJoinExpression();
-
-  @BaseMessage("Expected query or join")
-  ExInst<CalciteException> expectedQueryOrJoinExpression();
 
   @BaseMessage("CURSOR expression encountered in illegal context")
   ExInst<CalciteException> illegalCursorExpression();
@@ -319,7 +310,7 @@ public interface CalciteResource {
   @BaseMessage("Cannot specify NATURAL keyword with ON or USING clause")
   ExInst<SqlValidatorException> naturalDisallowsOnOrUsing();
 
-  @BaseMessage("Column name ''{0}'' in NATURAL join or USING clause is not unique on one side of join")
+  @BaseMessage("Column name ''{0}'' in USING clause is not unique on one side of join")
   ExInst<SqlValidatorException> columnInUsingNotUnique(String a0);
 
   @BaseMessage("Column ''{0}'' matched using NATURAL keyword or USING clause has incompatible types: cannot compare ''{1}'' to ''{2}''")
@@ -483,6 +474,9 @@ public interface CalciteResource {
 
   @BaseMessage("Invalid type ''{0}'' in ORDER BY clause of ''{1}'' function. Only NUMERIC types are supported")
   ExInst<SqlValidatorException> unsupportedTypeInOrderBy(String a0, String a1);
+
+  @BaseMessage("Invalid type ''{0}'' in ''{1}'' function. Only ''{2}'' type is supported")
+  ExInst<SqlValidatorException> unsupportedTypeInConvertFunc(String a0, String a1, String a2);
 
   @BaseMessage("''{0}'' requires precisely one ORDER BY key")
   ExInst<SqlValidatorException> orderByRequiresOneKey(String a0);
