@@ -69,3 +69,5 @@ public interface SqlSingleOperandTypeChecker extends SqlOperandTypeChecker {
       int iFormalOperand,
       boolean throwOnFailure);
 }
+
+// End SqlSingleOperandTypeChecker.java

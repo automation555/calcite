@@ -18,8 +18,6 @@ package org.apache.calcite.runtime;
 
 import org.apache.calcite.sql.validate.SqlValidatorException;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import static org.apache.calcite.runtime.Resources.BaseMessage;
 import static org.apache.calcite.runtime.Resources.ExInst;
 import static org.apache.calcite.runtime.Resources.ExInstWithCause;
@@ -42,16 +40,13 @@ public interface CalciteResource {
   @BaseMessage("''LIMIT start, count'' is not allowed under the current SQL conformance level")
   ExInst<CalciteException> limitStartCountNotAllowed();
 
-  @BaseMessage("''OFFSET start LIMIT count'' is not allowed under the current SQL conformance level")
-  ExInst<CalciteException> offsetLimitNotAllowed();
-
   @BaseMessage("APPLY operator is not allowed under the current SQL conformance level")
   ExInst<CalciteException> applyNotAllowed();
 
   @BaseMessage("JSON path expression must be specified after the JSON value expression")
   ExInst<CalciteException> jsonPathMustBeSpecified();
 
-  @BaseMessage("Illegal {0} literal ''{1}'': {2}")
+  @BaseMessage("Illegal {0} literal {1}: {2}")
   ExInst<CalciteException> illegalLiteral(String a0, String a1, String a2);
 
   @BaseMessage("Length of identifier ''{0}'' must be less than or equal to {1,number,#} characters")
@@ -81,12 +76,6 @@ public interface CalciteResource {
 
   @BaseMessage("Query expression encountered in illegal context")
   ExInst<CalciteException> illegalQueryExpression();
-
-  @BaseMessage("Join expression encountered in illegal context")
-  ExInst<CalciteException> illegalJoinExpression();
-
-  @BaseMessage("Expected query or join")
-  ExInst<CalciteException> expectedQueryOrJoinExpression();
 
   @BaseMessage("CURSOR expression encountered in illegal context")
   ExInst<CalciteException> illegalCursorExpression();
@@ -231,10 +220,6 @@ public interface CalciteResource {
   @BaseMessage("Column ''{0}'' is ambiguous")
   ExInst<SqlValidatorException> columnAmbiguous(String a0);
 
-  @BaseMessage("Param ''{0}'' not found in function ''{1}''; did you mean ''{2}''?")
-  ExInst<SqlValidatorException> paramNotFoundInFunctionDidYouMean(String a0,
-      String a1, String a2);
-
   @BaseMessage("Operand {0} must be a query")
   ExInst<SqlValidatorException> needQueryOp(String a0);
 
@@ -298,9 +283,6 @@ public interface CalciteResource {
   @BaseMessage("Table or column alias must be a simple identifier")
   ExInst<SqlValidatorException> aliasMustBeSimpleIdentifier();
 
-  @BaseMessage("Expecting alias, found character literal")
-  ExInst<SqlValidatorException> charLiteralAliasNotValid();
-
   @BaseMessage("List of column aliases must have same degree as table; table has {0,number,#} columns {1}, whereas alias list has {2,number,#} columns")
   ExInst<SqlValidatorException> aliasListDegree(int a0, String a1, int a2);
 
@@ -310,16 +292,13 @@ public interface CalciteResource {
   @BaseMessage("INNER, LEFT, RIGHT or FULL join requires a condition (NATURAL keyword or ON or USING clause)")
   ExInst<SqlValidatorException> joinRequiresCondition();
 
-  @BaseMessage("Cannot qualify common column ''{0}''")
-  ExInst<SqlValidatorException> disallowsQualifyingCommonColumn(String a0);
-
   @BaseMessage("Cannot specify condition (NATURAL keyword, or ON or USING clause) following CROSS JOIN")
   ExInst<SqlValidatorException> crossJoinDisallowsCondition();
 
   @BaseMessage("Cannot specify NATURAL keyword with ON or USING clause")
   ExInst<SqlValidatorException> naturalDisallowsOnOrUsing();
 
-  @BaseMessage("Column name ''{0}'' in NATURAL join or USING clause is not unique on one side of join")
+  @BaseMessage("Column name ''{0}'' in USING clause is not unique on one side of join")
   ExInst<SqlValidatorException> columnInUsingNotUnique(String a0);
 
   @BaseMessage("Column ''{0}'' matched using NATURAL keyword or USING clause has incompatible types: cannot compare ''{1}'' to ''{2}''")
@@ -365,13 +344,10 @@ public interface CalciteResource {
   @BaseMessage("WITHIN GROUP must not contain aggregate expression")
   ExInst<SqlValidatorException> aggregateInWithinGroupIllegal();
 
-  @BaseMessage("WITHIN DISTINCT must not contain aggregate expression")
-  ExInst<SqlValidatorException> aggregateInWithinDistinctIllegal();
-
-  @BaseMessage("Aggregate expression ''{0}'' must contain a WITHIN GROUP clause")
+  @BaseMessage("Aggregate expression ''{0}'' must contain a within group clause")
   ExInst<SqlValidatorException> aggregateMissingWithinGroupClause(String a0);
 
-  @BaseMessage("Aggregate expression ''{0}'' must not contain a WITHIN GROUP clause")
+  @BaseMessage("Aggregate expression ''{0}'' must not contain a within group clause")
   ExInst<SqlValidatorException> withinGroupClauseIllegalInAggregate(String a0);
 
   @BaseMessage("Aggregate expression is illegal in ORDER BY clause of non-aggregating SELECT")
@@ -481,20 +457,11 @@ public interface CalciteResource {
   @BaseMessage("Type ''{0}'' is not supported")
   ExInst<SqlValidatorException> typeNotSupported(String a0);
 
-  @BaseMessage("Invalid type ''{0}'' in ORDER BY clause of ''{1}'' function. Only NUMERIC types are supported")
-  ExInst<SqlValidatorException> unsupportedTypeInOrderBy(String a0, String a1);
-
-  @BaseMessage("''{0}'' requires precisely one ORDER BY key")
-  ExInst<SqlValidatorException> orderByRequiresOneKey(String a0);
-
   @BaseMessage("DISTINCT/ALL not allowed with {0} function")
   ExInst<SqlValidatorException> functionQuantifierNotAllowed(String a0);
 
   @BaseMessage("WITHIN GROUP not allowed with {0} function")
   ExInst<SqlValidatorException> withinGroupNotAllowed(String a0);
-
-  @BaseMessage("WITHIN DISTINCT not allowed with {0} function")
-  ExInst<SqlValidatorException> withinDistinctNotAllowed(String a0);
 
   @BaseMessage("Some but not all arguments are named")
   ExInst<SqlValidatorException> someButNotAllArgumentsAreNamed();
@@ -538,7 +505,7 @@ public interface CalciteResource {
       int a0, String a1);
 
   @BaseMessage("Duplicate relation name ''{0}'' in FROM clause")
-  ExInst<SqlValidatorException> fromAliasDuplicate(@Nullable String a0);
+  ExInst<SqlValidatorException> fromAliasDuplicate(String a0);
 
   @BaseMessage("Duplicate column name ''{0}'' in output")
   ExInst<SqlValidatorException> duplicateColumnName(String a0);
@@ -554,9 +521,6 @@ public interface CalciteResource {
 
   @BaseMessage("Argument to function ''{0}'' must be a positive integer literal")
   ExInst<SqlValidatorException> argumentMustBePositiveInteger(String a0);
-
-  @BaseMessage("Argument to function ''{0}'' must be a numeric literal between {1,number,#} and {2,number,#}")
-  ExInst<SqlValidatorException> argumentMustBeNumericLiteralInRange(String a0, int min, int max);
 
   @BaseMessage("Validation Error: {0}")
   ExInst<CalciteException> validationError(String a0);
@@ -584,9 +548,6 @@ public interface CalciteResource {
   ExInst<CalciteException> illegalArgumentForTableFunctionCall(String a0,
       String a1, String a2);
 
-  @BaseMessage("Cannot call table function here: ''{0}''")
-  ExInst<CalciteException> cannotCallTableFunctionHere(String a0);
-
   @BaseMessage("''{0}'' is not a valid datetime format")
   ExInst<CalciteException> invalidDatetimeFormat(String a0);
 
@@ -598,9 +559,6 @@ public interface CalciteResource {
 
   @BaseMessage("Statement preparation aborted")
   ExInst<CalciteException> preparationAborted();
-
-  @BaseMessage("Warning: use of non-standard feature ''{0}''")
-  ExInst<CalciteException> nonStandardFeatureUsed(String feature);
 
   @BaseMessage("SELECT DISTINCT not supported")
   @Property(name = "FeatureDefinition", value = "SQL:2003 Part 2 Annex F")
@@ -749,24 +707,6 @@ public interface CalciteResource {
   @BaseMessage("Call to auxiliary group function ''{0}'' must have matching call to group function ''{1}'' in GROUP BY clause")
   ExInst<SqlValidatorException> auxiliaryWithoutMatchingGroupCall(String func1, String func2);
 
-  @BaseMessage("Measure expression in PIVOT must use aggregate function")
-  ExInst<SqlValidatorException> pivotAggMalformed();
-
-  @BaseMessage("Value count in PIVOT ({0,number,#}) must match number of FOR columns ({1,number,#})")
-  ExInst<SqlValidatorException> pivotValueArityMismatch(int valueCount, int forCount);
-
-  @BaseMessage("Duplicate column name ''{0}'' in UNPIVOT")
-  ExInst<SqlValidatorException> unpivotDuplicate(String columnName);
-
-  @BaseMessage("Value count in UNPIVOT ({0,number,#}) must match number of FOR columns ({1,number,#})")
-  ExInst<SqlValidatorException> unpivotValueArityMismatch(int valueCount, int forCount);
-
-  @BaseMessage("In UNPIVOT, cannot derive type for measure ''{0}'' because source columns have different data types")
-  ExInst<SqlValidatorException> unpivotCannotDeriveMeasureType(String measureName);
-
-  @BaseMessage("In UNPIVOT, cannot derive type for axis ''{0}''")
-  ExInst<SqlValidatorException> unpivotCannotDeriveAxisType(String axisName);
-
   @BaseMessage("Pattern variable ''{0}'' has already been defined")
   ExInst<SqlValidatorException> patternVarAlreadyDefined(String varName);
 
@@ -848,9 +788,6 @@ public interface CalciteResource {
   @BaseMessage("Type ''{0}'' not found")
   ExInst<SqlValidatorException> typeNotFound(String name);
 
-  @BaseMessage("Function ''{0}'' not found")
-  ExInst<SqlValidatorException> functionNotFound(String name);
-
   @BaseMessage("Dialect does not support feature: ''{0}''")
   ExInst<SqlValidatorException> dialectDoesNotSupportFeature(String featureName);
 
@@ -877,9 +814,8 @@ public interface CalciteResource {
   @BaseMessage("More than one value in list: {0}")
   ExInst<CalciteException> moreThanOneValueInList(String list);
 
-  @BaseMessage("Failed to access field ''{0}'', index {1,number,#} of object of type {2}")
-  ExInstWithCause<CalciteException> failedToAccessField(
-      @Nullable String fieldName, int fieldIndex, String typeName);
+  @BaseMessage("Failed to access field ''{0}'' of object of type {1}")
+  ExInstWithCause<CalciteException> failedToAccessField(String fieldName, String typeName);
 
   @BaseMessage("Illegal jsonpath spec ''{0}'', format of the spec should be: ''<lax|strict> $'{'expr'}'''")
   ExInst<CalciteException> illegalJsonPathSpec(String pathSpec);
@@ -950,7 +886,7 @@ public interface CalciteResource {
   @BaseMessage("Not a valid input for JSON_KEYS: ''{0}''")
   ExInst<CalciteException> invalidInputForJsonKeys(String value);
 
-  @BaseMessage("Invalid input for JSON_REMOVE: document: ''{0}'', jsonpath expressions: ''{1}''")
+  @BaseMessage("Not a valid input for JSON_REMOVE: document: ''{0}'', jsonpath expressions: ''{1}''")
   ExInst<CalciteException> invalidInputForJsonRemove(String value, String pathSpecs);
 
   @BaseMessage("Not a valid input for JSON_STORAGE_SIZE: ''{0}''")
@@ -959,25 +895,8 @@ public interface CalciteResource {
   @BaseMessage("Not a valid input for REGEXP_REPLACE: ''{0}''")
   ExInst<CalciteException> invalidInputForRegexpReplace(String value);
 
-  @BaseMessage("Illegal xslt specified : ''{0}''")
-  ExInst<CalciteException> illegalXslt(String xslt);
-
-  @BaseMessage("Invalid input for XMLTRANSFORM xml: ''{0}''")
-  ExInst<CalciteException> invalidInputForXmlTransform(String xml);
-
-  @BaseMessage("Invalid input for EXTRACT xpath: ''{0}'', namespace: ''{1}''")
-  ExInst<CalciteException> invalidInputForExtractXml(String xpath, @Nullable String namespace);
-
-  @BaseMessage("Invalid input for EXISTSNODE xpath: ''{0}'', namespace: ''{1}''")
-  ExInst<CalciteException> invalidInputForExistsNode(String xpath, @Nullable String namespace);
-
-  @BaseMessage("Invalid input for EXTRACTVALUE: xml: ''{0}'', xpath expression: ''{1}''")
-  ExInst<CalciteException> invalidInputForExtractValue(String xml, String xpath);
-
-  @BaseMessage("Different length for bitwise operands: the first: {0,number,#}, the second: {1,number,#}")
-  ExInst<CalciteException> differentLengthForBitwiseOperands(int l0, int l1);
-
-  @BaseMessage("No operator for ''{0}'' with kind: ''{1}'', syntax: ''{2}'' during JSON deserialization")
-  ExInst<CalciteException> noOperator(String name, String kind, String syntax);
-
+  @BaseMessage("Not a valid input for JSON_EXTRACT: document: ''{0}'', jsonpath expressions: ''{1}''")
+  ExInst<CalciteException> invalidInputForJsonExtract(String jsonDoc, String pathSpecs);
 }
+
+// End CalciteResource.java

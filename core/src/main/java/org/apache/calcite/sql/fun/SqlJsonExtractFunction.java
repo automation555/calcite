@@ -16,6 +16,7 @@
  */
 package org.apache.calcite.sql.fun;
 
+import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlCallBinding;
 import org.apache.calcite.sql.SqlFunction;
 import org.apache.calcite.sql.SqlFunctionCategory;
@@ -24,18 +25,20 @@ import org.apache.calcite.sql.SqlOperandCountRange;
 import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlOperandCountRanges;
+import org.apache.calcite.sql.type.SqlOperandTypeChecker;
 import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeTransforms;
+import org.apache.calcite.sql.validate.SqlValidator;
 
 import java.util.Locale;
 
 /**
- * The <code>JSON_REMOVE</code> function.
+ * The <code>JSON_EXTRACT</code> function.
  */
-public class SqlJsonRemoveFunction extends SqlFunction {
+public class SqlJsonExtractFunction extends SqlFunction {
 
-  public SqlJsonRemoveFunction() {
-    super("JSON_REMOVE",
+  public SqlJsonExtractFunction() {
+    super("JSON_EXTRACT",
         SqlKind.OTHER_FUNCTION,
         ReturnTypes.cascade(ReturnTypes.VARCHAR_2000,
             SqlTypeTransforms.FORCE_NULLABLE),
@@ -48,19 +51,24 @@ public class SqlJsonRemoveFunction extends SqlFunction {
     return SqlOperandCountRanges.from(2);
   }
 
+  @Override protected void checkOperandCount(SqlValidator validator,
+      SqlOperandTypeChecker argType, SqlCall call) {
+    assert call.operandCount() >= 2;
+  }
+
   @Override public boolean checkOperandTypes(SqlCallBinding callBinding, boolean throwOnFailure) {
     final int operandCount = callBinding.getOperandCount();
-    assert operandCount >= 2;
     if (!OperandTypes.ANY.checkSingleOperandType(
         callBinding, callBinding.operand(0), 0, throwOnFailure)) {
       return false;
     }
-    final SqlTypeFamily[] families = new SqlTypeFamily[operandCount];
-    families[0] = SqlTypeFamily.ANY;
     for (int i = 1; i < operandCount; i++) {
-      families[i] = SqlTypeFamily.CHARACTER;
+      if (!OperandTypes.CHARACTER.checkSingleOperandType(
+          callBinding, callBinding.operand(i), 0, throwOnFailure)) {
+        return false;
+      }
     }
-    return OperandTypes.family(families).checkOperandTypes(callBinding, throwOnFailure);
+    return true;
   }
 
   @Override public String getAllowedSignatures(String opNameToUse) {
@@ -69,4 +77,4 @@ public class SqlJsonRemoveFunction extends SqlFunction {
   }
 }
 
-// End SqlJsonRemoveFunction.java
+// End SqlJsonExtractFunction.java
