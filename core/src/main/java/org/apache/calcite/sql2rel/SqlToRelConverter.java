@@ -2696,6 +2696,16 @@ public class SqlToRelConverter {
             validator().getValidatedNodeType(call),
             columnMappings);
 
+    final SqlValidatorScope selectScope =
+        ((DelegatingScope) bb.scope()).getParent();
+    final Blackboard seekBb = createBlackboard(selectScope, null, false);
+
+    final CorrelationUse p = getCorrelationUse(seekBb, callRel);
+    if (p != null) {
+      assert p.r instanceof LogicalTableFunctionScan;
+      callRel = (LogicalTableFunctionScan) p.r;
+    }
+
     bb.setRoot(callRel, true);
     afterTableFunction(bb, call, callRel);
   }
@@ -3039,9 +3049,7 @@ public class SqlToRelConverter {
         rightRel,
         condition,
         convertJoinType(join.getJoinType()));
-    relBuilder.push(joinRel);
-    final RelNode newProjectRel = relBuilder.project(relBuilder.fields()).build();
-    bb.setRoot(newProjectRel, false);
+    bb.setRoot(joinRel, false);
   }
 
   private RexNode convertNaturalCondition(
@@ -3105,13 +3113,6 @@ public class SqlToRelConverter {
         : bb.reRegister(rightRel);
     bb.setRoot(ImmutableList.of(leftRel, newRightRel));
     RexNode conditionExp =  bb.convertExpression(condition);
-    if (conditionExp instanceof RexInputRef && newRightRel != rightRel) {
-      int leftFieldCount = leftRel.getRowType().getFieldCount();
-      List<RelDataTypeField> rightFieldList = newRightRel.getRowType().getFieldList();
-      int rightFieldCount = newRightRel.getRowType().getFieldCount();
-      conditionExp = rexBuilder.makeInputRef(rightFieldList.get(rightFieldCount - 1).getType(),
-          leftFieldCount + rightFieldCount - 1);
-    }
     return Pair.of(conditionExp, newRightRel);
   }
 
@@ -4390,18 +4391,7 @@ public class SqlToRelConverter {
 
     relBuilder.push(bb.root())
         .projectNamed(exprs, fieldNames, true);
-
-    RelNode project = relBuilder.build();
-
-    final RelNode r;
-    final CorrelationUse p = getCorrelationUse(bb, project);
-    if (p != null) {
-      r = p.r;
-    } else {
-      r = project;
-    }
-
-    bb.setRoot(r, false);
+    bb.setRoot(relBuilder.build(), false);
 
     assert bb.columnMonotonicities.isEmpty();
     bb.columnMonotonicities.addAll(columnMonotonicityList);
@@ -4773,17 +4763,7 @@ public class SqlToRelConverter {
       List<RegisterArgs> registerCopy = registered;
       registered = new ArrayList<>();
       for (RegisterArgs reg: registerCopy) {
-        RelNode relNode = reg.rel;
-        relBuilder.push(relNode);
-        final RelMetadataQuery mq = relBuilder.getCluster().getMetadataQuery();
-        final Boolean unique = mq.areColumnsUnique(relBuilder.peek(),
-            ImmutableBitSet.of());
-        if (unique == null || !unique) {
-          relBuilder.aggregate(relBuilder.groupKey(),
-              relBuilder.aggregateCall(SqlStdOperatorTable.SINGLE_VALUE,
-                  relBuilder.field(0)));
-        }
-        register(relBuilder.build(), reg.joinType, reg.leftKeys);
+        register(reg.rel, reg.joinType, reg.leftKeys);
       }
       return requireNonNull(this.root, "root");
     }
@@ -4903,7 +4883,14 @@ public class SqlToRelConverter {
           int i = 0;
           int offset = 0;
           for (SqlValidatorNamespace c : ancestorScope1.getChildren()) {
-            builder.addAll(c.getRowType().getFieldList());
+            final boolean isNullable = ancestorScope1.children.get(i).isNullable();
+            if (isNullable) {
+              for (final RelDataTypeField f : c.getRowType().getFieldList()) {
+                builder.add(f.getName(), typeFactory.createTypeWithNullability(f.getType(), true));
+              }
+            } else {
+              builder.addAll(c.getRowType().getFieldList());
+            }
             if (i == resolve.path.steps().get(0).i) {
               for (RelDataTypeField field : c.getRowType().getFieldList()) {
                 fields.put(field.getName(), field.getIndex() + offset);
