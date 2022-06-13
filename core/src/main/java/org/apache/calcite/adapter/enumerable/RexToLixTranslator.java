@@ -66,7 +66,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 import static org.apache.calcite.sql.fun.OracleSqlOperatorTable.TRANSLATE3;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.CHARACTER_LENGTH;
@@ -536,17 +535,17 @@ public class RexToLixTranslator {
       }
       break;
     case TIMESTAMP:
-      int targetScale = targetType.getScale();
-      if (targetScale == RelDataType.SCALE_NOT_SPECIFIED) {
-        targetScale = 0;
+      int targetTimestampPrecision = targetType.getPrecision();
+      if (targetTimestampPrecision == RelDataType.PRECISION_NOT_SPECIFIED) {
+        targetTimestampPrecision = 0;
       }
-      if (targetScale < sourceType.getScale()) {
+      if (targetTimestampPrecision < sourceType.getPrecision()) {
         convert =
             Expressions.call(
                 BuiltInMethod.ROUND_LONG.method,
                 convert,
                 Expressions.constant(
-                    (long) Math.pow(10, 3 - targetScale)));
+                    (long) Math.pow(10, 3 - targetTimestampPrecision)));
       }
       break;
     case INTERVAL_YEAR:
@@ -714,12 +713,8 @@ public class RexToLixTranslator {
   /** Translates a call to an operator or function. */
   private Expression translateCall(RexCall call, RexImpTable.NullAs nullAs) {
     final SqlOperator operator = call.getOperator();
-    List<RelDataType> argTypes
-        = call.getOperands().stream()
-        .map(RexNode::getType)
-        .collect(Collectors.toList());
     CallImplementor implementor =
-        RexImpTable.INSTANCE.get(operator, argTypes, typeFactory);
+        RexImpTable.INSTANCE.get(operator);
     if (implementor == null) {
       throw new RuntimeException("cannot translate call " + call);
     }
@@ -1022,6 +1017,18 @@ public class RexToLixTranslator {
     } else if (fromType == java.sql.Date.class) {
       if (toBox == Primitive.INT) {
         return Expressions.call(BuiltInMethod.DATE_TO_INT.method, operand);
+      } else {
+        return Expressions.convert_(operand, toType);
+      }
+    } else if (fromType == java.sql.Time.class) {
+      if (toBox == Primitive.INT) {
+        return Expressions.call(BuiltInMethod.TIME_TO_INT.method, operand);
+      } else {
+        return Expressions.convert_(operand, toType);
+      }
+    } else if (fromType == java.sql.Timestamp.class) {
+      if (toBox == Primitive.LONG) {
+        return Expressions.call(BuiltInMethod.TIMESTAMP_TO_LONG.method, operand);
       } else {
         return Expressions.convert_(operand, toType);
       }
