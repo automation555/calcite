@@ -19,8 +19,6 @@ package org.apache.calcite.rel.rel2sql;
 import org.apache.calcite.linq4j.Ord;
 import org.apache.calcite.linq4j.tree.Expressions;
 import org.apache.calcite.plan.RelOptUtil;
-import org.apache.calcite.plan.hep.HepPlanner;
-import org.apache.calcite.plan.hep.HepProgramBuilder;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
@@ -31,7 +29,6 @@ import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.Window;
-import org.apache.calcite.rel.rules.AggregateProjectConstantToDummyJoinRule;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
@@ -86,6 +83,7 @@ import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
 import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.sql.validate.SqlConformance;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.util.DateString;
 import org.apache.calcite.util.Pair;
@@ -164,20 +162,8 @@ public abstract class SqlImplementor {
 
   /** Visits a relational expression that has no parent. */
   public final Result visitRoot(RelNode r) {
-    RelNode best;
-    if (!this.dialect.supportsGroupByLiteral()) {
-      HepProgramBuilder hepProgramBuilder = new HepProgramBuilder();
-      hepProgramBuilder.addRuleInstance(
-          AggregateProjectConstantToDummyJoinRule.Config.DEFAULT.toRule());
-      HepPlanner hepPlanner = new HepPlanner(hepProgramBuilder.build());
-
-      hepPlanner.setRoot(r);
-      best = hepPlanner.findBestExp();
-    } else {
-      best = r;
-    }
     try {
-      return visitInput(holder(best), 0);
+      return visitInput(holder(r), 0);
     } catch (Error | RuntimeException e) {
       throw Util.throwAsRuntime("Error while converting RelNode to SqlNode:\n"
           + RelOptUtil.toString(r), e);
@@ -601,22 +587,27 @@ public abstract class SqlImplementor {
 
     /** Creates a reference to a field to be used in an ORDER BY clause.
      *
-     * <p>By default, it returns the same result as {@link #field}.
+     * <p>The return result depends on the target dialect's conformance
+     * and the following solving order.
+     * <ul>
+     *   <li>If the conformance supports {@link SqlConformance#isSortByOrdinal()},
+     *    then ORDER BY ordinal.
+     *   <li>Else if the conformance supports {@link SqlConformance#isSortByAlias()},
+     *    then ORDER BY alias.
+     *   <li>Else ORDER BY SELECT field.
+     * </ul>
      *
-     * <p>If the field has an alias, uses the alias.
-     * If the field is an unqualified column reference which is the same an
-     * alias, switches to a qualified column reference.
+     * <p>For example, given
+     * <pre>SELECT deptno AS empno, empno AS x FROM emp ORDER BY emp.empno</pre>
+     * we generate the following statements according to the above solving order.
+     * <pre>SELECT deptno AS empno, empno AS x FROM emp ORDER BY 2</pre>
+     * <pre>SELECT deptno AS empno, empno AS x FROM emp ORDER BY x</pre>
+     * <pre>SELECT deptno AS empno, empno AS x FROM emp ORDER BY empno</pre>
+     * The last "ORDER BY empno" is valid because the target dialect's conformance
+     * doesn't support ORDER BY alias.
      */
     public SqlNode orderField(int ordinal) {
-      final SqlNode node = field(ordinal);
-      if (node instanceof SqlNumericLiteral
-          && dialect.getConformance().isSortByOrdinal()) {
-        // An integer literal will be wrongly interpreted as a field ordinal.
-        // Convert it to a character literal, which will have the same effect.
-        final String strValue = ((SqlNumericLiteral) node).toValue();
-        return SqlLiteral.createCharString(strValue, node.getParserPosition());
-      }
-      return node;
+      return field(ordinal);
     }
 
     /** Converts an expression from {@link RexNode} to {@link SqlNode}
@@ -809,12 +800,7 @@ public abstract class SqlImplementor {
           SqlNode fieldOperand = field(ordinal);
           return SqlStdOperatorTable.CURSOR.createCall(SqlParserPos.ZERO, fieldOperand);
         }
-        // Ideally the UNKNOWN type would never exist in a fully-formed, validated rel node, but
-        // it can be useful in certain situations where determining the type of an expression is
-        // infeasible, such as inserting arbitrary user-provided SQL snippets into an otherwise
-        // manually-constructed (as opposed to parsed) rel node.
-        // In such a context, assume that casting anything to UNKNOWN is a no-op.
-        if (ignoreCast || call.getType().getSqlTypeName() == SqlTypeName.UNKNOWN) {
+        if (ignoreCast) {
           assert nodeList.size() == 1;
           return nodeList.get(0);
         } else {
@@ -1159,18 +1145,18 @@ public abstract class SqlImplementor {
     public SqlNode toSql(AggregateCall aggCall) {
       return toSql(aggCall.getAggregation(), aggCall.isDistinct(),
           Util.transform(aggCall.getArgList(), this::field),
-          aggCall.filterArg, aggCall.collation, aggCall.isApproximate());
+          aggCall.filterArg, aggCall.collation);
     }
 
     /** Converts a call to an aggregate function, with a given list of operands,
      * to an expression. */
     private SqlCall toSql(SqlOperator op, boolean distinct,
-        List<SqlNode> operandList, int filterArg, RelCollation collation, boolean approximate) {
+        List<SqlNode> operandList, int filterArg, RelCollation collation) {
       final SqlLiteral qualifier =
           distinct ? SqlSelectKeyword.DISTINCT.symbol(POS) : null;
       if (op instanceof SqlSumEmptyIsZeroAggFunction) {
         final SqlNode node = toSql(SqlStdOperatorTable.SUM, distinct,
-            operandList, filterArg, collation, approximate);
+            operandList, filterArg, collation);
         return SqlStdOperatorTable.COALESCE.createCall(POS, node, ZERO);
       }
 
@@ -1194,7 +1180,7 @@ public abstract class SqlImplementor {
         if (operandList.size() > 1) {
           newOperandList.addAll(Util.skip(operandList));
         }
-        return toSql(op, distinct, newOperandList, -1, collation, approximate);
+        return toSql(op, distinct, newOperandList, -1, collation);
       }
 
       if (op instanceof SqlCountAggFunction && operandList.isEmpty()) {
@@ -1207,9 +1193,7 @@ public abstract class SqlImplementor {
 
       // Handle filter by generating FILTER (WHERE ...)
       final SqlCall call2;
-      if (distinct && approximate && dialect.supportsApproxCountDistinct()) {
-        call2 = SqlStdOperatorTable.APPROX_COUNT_DISTINCT.createCall(POS, operandList);
-      } else if (filterArg < 0) {
+      if (filterArg < 0) {
         call2 = call;
       } else {
         assert dialect.supportsAggregateFunctionFilter(); // we checked above
@@ -1702,6 +1686,7 @@ public abstract class SqlImplementor {
       if (!selectList.equals(SqlNodeList.SINGLETON_STAR)) {
         final boolean aliasRef = expectedClauses.contains(Clause.HAVING)
             && dialect.getConformance().isHavingAlias();
+        final boolean orderByFieldRequired = !expectedClauses.contains(Clause.ORDER_BY);
         newContext = new Context(dialect, selectList.size()) {
           @Override public SqlImplementor implementor() {
             return SqlImplementor.this;
@@ -1729,30 +1714,21 @@ public abstract class SqlImplementor {
           }
 
           @Override public SqlNode orderField(int ordinal) {
-            // If the field expression is an unqualified column identifier
-            // and matches a different alias, use an ordinal.
-            // For example, given
-            //    SELECT deptno AS empno, empno AS x FROM emp ORDER BY emp.empno
-            // we generate
-            //    SELECT deptno AS empno, empno AS x FROM emp ORDER BY 2
-            // "ORDER BY empno" would give incorrect result;
-            // "ORDER BY x" is acceptable but is not preferred.
-            final SqlNode node = super.orderField(ordinal);
-            if (node instanceof SqlIdentifier
-                && ((SqlIdentifier) node).isSimple()) {
-              final String name = ((SqlIdentifier) node).getSimple();
-              for (Ord<SqlNode> selectItem : Ord.zip(selectList)) {
-                if (selectItem.i != ordinal) {
-                  final String alias =
-                      SqlValidatorUtil.getAlias(selectItem.e, -1);
-                  if (name.equalsIgnoreCase(alias)) {
-                    return SqlLiteral.createExactNumeric(
-                        Integer.toString(ordinal + 1), SqlParserPos.ZERO);
-                  }
+            if (!orderByFieldRequired && dialect.getConformance().isSortByOrdinal()) {
+              return SqlLiteral.createExactNumeric(
+                  Integer.toString(ordinal + 1), SqlParserPos.ZERO);
+            } else {
+              final SqlNode selectItem = selectList.get(ordinal);
+              if (selectItem.getKind() == SqlKind.AS) {
+                if (!orderByFieldRequired && dialect.getConformance().isSortByAlias()) {
+                  return ((SqlCall) selectItem).operand(1); //alias
+                } else {
+                  return ((SqlCall) selectItem).operand(0); //select item
                 }
+              } else {
+                return selectItem;
               }
             }
-            return node;
           }
         };
       } else {
