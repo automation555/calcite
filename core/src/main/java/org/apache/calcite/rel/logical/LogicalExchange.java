@@ -19,7 +19,6 @@ package org.apache.calcite.rel.logical;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
-import org.apache.calcite.rel.LogicalNode;
 import org.apache.calcite.rel.RelDistribution;
 import org.apache.calcite.rel.RelDistributionTraitDef;
 import org.apache.calcite.rel.RelInput;
@@ -31,7 +30,7 @@ import org.apache.calcite.rel.core.Exchange;
  * Sub-class of {@link Exchange} not
  * targeted at any particular engine or calling convention.
  */
-public final class LogicalExchange extends Exchange implements LogicalNode {
+public final class LogicalExchange extends Exchange {
   private LogicalExchange(RelOptCluster cluster, RelTraitSet traitSet,
       RelNode input, RelDistribution distribution) {
     super(cluster, traitSet, input, distribution);
@@ -60,6 +59,19 @@ public final class LogicalExchange extends Exchange implements LogicalNode {
     return new LogicalExchange(cluster, traitSet, input, distribution);
   }
 
+  /**
+   * Creates a LogicalExchange.
+   *
+   * @param cluster      RelOptCluster
+   * @param traitSet     Ordered set of traits
+   * @param input        Input relational expression
+   * @param distribution Distribution specification
+   */
+  public static LogicalExchange create(RelOptCluster cluster, RelTraitSet traitSet,
+      RelNode input, RelDistribution distribution) {
+    return new LogicalExchange(cluster, traitSet, input, distribution);
+  }
+
   //~ Methods ----------------------------------------------------------------
 
   @Override public Exchange copy(RelTraitSet traitSet, RelNode newInput,
@@ -72,3 +84,5 @@ public final class LogicalExchange extends Exchange implements LogicalNode {
     return shuttle.visit(this);
   }
 }
+
+// End LogicalExchange.java
