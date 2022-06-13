@@ -29,6 +29,8 @@ import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.runtime.FlatLists;
 import org.apache.calcite.runtime.Geometries;
 import org.apache.calcite.sql.SqlAggFunction;
+import org.apache.calcite.sql.SqlBasicCall;
+import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlCollation;
 import org.apache.calcite.sql.SqlIntervalQualifier;
 import org.apache.calcite.sql.SqlKind;
@@ -37,12 +39,15 @@ import org.apache.calcite.sql.SqlSpecialOperator;
 import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.fun.SqlCountAggFunction;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.ArraySqlType;
 import org.apache.calcite.sql.type.MapSqlType;
 import org.apache.calcite.sql.type.MultisetSqlType;
 import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeUtil;
+import org.apache.calcite.sql2rel.SqlRexConvertlet;
+import org.apache.calcite.sql2rel.StandardConvertletTable;
 import org.apache.calcite.util.DateString;
 import org.apache.calcite.util.NlsString;
 import org.apache.calcite.util.Pair;
@@ -68,6 +73,7 @@ import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -262,7 +268,15 @@ public class RexBuilder {
       SqlOperator op,
       List<? extends RexNode> exprs) {
     final RelDataType type = deriveReturnType(op, exprs);
-    return new RexCall(type, op, exprs);
+    final RexCall rexcall = new RexCall(type, op, exprs);
+    final SqlCall sqlCall = new SqlBasicCall(op, Collections.emptyList(), SqlParserPos.ZERO);
+    final SqlRexConvertlet convertlet = StandardConvertletTable.INSTANCE.get(sqlCall);
+    if (convertlet != null) {
+      final RexNode convertedRexCall = convertlet.convertCall(rexcall, this);
+      return convertedRexCall != null ? convertedRexCall : rexcall;
+    } else {
+      return rexcall;
+    }
   }
 
   /**
@@ -642,9 +656,6 @@ public class RexBuilder {
 
   boolean canRemoveCastFromLiteral(RelDataType toType, @Nullable Comparable value,
       SqlTypeName fromTypeName) {
-    if (value == null) {
-      return true;
-    }
     final SqlTypeName sqlType = toType.getSqlTypeName();
     if (!RexLiteral.valueMatchesType(value, sqlType, false)) {
       return false;
@@ -679,26 +690,6 @@ public class RexBuilder {
     if (toType.getSqlTypeName() == SqlTypeName.DECIMAL) {
       final BigDecimal decimalValue = (BigDecimal) value;
       return SqlTypeUtil.isValidDecimalValue(decimalValue, toType);
-    }
-
-    if (SqlTypeName.INT_TYPES.contains(sqlType)) {
-      final BigDecimal decimalValue = (BigDecimal) value;
-      final int s = decimalValue.scale();
-      if (s != 0) {
-        return false;
-      }
-      long l = decimalValue.longValue();
-      switch (sqlType) {
-      case TINYINT:
-        return l >= Byte.MIN_VALUE && l <= Byte.MAX_VALUE;
-      case SMALLINT:
-        return l >= Short.MIN_VALUE && l <= Short.MAX_VALUE;
-      case INTEGER:
-        return l >= Integer.MIN_VALUE && l <= Integer.MAX_VALUE;
-      case BIGINT:
-      default:
-        return true;
-      }
     }
 
     return true;
