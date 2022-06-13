@@ -31,6 +31,7 @@ import org.apache.calcite.linq4j.function.Deterministic;
 import org.apache.calcite.linq4j.function.Experimental;
 import org.apache.calcite.linq4j.function.Function1;
 import org.apache.calcite.linq4j.function.NonDeterministic;
+import org.apache.calcite.linq4j.function.Predicate2;
 import org.apache.calcite.linq4j.tree.Primitive;
 import org.apache.calcite.runtime.FlatLists.ComparableList;
 import org.apache.calcite.util.Bug;
@@ -73,6 +74,7 @@ import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 
 import static org.apache.calcite.util.Static.RESOURCE;
@@ -140,6 +142,8 @@ public class SqlFunctions {
    * will want persistent values for sequences, shared among threads. */
   private static final ThreadLocal<Map<String, AtomicLong>> THREAD_SEQUENCES =
       ThreadLocal.withInitial(HashMap::new);
+
+  private static final Pattern PATTERN_0_STAR_E = Pattern.compile("0*E");
 
   private SqlFunctions() {
   }
@@ -366,6 +370,11 @@ public class SqlFunctions {
   /** SQL SPACE(int) function. */
   public static String space(int n) {
     return repeat(" ", n);
+  }
+
+  /** SQL STRCMP(String,String) function. */
+  public static int strcmp(String s0, String s1) {
+    return (int) Math.signum(s1.compareTo(s0));
   }
 
   /** SQL SOUNDEX(string) function. */
@@ -599,7 +608,7 @@ public class SqlFunctions {
     String[] existingExpressions = Arrays.stream(POSIX_CHARACTER_CLASSES)
         .filter(v -> originalRegex.contains(v.toLowerCase(Locale.ROOT))).toArray(String[]::new);
     for (String v : existingExpressions) {
-      regex = regex.replaceAll(v.toLowerCase(Locale.ROOT), "\\\\p{" + v + "}");
+      regex = regex.replace(v.toLowerCase(Locale.ROOT), "\\p{" + v + "}");
     }
 
     int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE;
@@ -1072,12 +1081,6 @@ public class SqlFunctions {
     return b0 & b1;
   }
 
-  // ~
-  /** Helper function for implementing <code>BIT_NOT</code> */
-  public static long bitNot(long b) {
-    return ~b;
-  }
-
   // |
   /** Helper function for implementing <code>BIT_OR</code> */
   public static long bitOr(long b0, long b1) {
@@ -1412,6 +1415,17 @@ public class SqlFunctions {
     return Math.cos(b0);
   }
 
+  // COSH
+  /** SQL <code>COSH</code> operator applied to BigDecimal values. */
+  public static double cosh(BigDecimal b) {
+    return cosh(b.doubleValue());
+  }
+
+  /** SQL <code>COSH</code> operator applied to double values. */
+  public static double cosh(double b) {
+    return Math.cosh(b);
+  }
+
   // COT
   /** SQL <code>COT</code> operator applied to BigDecimal values. */
   public static double cot(BigDecimal b0) {
@@ -1557,6 +1571,17 @@ public class SqlFunctions {
     return Math.sin(b0);
   }
 
+  // SINH
+  /** SQL <code>SINH</code> operator applied to BigDecimal values. */
+  public static double sinh(BigDecimal b) {
+    return sinh(b.doubleValue());
+  }
+
+  /** SQL <code>SINH</code> operator applied to double values. */
+  public static double sinh(double b) {
+    return Math.sinh(b);
+  }
+
   // TAN
   /** SQL <code>TAN</code> operator applied to BigDecimal values. */
   public static double tan(BigDecimal b0) {
@@ -1566,6 +1591,17 @@ public class SqlFunctions {
   /** SQL <code>TAN</code> operator applied to double values. */
   public static double tan(double b0) {
     return Math.tan(b0);
+  }
+
+  // TANH
+  /** SQL <code>TANH</code> operator applied to BigDecimal values. */
+  public static double tanh(BigDecimal b) {
+    return tanh(b.doubleValue());
+  }
+
+  /** SQL <code>TANH</code> operator applied to double values. */
+  public static double tanh(double b) {
+    return Math.tanh(b);
   }
 
   // Helpers
@@ -1667,7 +1703,7 @@ public class SqlFunctions {
     BigDecimal bigDecimal =
         new BigDecimal(x, MathContext.DECIMAL32).stripTrailingZeros();
     final String s = bigDecimal.toString();
-    return s.replaceAll("0*E", "E").replace("E+", "E");
+    return PATTERN_0_STAR_E.matcher(s).replaceAll("E").replace("E+", "E");
   }
 
   /** CAST(DOUBLE AS VARCHAR). */
@@ -1678,16 +1714,18 @@ public class SqlFunctions {
     BigDecimal bigDecimal =
         new BigDecimal(x, MathContext.DECIMAL64).stripTrailingZeros();
     final String s = bigDecimal.toString();
-    return s.replaceAll("0*E", "E").replace("E+", "E");
+    return PATTERN_0_STAR_E.matcher(s).replaceAll("E").replace("E+", "E");
   }
 
   /** CAST(DECIMAL AS VARCHAR). */
   public static String toString(BigDecimal x) {
     final String s = x.toString();
-    if (s.startsWith("0")) {
+    if (s.equals("0")) {
+      return s;
+    } else if (s.startsWith("0.")) {
       // we want ".1" not "0.1"
       return s.substring(1);
-    } else if (s.startsWith("-0")) {
+    } else if (s.startsWith("-0.")) {
       // we want "-.1" not "-0.1"
       return "-" + s.substring(2);
     } else {
@@ -2812,7 +2850,18 @@ public class SqlFunctions {
     }
   }
 
-  /** Type of argument passed into {@link #flatProduct}. */
+  public static Map<?, ?> mapFilter(Map<?, ?> map, Predicate2 predicate) {
+    if (map == null) {
+      return null;
+    }
+    return map.entrySet().stream()
+        .filter(e -> predicate.apply(e.getKey(), e.getValue()))
+        .collect(Collectors.toMap(Entry::getKey, Entry::getValue));
+  }
+
+  /**
+   * Type of argument passed into {@link #flatProduct}.
+   */
   public enum FlatProductInputType {
     SCALAR, LIST, MAP
   }

@@ -18,17 +18,6 @@
 !use mysqlfunc
 !set outputformat mysql
 
-# BIT_NOT
-select bit_not(3);
-+--------+
-| EXPR$0 |
-+--------+
-|     -4 |
-+--------+
-(1 row)
-
-!ok
-
 # MATH Functions
 
 # CBRT
@@ -37,6 +26,17 @@ select cbrt(-8);
 | EXPR$0 |
 +--------+
 |   -2.0 |
++--------+
+(1 row)
+
+!ok
+
+# STRCMP
+select strcmp('mytesttext', 'mytesttext');
++--------+
+| EXPR$0 |
++--------+
+|      0 |
 +--------+
 (1 row)
 
@@ -54,7 +54,76 @@ SELECT ExtractValue('<a>c</a>', '//a');
 
 !ok
 
+# Compression Functions
+
+SELECT COMPRESS('sample');
++--------------------------------------+
+| EXPR$0                               |
++--------------------------------------+
+| 06000000789c2b4ecc2dc849050008de0283 |
++--------------------------------------+
+(1 row)
+
+!ok
+
+
+SELECT map_filter(v, (a,b)->a='a') AS c1 FROM (VALUES (MAP['a', 1, 'baz', 2])) as t(v);
++-------+
+| C1    |
++-------+
+| {a=1} |
++-------+
+(1 row)
+
+!ok
+
+
+SELECT map_filter(MAP['a', 1, 'b', 2], (a,b)->a=v) AS c1 FROM (VALUES ('a'), ('b')) as t(v);
++-------+
+| C1    |
++-------+
+| {a=1} |
+| {b=2} |
++-------+
+(2 rows)
+
+!ok
+
+
 !use oraclefunc
+
+# COSH
+select cosh(1);
++-------------------+
+| EXPR$0            |
++-------------------+
+| 1.543080634815244 |
++-------------------+
+(1 row)
+
+!ok
+
+# TANH
+select tanh(1);
++--------------------+
+| EXPR$0             |
++--------------------+
+| 0.7615941559557649 |
++--------------------+
+(1 row)
+
+!ok
+
+# SINH
+select sinh(1);
++--------------------+
+| EXPR$0             |
++--------------------+
+| 1.1752011936438014 |
++--------------------+
+(1 row)
+
+!ok
 
 SELECT XMLTRANSFORM(
                    '<?xml version="1.0"?>
@@ -92,6 +161,19 @@ SELECT "EXTRACT"(
 +-------------------------+
 | <Title>Article1</Title> |
 +-------------------------+
+(1 row)
+
+!ok
+
+SELECT EXISTSNODE(
+            '<Article><Title>Article1</Title><Authors><Author>Foo</Author><Author>Bar</Author></Authors><Body>article text</Body></Article>'
+            , '/Article/Title'
+        );
++--------+
+| EXPR$0 |
++--------+
+|      1 |
++--------+
 (1 row)
 
 !ok

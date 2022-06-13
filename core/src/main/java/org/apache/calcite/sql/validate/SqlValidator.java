@@ -36,7 +36,6 @@ import org.apache.calcite.sql.SqlMatchRecognize;
 import org.apache.calcite.sql.SqlMerge;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
-import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlOperatorTable;
 import org.apache.calcite.sql.SqlSelect;
 import org.apache.calcite.sql.SqlUpdate;
@@ -45,17 +44,10 @@ import org.apache.calcite.sql.SqlWith;
 import org.apache.calcite.sql.SqlWithItem;
 import org.apache.calcite.sql.type.SqlTypeCoercionRule;
 import org.apache.calcite.sql.validate.implicit.TypeCoercion;
-import org.apache.calcite.sql.validate.implicit.TypeCoercionFactory;
-import org.apache.calcite.sql.validate.implicit.TypeCoercions;
-
-import org.apiguardian.api.API;
-import org.checkerframework.checker.nullness.qual.Nullable;
-import org.checkerframework.dataflow.qual.Pure;
-import org.immutables.value.Value;
 
 import java.util.List;
 import java.util.Map;
-import java.util.function.UnaryOperator;
+import javax.annotation.Nullable;
 
 /**
  * Validates the parse tree of a SQL statement, and provides semantic
@@ -112,16 +104,22 @@ import java.util.function.UnaryOperator;
  * to resolve
  * names in a particular clause of a SQL statement.</p>
  */
-@Value.Enclosing
 public interface SqlValidator {
   //~ Methods ----------------------------------------------------------------
+
+  /**
+   * Returns the dialect of SQL (SQL:2003, etc.) this validator recognizes.
+   * Default is {@link SqlConformanceEnum#DEFAULT}.
+   *
+   * @return dialect of SQL this validator recognizes
+   */
+  SqlConformance getConformance();
 
   /**
    * Returns the catalog reader used by this validator.
    *
    * @return catalog reader
    */
-  @Pure
   SqlValidatorCatalogReader getCatalogReader();
 
   /**
@@ -129,7 +127,6 @@ public interface SqlValidator {
    *
    * @return operator table
    */
-  @Pure
   SqlOperatorTable getOperatorTable();
 
   /**
@@ -173,7 +170,7 @@ public interface SqlValidator {
    *                      type 'unknown'.
    * @throws RuntimeException if the query is not valid
    */
-  void validateQuery(SqlNode node, @Nullable SqlValidatorScope scope,
+  void validateQuery(SqlNode node, SqlValidatorScope scope,
       RelDataType targetRowType);
 
   /**
@@ -193,22 +190,7 @@ public interface SqlValidator {
    * @param node the node of interest
    * @return validated type, or null if unknown or not applicable
    */
-  @Nullable RelDataType getValidatedNodeTypeIfKnown(SqlNode node);
-
-  /**
-   * Returns the types of a call's operands.
-   *
-   * <p>Returns null if the call has not been validated, or if the operands'
-   * types do not differ from their types as expressions.
-   *
-   * <p>This method is most useful when some of the operands are of type ANY,
-   * or if they need to be coerced to be consistent with other operands, or
-   * with the needs of the function.
-   *
-   * @param call Call
-   * @return List of operands' types, or null if not known or 'obvious'
-   */
-  @Nullable List<RelDataType> getValidatedOperandTypes(SqlCall call);
+  RelDataType getValidatedNodeTypeIfKnown(SqlNode node);
 
   /**
    * Resolves an identifier to a fully-qualified name.
@@ -226,7 +208,7 @@ public interface SqlValidator {
   void validateLiteral(SqlLiteral literal);
 
   /**
-   * Validates a {@link SqlIntervalQualifier}.
+   * Validates a {@link SqlIntervalQualifier}
    *
    * @param qualifier Interval qualifier
    */
@@ -289,7 +271,7 @@ public interface SqlValidator {
   void validateWindow(
       SqlNode windowOrId,
       SqlValidatorScope scope,
-      @Nullable SqlCall call);
+      SqlCall call);
 
   /**
    * Validates a MATCH_RECOGNIZE clause.
@@ -311,20 +293,17 @@ public interface SqlValidator {
   /**
    * Validates parameters for aggregate function.
    *
-   * @param aggCall      Call to aggregate function
-   * @param filter       Filter ({@code FILTER (WHERE)} clause), or null
-   * @param distinctList Distinct specification ({@code WITHIN DISTINCT}
-   *                     clause), or null
-   * @param orderList    Ordering specification ({@code WITHIN GROUP} clause),
-   *                     or null
-   * @param scope        Syntactic scope
+   * @param aggCall     Call to aggregate function
+   * @param filter      Filter ({@code FILTER (WHERE)} clause), or null
+   * @param orderList   Ordering specification ({@code WITHING GROUP} clause),
+   *                    or null
+   * @param scope       Syntactic scope
    */
-  void validateAggregateParams(SqlCall aggCall, @Nullable SqlNode filter,
-      @Nullable SqlNodeList distinctList, @Nullable SqlNodeList orderList,
-      SqlValidatorScope scope);
+  void validateAggregateParams(SqlCall aggCall, SqlNode filter,
+      SqlNodeList orderList, SqlValidatorScope scope);
 
   /**
-   * Validates a COLUMN_LIST parameter.
+   * Validates a COLUMN_LIST parameter
    *
    * @param function function containing COLUMN_LIST parameter
    * @param argTypes function arguments
@@ -400,32 +379,17 @@ public interface SqlValidator {
    * @param windowOrRef    Either the name of a window (a {@link SqlIdentifier})
    *                       or a window specification (a {@link SqlWindow}).
    * @param scope          Scope in which to resolve window names
+   * @param populateBounds Whether to populate bounds. Doing so may alter the
+   *                       definition of the window. It is recommended that
+   *                       populate bounds when translating to physical algebra,
+   *                       but not when validating.
    * @return A window
    * @throws RuntimeException Validation exception if window does not exist
    */
   SqlWindow resolveWindow(
       SqlNode windowOrRef,
-      SqlValidatorScope scope);
-
-  /**
-   * Converts a window specification or window name into a fully-resolved
-   * window specification.
-   *
-   * @deprecated Use {@link #resolveWindow(SqlNode, SqlValidatorScope)}, which
-   * does not have the deprecated {@code populateBounds} parameter.
-   *
-   * @param populateBounds Whether to populate bounds. Doing so may alter the
-   *                       definition of the window. It is recommended that
-   *                       populate bounds when translating to physical algebra,
-   *                       but not when validating.
-   */
-  @Deprecated // to be removed before 2.0
-  default SqlWindow resolveWindow(
-      SqlNode windowOrRef,
       SqlValidatorScope scope,
-      boolean populateBounds) {
-    return resolveWindow(windowOrRef, scope);
-  };
+      boolean populateBounds);
 
   /**
    * Finds the namespace corresponding to a given node.
@@ -437,7 +401,7 @@ public interface SqlValidator {
    * @param node Parse tree node
    * @return namespace of node
    */
-  @Nullable SqlValidatorNamespace getNamespace(SqlNode node);
+  SqlValidatorNamespace getNamespace(SqlNode node);
 
   /**
    * Derives an alias for an expression. If no alias can be derived, returns
@@ -449,7 +413,7 @@ public interface SqlValidator {
    * @return derived alias, or null if no alias can be derived and ordinal is
    * less than zero
    */
-  @Nullable String deriveAlias(
+  String deriveAlias(
       SqlNode node,
       int ordinal);
 
@@ -482,25 +446,23 @@ public interface SqlValidator {
    *
    * @return type factory
    */
-  @Pure
   RelDataTypeFactory getTypeFactory();
 
   /**
    * Saves the type of a {@link SqlNode}, now that it has been validated.
    *
-   * <p>This method is only for internal use. The validator should drive the
-   * type-derivation process, and store nodes' types when they have been derived.
-   *
    * @param node A SQL parse tree node, never null
    * @param type Its type; must not be null
+   * @deprecated This method should not be in the {@link SqlValidator}
+   * interface. The validator should drive the type-derivation process, and
+   * store nodes' types when they have been derived.
    */
-  @API(status = API.Status.INTERNAL, since = "1.24")
   void setValidatedNodeType(
       SqlNode node,
       RelDataType type);
 
   /**
-   * Removes a node from the set of validated nodes.
+   * Removes a node from the set of validated nodes
    *
    * @param node node to be removed
    */
@@ -556,7 +518,7 @@ public interface SqlValidator {
    * @param select SELECT statement
    * @return naming scope for SELECT statement, sans any aggregating scope
    */
-  @Nullable SelectScope getRawSelectScope(SqlSelect select);
+  SelectScope getRawSelectScope(SqlSelect select);
 
   /**
    * Returns a scope containing the objects visible from the FROM clause of a
@@ -565,7 +527,7 @@ public interface SqlValidator {
    * @param select SELECT statement
    * @return naming scope for FROM clause
    */
-  @Nullable SqlValidatorScope getFromScope(SqlSelect select);
+  SqlValidatorScope getFromScope(SqlSelect select);
 
   /**
    * Returns a scope containing the objects visible from the ON and USING
@@ -576,7 +538,7 @@ public interface SqlValidator {
    * @return naming scope for JOIN clause
    * @see #getFromScope
    */
-  @Nullable SqlValidatorScope getJoinScope(SqlNode node);
+  SqlValidatorScope getJoinScope(SqlNode node);
 
   /**
    * Returns a scope containing the objects visible from the GROUP BY clause
@@ -640,7 +602,50 @@ public interface SqlValidator {
    * @param columnListParamName name of the column list parameter
    * @return name of the parent cursor
    */
-  @Nullable String getParentCursor(String columnListParamName);
+  String getParentCursor(String columnListParamName);
+
+  /**
+   * Enables or disables expansion of identifiers other than column
+   * references.
+   *
+   * @param expandIdentifiers new setting
+   */
+  void setIdentifierExpansion(boolean expandIdentifiers);
+
+  /**
+   * Enables or disables expansion of column references. (Currently this does
+   * not apply to the ORDER BY clause; may be fixed in the future.)
+   *
+   * @param expandColumnReferences new setting
+   */
+  void setColumnReferenceExpansion(boolean expandColumnReferences);
+
+  /**
+   * @return whether column reference expansion is enabled
+   */
+  boolean getColumnReferenceExpansion();
+
+  /** Sets how NULL values should be collated if an ORDER BY item does not
+   * contain NULLS FIRST or NULLS LAST. */
+  void setDefaultNullCollation(NullCollation nullCollation);
+
+  /** Returns how NULL values should be collated if an ORDER BY item does not
+   * contain NULLS FIRST or NULLS LAST. */
+  NullCollation getDefaultNullCollation();
+
+  /**
+   * Returns expansion of identifiers.
+   *
+   * @return whether this validator should expand identifiers
+   */
+  boolean shouldExpandIdentifiers();
+
+  /**
+   * Enables or disables rewrite of "macro-like" calls such as COALESCE.
+   *
+   * @param rewriteCalls new setting
+   */
+  void setCallRewrite(boolean rewriteCalls);
 
   /**
    * Derives the type of a constructor.
@@ -656,11 +661,11 @@ public interface SqlValidator {
       SqlValidatorScope scope,
       SqlCall call,
       SqlFunction unresolvedConstructor,
-      @Nullable SqlFunction resolvedConstructor,
+      SqlFunction resolvedConstructor,
       List<RelDataType> argTypes);
 
   /**
-   * Handles a call to a function which cannot be resolved. Returns an
+   * Handles a call to a function which cannot be resolved. Returns a an
    * appropriately descriptive error, which caller must throw.
    *
    * @param call               Call
@@ -670,8 +675,8 @@ public interface SqlValidator {
    * @param argNames           Names of arguments, or null if call by position
    */
   CalciteException handleUnresolvedFunction(SqlCall call,
-      SqlOperator unresolvedFunction, List<RelDataType> argTypes,
-      @Nullable List<String> argNames);
+      SqlFunction unresolvedFunction, List<RelDataType> argTypes,
+      List<String> argNames);
 
   /**
    * Expands an expression in the ORDER BY clause into an expression with the
@@ -726,7 +731,7 @@ public interface SqlValidator {
    * @return Description of how each field in the row type maps to a schema
    * object
    */
-  List<@Nullable List<String>> getFieldOrigins(SqlNode sqlQuery);
+  List<List<String>> getFieldOrigins(SqlNode sqlQuery);
 
   /**
    * Returns a record type that contains the name and type of each parameter.
@@ -764,174 +769,65 @@ public interface SqlValidator {
 
   void validateSequenceValue(SqlValidatorScope scope, SqlIdentifier id);
 
-  @Nullable SqlValidatorScope getWithScope(SqlNode withItem);
+  SqlValidatorScope getWithScope(SqlNode withItem);
+
+  SqlValidatorScope getLambdaScope(SqlNode lambda);
+
+  /**
+   * Sets whether this validator should be lenient upon encountering an unknown
+   * function.
+   *
+   * @param lenient Whether to be lenient when encountering an unknown function
+   */
+  SqlValidator setLenientOperatorLookup(boolean lenient);
+
+  /** Returns whether this validator should be lenient upon encountering an
+   * unknown function.
+   *
+   * <p>If true, if a statement contains a call to a function that is not
+   * present in the operator table, or if the call does not have the required
+   * number or types of operands, the validator nevertheless regards the
+   * statement as valid. The type of the function call will be
+   * {@link #getUnknownType() UNKNOWN}.
+   *
+   * <p>If false (the default behavior), an unknown function call causes a
+   * validation error to be thrown. */
+  boolean isLenientOperatorLookup();
+
+  /**
+   * Sets enable or disable implicit type coercion when the validator does validation.
+   *
+   * @param enabled if enable the type coercion, default is true
+   *
+   * @see org.apache.calcite.sql.validate.implicit.TypeCoercionImpl TypeCoercionImpl
+   */
+  SqlValidator setEnableTypeCoercion(boolean enabled);
+
+  /** Returns if this validator supports implicit type coercion. */
+  boolean isTypeCoercionEnabled();
+
+  /**
+   * Sets an instance of type coercion, you can customize the coercion rules to
+   * override the default ones defined in
+   * {@link org.apache.calcite.sql.validate.implicit.TypeCoercionImpl}.
+   *
+   * @param typeCoercion {@link TypeCoercion} instance
+   */
+  void setTypeCoercion(TypeCoercion typeCoercion);
 
   /** Get the type coercion instance. */
   TypeCoercion getTypeCoercion();
 
-  /** Returns the config of the validator. */
-  Config config();
-
   /**
-   * Returns this SqlValidator, with the same state, applying
-   * a transform to the config.
+   * Sets the {@link SqlTypeCoercionRule} instance which defines the type conversion matrix
+   * for the explicit type coercion.
    *
-   * <p>This is mainly used for tests, otherwise constructs a {@link Config} directly
-   * through the constructor.
+   * <p>The {@code typeCoercionRules} setting should be thread safe.
+   * In the default implementation,
+   * the {@code typeCoercionRules} is set to a ThreadLocal variable.
+   *
+   * @param typeCoercionRules The {@link SqlTypeCoercionRule} instance, see its documentation
+   *                          for how to customize the rules.
    */
-  @API(status = API.Status.INTERNAL, since = "1.23")
-  SqlValidator transform(UnaryOperator<SqlValidator.Config> transform);
-
-  //~ Inner Class ------------------------------------------------------------
-
-  /**
-   * Interface to define the configuration for a SqlValidator.
-   * Provides methods to set each configuration option.
-   */
-  @Value.Immutable(singleton = false)
-  public interface Config {
-    /** Default configuration. */
-    SqlValidator.Config DEFAULT = ImmutableSqlValidator.Config.builder()
-        .withTypeCoercionFactory(TypeCoercions::createTypeCoercion)
-        .build();
-
-    /**
-     * Returns whether to enable rewrite of "macro-like" calls such as COALESCE.
-     */
-    @Value.Default default boolean callRewrite() {
-      return true;
-    }
-
-    /**
-     * Sets whether to enable rewrite of "macro-like" calls such as COALESCE.
-     */
-    Config withCallRewrite(boolean rewrite);
-
-    /** Returns how NULL values should be collated if an ORDER BY item does not
-     * contain NULLS FIRST or NULLS LAST. */
-    @Value.Default default NullCollation defaultNullCollation() {
-      return NullCollation.HIGH;
-    }
-
-    /** Sets how NULL values should be collated if an ORDER BY item does not
-     * contain NULLS FIRST or NULLS LAST. */
-    Config withDefaultNullCollation(NullCollation nullCollation);
-
-    /** Returns whether column reference expansion is enabled. */
-    @Value.Default default boolean columnReferenceExpansion() {
-      return true;
-    }
-
-    /**
-     * Sets whether to enable expansion of column references. (Currently this does
-     * not apply to the ORDER BY clause; may be fixed in the future.)
-     */
-    Config withColumnReferenceExpansion(boolean expand);
-
-    /**
-     * Returns whether to expand identifiers other than column
-     * references.
-     *
-     * <p>REVIEW jvs 30-June-2006: subclasses may override shouldExpandIdentifiers
-     * in a way that ignores this; we should probably get rid of the protected
-     * method and always use this variable (or better, move preferences like
-     * this to a separate "parameter" class).
-     */
-    @Value.Default default boolean identifierExpansion() {
-      return false;
-    }
-
-    /**
-     * Sets whether to enable expansion of identifiers other than column
-     * references.
-     */
-    Config withIdentifierExpansion(boolean expand);
-
-    /**
-     * Returns whether this validator should be lenient upon encountering an
-     * unknown function, default false.
-     *
-     * <p>If true, if a statement contains a call to a function that is not
-     * present in the operator table, or if the call does not have the required
-     * number or types of operands, the validator nevertheless regards the
-     * statement as valid. The type of the function call will be
-     * {@link #getUnknownType() UNKNOWN}.
-     *
-     * <p>If false (the default behavior), an unknown function call causes a
-     * validation error to be thrown.
-     */
-    @Value.Default default boolean lenientOperatorLookup() {
-      return false;
-    }
-
-    /**
-     * Sets whether this validator should be lenient upon encountering an unknown
-     * function.
-     *
-     * @param lenient Whether to be lenient when encountering an unknown function
-     */
-    Config withLenientOperatorLookup(boolean lenient);
-
-    /** Returns whether the validator supports implicit type coercion. */
-    @Value.Default default boolean typeCoercionEnabled() {
-      return true;
-    }
-
-    /**
-     * Sets whether to enable implicit type coercion for validation, default true.
-     *
-     * @see org.apache.calcite.sql.validate.implicit.TypeCoercionImpl TypeCoercionImpl
-     */
-    Config withTypeCoercionEnabled(boolean enabled);
-
-    /** Returns the type coercion factory. */
-    TypeCoercionFactory typeCoercionFactory();
-
-    /**
-     * Sets a factory to create type coercion instance that overrides the
-     * default coercion rules defined in
-     * {@link org.apache.calcite.sql.validate.implicit.TypeCoercionImpl}.
-     *
-     * @param factory Factory to create {@link TypeCoercion} instance
-     */
-    Config withTypeCoercionFactory(TypeCoercionFactory factory);
-
-    /** Returns the type coercion rules for explicit type coercion. */
-    @Nullable SqlTypeCoercionRule typeCoercionRules();
-
-    /**
-     * Sets the {@link SqlTypeCoercionRule} instance which defines the type conversion matrix
-     * for the explicit type coercion.
-     *
-     * <p>The {@code rules} setting should be thread safe. In the default implementation,
-     * it is set to a ThreadLocal variable.
-     *
-     * @param rules The {@link SqlTypeCoercionRule} instance,
-     *              see its documentation for how to customize the rules
-     */
-    Config withTypeCoercionRules(@Nullable SqlTypeCoercionRule rules);
-
-    /** Returns the dialect of SQL (SQL:2003, etc.) this validator recognizes.
-     * Default is {@link SqlConformanceEnum#DEFAULT}. */
-    @Value.Default default SqlConformance conformance() {
-      return SqlConformanceEnum.DEFAULT;
-    }
-
-    /** Returns the SQL conformance.
-     * @deprecated Use {@link #conformance()} */
-    @Deprecated // to be removed before 2.0
-    default SqlConformance sqlConformance() {
-      return conformance();
-    }
-
-    /** Sets the SQL conformance of the validator. */
-    Config withConformance(SqlConformance conformance);
-
-    /** Sets the SQL conformance of the validator.
-     * @deprecated Use {@link #conformance()} */
-    @Deprecated // to be removed before 2.0
-    default Config withSqlConformance(SqlConformance conformance) {
-      return withConformance(conformance);
-    }
-  }
+  void setSqlTypeCoercionRules(SqlTypeCoercionRule typeCoercionRules);
 }

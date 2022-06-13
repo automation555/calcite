@@ -27,6 +27,7 @@ import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlOperandCountRanges;
 import org.apache.calcite.sql.type.SqlReturnTypeInference;
+import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeTransforms;
 
@@ -173,6 +174,12 @@ public abstract class SqlLibraryOperators {
   public static final SqlFunction REGEXP_REPLACE = new SqlRegexpReplaceFunction();
 
   @LibraryOperator(libraries = {MYSQL})
+  public static final SqlFunction COMPRESS = new SqlFunction("COMPRESS", SqlKind.OTHER_FUNCTION,
+      ReturnTypes.cascade(ReturnTypes.explicit(SqlTypeName.VARBINARY),
+          SqlTypeTransforms.TO_NULLABLE), null, OperandTypes.STRING, SqlFunctionCategory.STRING);
+
+
+  @LibraryOperator(libraries = {MYSQL})
   public static final SqlFunction EXTRACT_VALUE = new SqlFunction(
       "EXTRACTVALUE", SqlKind.OTHER_FUNCTION,
       ReturnTypes.cascade(ReturnTypes.VARCHAR_2000, SqlTypeTransforms.FORCE_NULLABLE),
@@ -188,6 +195,12 @@ public abstract class SqlLibraryOperators {
   public static final SqlFunction EXTRACT_XML = new SqlFunction(
       "EXTRACT", SqlKind.OTHER_FUNCTION,
       ReturnTypes.cascade(ReturnTypes.VARCHAR_2000, SqlTypeTransforms.FORCE_NULLABLE),
+      null, OperandTypes.STRING_STRING_OPTIONAL_STRING, SqlFunctionCategory.SYSTEM);
+
+  @LibraryOperator(libraries = {ORACLE})
+  public static final SqlFunction EXISTS_NODE = new SqlFunction(
+      "EXISTSNODE", SqlKind.OTHER_FUNCTION,
+      ReturnTypes.cascade(ReturnTypes.INTEGER_NULLABLE, SqlTypeTransforms.FORCE_NULLABLE),
       null, OperandTypes.STRING_STRING_OPTIONAL_STRING, SqlFunctionCategory.SYSTEM);
 
   /** The "MONTHNAME(datetime)" function; returns the name of the month,
@@ -237,6 +250,15 @@ public abstract class SqlLibraryOperators {
           OperandTypes.INTEGER,
           SqlFunctionCategory.STRING);
 
+  @LibraryOperator(libraries = {MYSQL})
+  public static final SqlFunction STRCMP =
+      new SqlFunction("STRCMP",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.INTEGER_NULLABLE,
+          null,
+          OperandTypes.STRING_STRING,
+          SqlFunctionCategory.STRING);
+
   @LibraryOperator(libraries = {MYSQL, POSTGRESQL, ORACLE})
   public static final SqlFunction SOUNDEX =
       new SqlFunction("SOUNDEX",
@@ -254,16 +276,6 @@ public abstract class SqlLibraryOperators {
           null,
           OperandTypes.STRING_STRING,
           SqlFunctionCategory.STRING);
-
-  @LibraryOperator(libraries = {MYSQL})
-  public static final SqlFunction BIT_NOT =
-      new SqlFunction(
-          "BIT_NOT",
-          SqlKind.OTHER_FUNCTION,
-          ReturnTypes.ARG0,
-          null,
-          OperandTypes.INTEGER,
-          SqlFunctionCategory.NUMERIC);
 
   /** The "CONCAT(arg, ...)" function that concatenates strings.
    * For example, "CONCAT('a', 'bc', 'd')" returns "abcd". */
@@ -292,6 +304,17 @@ public abstract class SqlLibraryOperators {
           null,
           OperandTypes.CHARACTER,
           SqlFunctionCategory.STRING);
+
+  @LibraryOperator(libraries = {MYSQL})
+  public static final SqlFunction MAP_FILTER =
+      new SqlFunction("MAP_FILTER",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.cascade(ReturnTypes.ARG0, SqlTypeTransforms.TO_NULLABLE),
+          null,
+          OperandTypes.sequence("MAP_FILTER(<ANY>, <LAMBDA(BOOLEAN, ANY, ANY)>)",
+              OperandTypes.family(SqlTypeFamily.MAP),
+              OperandTypes.lambda(SqlTypeFamily.BOOLEAN, SqlTypeFamily.ANY, SqlTypeFamily.ANY)),
+          SqlFunctionCategory.SYSTEM);
 
   @LibraryOperator(libraries = {MYSQL})
   public static final SqlFunction FROM_BASE64 =
@@ -343,6 +366,33 @@ public abstract class SqlLibraryOperators {
           null,
           OperandTypes.INTEGER,
           SqlFunctionCategory.STRING);
+
+  @LibraryOperator(libraries = {ORACLE})
+  public static final SqlFunction TANH =
+      new SqlFunction("TANH",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.DOUBLE_NULLABLE,
+          null,
+          OperandTypes.NUMERIC,
+          SqlFunctionCategory.NUMERIC);
+
+  @LibraryOperator(libraries = {ORACLE})
+  public static final SqlFunction COSH =
+      new SqlFunction("COSH",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.DOUBLE_NULLABLE,
+          null,
+          OperandTypes.NUMERIC,
+          SqlFunctionCategory.NUMERIC);
+
+  @LibraryOperator(libraries = {ORACLE})
+  public static final SqlFunction SINH =
+      new SqlFunction("SINH",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.DOUBLE_NULLABLE,
+          null,
+          OperandTypes.NUMERIC,
+          SqlFunctionCategory.NUMERIC);
 
   @LibraryOperator(libraries = {MYSQL, POSTGRESQL})
   public static final SqlFunction MD5 =

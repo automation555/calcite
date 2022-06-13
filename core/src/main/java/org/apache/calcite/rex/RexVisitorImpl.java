@@ -16,8 +16,6 @@
  */
 package org.apache.calcite.rex;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.util.List;
 
 /**
@@ -26,7 +24,7 @@ import java.util.List;
  *
  * @param <R> Return type from each {@code visitXxx} method.
  */
-public class RexVisitorImpl<@Nullable R> implements RexVisitor<R> {
+public class RexVisitorImpl<R> implements RexVisitor<R> {
   //~ Instance fields --------------------------------------------------------
 
   protected final boolean deep;
@@ -39,19 +37,23 @@ public class RexVisitorImpl<@Nullable R> implements RexVisitor<R> {
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public R visitInputRef(RexInputRef inputRef) {
+  public R visitInputRef(RexInputRef inputRef) {
     return null;
   }
 
-  @Override public R visitLocalRef(RexLocalRef localRef) {
+  public R visitLocalRef(RexLocalRef localRef) {
     return null;
   }
 
-  @Override public R visitLiteral(RexLiteral literal) {
+  @Override public R visitLambdaRef(RexLambdaRef localRef) {
     return null;
   }
 
-  @Override public R visitOver(RexOver over) {
+  public R visitLiteral(RexLiteral literal) {
+    return null;
+  }
+
+  public R visitOver(RexOver over) {
     R r = visitCall(over);
     if (!deep) {
       return null;
@@ -60,17 +62,19 @@ public class RexVisitorImpl<@Nullable R> implements RexVisitor<R> {
     for (RexFieldCollation orderKey : window.orderKeys) {
       orderKey.left.accept(this);
     }
-    visitEach(window.partitionKeys);
+    for (RexNode partitionKey : window.partitionKeys) {
+      partitionKey.accept(this);
+    }
     window.getLowerBound().accept(this);
     window.getUpperBound().accept(this);
     return r;
   }
 
-  @Override public R visitCorrelVariable(RexCorrelVariable correlVariable) {
+  public R visitCorrelVariable(RexCorrelVariable correlVariable) {
     return null;
   }
 
-  @Override public R visitCall(RexCall call) {
+  public R visitCall(RexCall call) {
     if (!deep) {
       return null;
     }
@@ -82,15 +86,15 @@ public class RexVisitorImpl<@Nullable R> implements RexVisitor<R> {
     return r;
   }
 
-  @Override public R visitDynamicParam(RexDynamicParam dynamicParam) {
+  public R visitDynamicParam(RexDynamicParam dynamicParam) {
     return null;
   }
 
-  @Override public R visitRangeRef(RexRangeRef rangeRef) {
+  public R visitRangeRef(RexRangeRef rangeRef) {
     return null;
   }
 
-  @Override public R visitFieldAccess(RexFieldAccess fieldAccess) {
+  public R visitFieldAccess(RexFieldAccess fieldAccess) {
     if (!deep) {
       return null;
     }
@@ -98,7 +102,7 @@ public class RexVisitorImpl<@Nullable R> implements RexVisitor<R> {
     return expr.accept(this);
   }
 
-  @Override public R visitSubQuery(RexSubQuery subQuery) {
+  public R visitSubQuery(RexSubQuery subQuery) {
     if (!deep) {
       return null;
     }
@@ -115,6 +119,10 @@ public class RexVisitorImpl<@Nullable R> implements RexVisitor<R> {
   }
 
   @Override public R visitPatternFieldRef(RexPatternFieldRef fieldRef) {
+    return null;
+  }
+
+  @Override public R visitLambda(RexLambda lambda) {
     return null;
   }
 
