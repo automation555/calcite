@@ -45,13 +45,14 @@ import org.checkerframework.checker.nullness.qual.Nullable;
  * {@link RelMetadataQuery#getMaxRowCount} for the standard logical algebra.
  */
 public class RelMdMaxRowCount
-    implements MetadataHandler<BuiltInMetadata.MaxRowCount> {
+    implements MetadataHandler {
   public static final RelMetadataProvider SOURCE =
       ReflectiveRelMetadataProvider.reflectiveSource(
-          new RelMdMaxRowCount(), BuiltInMetadata.MaxRowCount.Handler.class);
+          new RelMdMaxRowCount(), BuiltInMetadata.MaxRowCountHandler.class);
 
   //~ Methods ----------------------------------------------------------------
 
+  @Deprecated
   @Override public MetadataDef<BuiltInMetadata.MaxRowCount> getDef() {
     return BuiltInMetadata.MaxRowCount.DEF;
   }
@@ -109,13 +110,16 @@ public class RelMdMaxRowCount
     if (rowCount == null) {
       rowCount = Double.POSITIVE_INFINITY;
     }
-
-    final int offset = rel.offset instanceof RexLiteral ? RexLiteral.intValue(rel.offset) : 0;
+    final int offset = rel.offset == null ? 0 : RexLiteral.intValue(rel.offset);
     rowCount = Math.max(rowCount - offset, 0D);
 
-    final double limit =
-        rel.fetch instanceof RexLiteral ? RexLiteral.intValue(rel.fetch) : rowCount;
-    return limit < rowCount ? limit : rowCount;
+    if (rel.fetch != null) {
+      final int limit = RexLiteral.intValue(rel.fetch);
+      if (limit < rowCount) {
+        return (double) limit;
+      }
+    }
+    return rowCount;
   }
 
   public Double getMaxRowCount(EnumerableLimit rel, RelMetadataQuery mq) {
@@ -123,13 +127,16 @@ public class RelMdMaxRowCount
     if (rowCount == null) {
       rowCount = Double.POSITIVE_INFINITY;
     }
-
-    final int offset = rel.offset instanceof RexLiteral ? RexLiteral.intValue(rel.offset) : 0;
+    final int offset = rel.offset == null ? 0 : RexLiteral.intValue(rel.offset);
     rowCount = Math.max(rowCount - offset, 0D);
 
-    final double limit =
-        rel.fetch instanceof RexLiteral ? RexLiteral.intValue(rel.fetch) : rowCount;
-    return limit < rowCount ? limit : rowCount;
+    if (rel.fetch != null) {
+      final int limit = RexLiteral.intValue(rel.fetch);
+      if (limit < rowCount) {
+        return (double) limit;
+      }
+    }
+    return rowCount;
   }
 
   public @Nullable Double getMaxRowCount(Aggregate rel, RelMetadataQuery mq) {

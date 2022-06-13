@@ -48,7 +48,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import static java.util.Objects.requireNonNull;
 
@@ -57,10 +56,10 @@ import static java.util.Objects.requireNonNull;
  * {@link RelMetadataQuery#getUniqueKeys} for the standard logical algebra.
  */
 public class RelMdUniqueKeys
-    implements MetadataHandler<BuiltInMetadata.UniqueKeys> {
+    implements MetadataHandler {
   public static final RelMetadataProvider SOURCE =
       ReflectiveRelMetadataProvider.reflectiveSource(
-          new RelMdUniqueKeys(), BuiltInMetadata.UniqueKeys.Handler.class);
+          new RelMdUniqueKeys(), BuiltInMetadata.UniqueKeysHandler.class);
 
   //~ Constructors -----------------------------------------------------------
 
@@ -68,6 +67,7 @@ public class RelMdUniqueKeys
 
   //~ Methods ----------------------------------------------------------------
 
+  @Deprecated // to be removed before 2.0
   @Override public MetadataDef<BuiltInMetadata.UniqueKeys> getDef() {
     return BuiltInMetadata.UniqueKeys.DEF;
   }
@@ -248,19 +248,7 @@ public class RelMdUniqueKeys
 
   public Set<ImmutableBitSet> getUniqueKeys(Aggregate rel, RelMetadataQuery mq,
       boolean ignoreNulls) {
-    if (Aggregate.isSimple(rel)) {
-      final ImmutableBitSet groupKeys = rel.getGroupSet();
-      final Set<ImmutableBitSet> inputUniqueKeys = mq
-          .getUniqueKeys(rel.getInput(), ignoreNulls);
-      if (inputUniqueKeys == null) {
-        return ImmutableSet.of(groupKeys);
-      }
-
-      // Try to find more precise unique keys.
-      final Set<ImmutableBitSet> preciseUniqueKeys = inputUniqueKeys.stream()
-          .filter(groupKeys::contains).collect(Collectors.toSet());
-      return preciseUniqueKeys.isEmpty() ? ImmutableSet.of(groupKeys) : preciseUniqueKeys;
-    } else if (ignoreNulls) {
+    if (Aggregate.isSimple(rel) || ignoreNulls) {
       // group by keys form a unique key
       return ImmutableSet.of(rel.getGroupSet());
     } else {

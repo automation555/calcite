@@ -126,12 +126,13 @@ import static java.util.Objects.requireNonNull;
  * </ol>
  */
 public class RelMdPredicates
-    implements MetadataHandler<BuiltInMetadata.Predicates> {
+    implements MetadataHandler {
   public static final RelMetadataProvider SOURCE = ReflectiveRelMetadataProvider
-      .reflectiveSource(new RelMdPredicates(), BuiltInMetadata.Predicates.Handler.class);
+      .reflectiveSource(new RelMdPredicates(), BuiltInMetadata.PredicatesHandler.class);
 
   private static final List<RexNode> EMPTY_LIST = ImmutableList.of();
 
+  @Deprecated // to be removed before 2.0
   @Override public MetadataDef<BuiltInMetadata.Predicates> getDef() {
     return BuiltInMetadata.Predicates.DEF;
   }
@@ -278,18 +279,11 @@ public class RelMdPredicates
     final RexBuilder rexBuilder = filter.getCluster().getRexBuilder();
     final RelOptPredicateList inputInfo = mq.getPulledUpPredicates(input);
 
-    // Simplify condition using RexSimplify.
-    final RexNode condition = filter.getCondition();
-    final RexExecutor executor =
-        Util.first(filter.getCluster().getPlanner().getExecutor(), RexUtil.EXECUTOR);
-    final RexSimplify simplify = new RexSimplify(rexBuilder, RelOptPredicateList.EMPTY, executor);
-    final RexNode simplifiedCondition = simplify.simplify(condition);
-
     return Util.first(inputInfo, RelOptPredicateList.EMPTY)
         .union(rexBuilder,
             RelOptPredicateList.of(rexBuilder,
                 RexUtil.retainDeterministic(
-                    RelOptUtil.conjunctions(simplifiedCondition))));
+                    RelOptUtil.conjunctions(filter.getCondition()))));
   }
 
   /**

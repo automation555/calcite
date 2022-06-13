@@ -26,7 +26,6 @@ import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.SetOp;
-import org.apache.calcite.rel.core.Snapshot;
 import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rel.core.TableFunctionScan;
 import org.apache.calcite.rel.core.TableModify;
@@ -50,10 +49,10 @@ import java.util.Set;
  * {@link RelMetadataQuery#getColumnOrigins} for the standard logical algebra.
  */
 public class RelMdColumnOrigins
-    implements MetadataHandler<BuiltInMetadata.ColumnOrigin> {
+    implements MetadataHandler {
   public static final RelMetadataProvider SOURCE =
       ReflectiveRelMetadataProvider.reflectiveSource(
-          new RelMdColumnOrigins(), BuiltInMetadata.ColumnOrigin.Handler.class);
+          new RelMdColumnOrigins(), BuiltInMetadata.ColumnOriginHandler.class);
 
   //~ Constructors -----------------------------------------------------------
 
@@ -61,6 +60,7 @@ public class RelMdColumnOrigins
 
   //~ Methods ----------------------------------------------------------------
 
+  @Deprecated
   @Override public MetadataDef<BuiltInMetadata.ColumnOrigin> getDef() {
     return BuiltInMetadata.ColumnOrigin.DEF;
   }
@@ -180,11 +180,6 @@ public class RelMdColumnOrigins
   }
 
   public @Nullable Set<RelColumnOrigin> getColumnOrigins(Exchange rel,
-      RelMetadataQuery mq, int iOutputColumn) {
-    return mq.getColumnOrigins(rel.getInput(), iOutputColumn);
-  }
-
-  public @Nullable Set<RelColumnOrigin> getColumnOrigins(Snapshot rel,
       RelMetadataQuery mq, int iOutputColumn) {
     return mq.getColumnOrigins(rel.getInput(), iOutputColumn);
   }
