@@ -131,7 +131,13 @@ void TableElement(List<SqlNode> list) :
     LOOKAHEAD(2) id = SimpleIdentifier()
     (
         type = DataType()
-        nullable = NullableOptDefaultTrue()
+        (
+            <NULL> { nullable = true; }
+        |
+            <NOT> <NULL> { nullable = false; }
+        |
+            { nullable = true; }
+        )
         (
             [ <GENERATED> <ALWAYS> ] <AS> <LPAREN>
             e = Expression(ExprContext.ACCEPT_SUB_QUERY) <RPAREN>
@@ -213,7 +219,13 @@ void AttributeDef(List<SqlNode> list) :
     id = SimpleIdentifier()
     (
         type = DataType()
-        nullable = NullableOptDefaultTrue()
+        (
+            <NULL> { nullable = true; }
+        |
+            <NOT> <NULL> { nullable = false; }
+        |
+            { nullable = true; }
+        )
     )
     [ <DEFAULT_> e = Expression(ExprContext.ACCEPT_SUB_QUERY) ]
     {
@@ -410,3 +422,43 @@ SqlDrop SqlDropFunction(Span s, boolean replace) :
         return SqlDdlNodes.dropFunction(s.end(this), ifExists, id);
     }
 }
+
+boolean IfLocalOpt() :
+{
+}
+{
+    <LOCAL> { return true; }
+|
+    { return false; }
+}
+
+boolean IfOverwriteOpt() :
+{
+}
+{
+    <OVERWRITE> { return true; }
+|
+    { return false; }
+}
+
+SqlLoadData SqlLoadData() :
+{
+    SqlParserPos pos;
+    boolean local;
+    SqlNode filePath;
+    boolean overwrite;
+    SqlIdentifier id;
+}
+{
+    { pos = getPos(); }
+    <LOAD> <DATA>
+    local = IfLocalOpt()
+    <INFILE>  filePath = StringLiteral()
+    overwrite = IfOverwriteOpt()
+    <INTO> <TABLE> id = CompoundIdentifier()
+    {
+        return SqlDmlNodes.loadData(pos, local, filePath, overwrite, id);
+    }
+}
+
+// End parserImpls.ftl
