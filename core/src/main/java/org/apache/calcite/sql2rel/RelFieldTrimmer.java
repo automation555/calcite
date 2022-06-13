@@ -265,7 +265,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
     relBuilder.push(trimResult.left)
         .project(exprList, nameList);
     return result(relBuilder.build(),
-        Mappings.createIdentity(fieldList.size()), rel);
+        Mappings.createIdentity(fieldList.size()));
   }
 
   /**
@@ -297,13 +297,9 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
       assert newFieldCount > 0 : "rel has no fields after trim: " + rel;
     }
     if (newRel.equals(rel)) {
-      return result(rel, mapping, rel);
+      return result(rel, mapping);
     }
     return trimResult;
-  }
-
-  protected TrimResult result(RelNode rel, final Mapping mapping, RelNode oldRel) {
-    return result(RelOptUtil.copyRelHints(oldRel, rel), mapping);
   }
 
   protected TrimResult result(RelNode r, final Mapping mapping) {
@@ -374,7 +370,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
       newInputs.add(trimResult.left);
     }
     RelNode newRel = rel.copy(rel.getTraitSet(), newInputs);
-    return result(newRel, Mappings.createIdentity(newRel.getRowType().getFieldCount()), rel);
+    return result(newRel, Mappings.createIdentity(newRel.getRowType().getFieldCount()));
   }
 
   /**
@@ -466,7 +462,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
         newProjects, newConditionExpr, newRowType.getFieldNames(),
         newInputRelNode.getCluster().getRexBuilder());
     final Calc newCalc = calc.copy(calc.getTraitSet(), newInputRelNode, newRexProgram);
-    return result(newCalc, mapping, calc);
+    return result(newCalc, mapping);
   }
 
   /**
@@ -535,9 +531,15 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
             mapping);
 
     relBuilder.push(newInput);
-    relBuilder.project(newProjects, newRowType.getFieldNames());
-    final RelNode newProject = relBuilder.build();
-    return result(newProject, mapping, project);
+    relBuilder.projectCorrelated(project.getVariablesSet(),
+        newProjects, newRowType.getFieldNames());
+    final RelNode newProject = ChangeTypeOfCorrelateVariables.go(
+        project.getCluster().getRexBuilder(),
+        project.getVariablesSet(),
+        newInput.getRowType(),
+        RelOptUtil.propagateRelHints(project, relBuilder.build())
+    );
+    return result(newProject, mapping);
   }
 
   /** Creates a project with a dummy column, to protect the parts of the system
@@ -628,7 +630,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
     // The result has the same mapping as the input gave us. Sometimes we
     // return fields that the consumer didn't ask for, because the filter
     // needs them for its condition.
-    return result(relBuilder.build(), inputMapping, filter);
+    return result(relBuilder.build(), inputMapping);
   }
 
   /**
@@ -684,7 +686,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
     // The result has the same mapping as the input gave us. Sometimes we
     // return fields that the consumer didn't ask for, because the filter
     // needs them for its condition.
-    return result(relBuilder.build(), inputMapping, sort);
+    return result(relBuilder.build(), inputMapping);
   }
 
   public TrimResult trimFields(
@@ -722,7 +724,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
     final RelDistribution newDistribution = distribution.apply(inputMapping);
     relBuilder.exchange(newDistribution);
 
-    return result(relBuilder.build(), inputMapping, exchange);
+    return result(relBuilder.build(), inputMapping);
   }
 
   public TrimResult trimFields(
@@ -765,7 +767,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
     RelDistribution newDistribution = distribution.apply(inputMapping);
     relBuilder.sortExchange(newDistribution, newCollation);
 
-    return result(relBuilder.build(), inputMapping, sortExchange);
+    return result(relBuilder.build(), inputMapping);
   }
 
   /**
@@ -910,7 +912,8 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
     default:
       relBuilder.join(join.getJoinType(), newConditionExpr);
     }
-    return result(relBuilder.build(), mapping, join);
+    relBuilder.hints(join.getHints());
+    return result(relBuilder.build(), mapping);
   }
 
   /**
@@ -998,7 +1001,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
     default:
       throw new AssertionError("unknown setOp " + setOp);
     }
-    return result(relBuilder.build(), mapping, setOp);
+    return result(relBuilder.build(), mapping);
   }
 
   /**
@@ -1115,8 +1118,8 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
     final RelBuilder.GroupKey groupKey = relBuilder.groupKey(newGroupSet, newGroupSets);
     relBuilder.aggregate(groupKey, newAggCallList);
 
-    final RelNode newAggregate = relBuilder.build();
-    return result(newAggregate, mapping, aggregate);
+    final RelNode newAggregate = RelOptUtil.propagateRelHints(aggregate, relBuilder.build());
+    return result(newAggregate, mapping);
   }
 
   /**
@@ -1163,7 +1166,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
 
     // Always project all fields.
     Mapping mapping = Mappings.createIdentity(fieldCount);
-    return result(newModifier, mapping, modifier);
+    return result(newModifier, mapping);
   }
 
   /**
@@ -1202,7 +1205,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
 
     // Always project all fields.
     Mapping mapping = Mappings.createIdentity(fieldCount);
-    return result(newTabFun, mapping, tabFun);
+    return result(newTabFun, mapping);
   }
 
   /**
@@ -1246,7 +1249,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
     final LogicalValues newValues =
         LogicalValues.create(values.getCluster(), newRowType,
             newTuples.build());
-    return result(newValues, mapping, values);
+    return result(newValues, mapping);
   }
 
   protected Mapping createMapping(ImmutableBitSet fieldsUsed, int fieldCount) {
@@ -1298,7 +1301,7 @@ public class RelFieldTrimmer implements ReflectiveVisitor {
     }
 
     final Mapping mapping = createMapping(fieldsUsed, fieldCount);
-    return result(newTableAccessRel, mapping, tableAccessRel);
+    return result(newTableAccessRel, mapping);
   }
 
   //~ Inner Classes ----------------------------------------------------------

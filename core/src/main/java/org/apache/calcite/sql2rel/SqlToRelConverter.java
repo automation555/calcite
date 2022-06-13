@@ -4393,10 +4393,13 @@ public class SqlToRelConverter {
 
     RelNode project = relBuilder.build();
 
-    final RelNode r;
+    RelNode r;
     final CorrelationUse p = getCorrelationUse(bb, project);
     if (p != null) {
-      r = p.r;
+      assert p.r instanceof Project;
+      Project proj = (Project) p.r;
+      r = proj.copy(proj.getTraitSet(), proj.getInput(), proj.getProjects(),
+          proj.getRowType(), ImmutableSet.of(p.id));
     } else {
       r = project;
     }
@@ -6476,7 +6479,8 @@ public class SqlToRelConverter {
           newInput,
           project.getHints(),
           newProjections.build(),
-          project.getRowType().getFieldNames());
+          project.getRowType().getFieldNames(),
+          project.getVariablesSet());
     }
 
     private Set<Integer> requiredJsonOutputFromParent(RelNode relNode) {
