@@ -34,8 +34,7 @@ import org.apache.calcite.util.ImmutableBitSet;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.collect.ImmutableList;
-
-import org.checkerframework.checker.nullness.qual.Nullable;
+import com.google.common.collect.Sets;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -53,6 +52,16 @@ public class ElasticsearchAggregate extends Aggregate implements ElasticsearchRe
   private static final Set<SqlKind> SUPPORTED_AGGREGATIONS =
       EnumSet.of(SqlKind.COUNT, SqlKind.MAX, SqlKind.MIN, SqlKind.AVG,
           SqlKind.SUM, SqlKind.ANY_VALUE);
+
+  public static final Set<String> ES_AGG_NAME = Sets.newHashSet(
+      "sum",
+      "cardinality",
+      "value_count",
+      "min",
+      "max",
+      "avg",
+      "terms"
+  );
 
   /** Creates an ElasticsearchAggregate. */
   ElasticsearchAggregate(RelOptCluster cluster,
@@ -119,8 +128,7 @@ public class ElasticsearchAggregate extends Aggregate implements ElasticsearchRe
     }
   }
 
-  @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
-      RelMetadataQuery mq) {
+  @Override public RelOptCost computeSelfCost(RelOptPlanner planner, RelMetadataQuery mq) {
     return super.computeSelfCost(planner, mq).multiplyBy(0.1);
   }
 
@@ -180,7 +188,7 @@ public class ElasticsearchAggregate extends Aggregate implements ElasticsearchRe
     }
   }
 
-  private static List<String> fieldNames(RelDataType relDataType) {
+  private List<String> fieldNames(RelDataType relDataType) {
     List<String> names = new ArrayList<>();
 
     for (RelDataTypeField rdtf : relDataType.getFieldList()) {

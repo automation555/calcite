@@ -34,31 +34,41 @@ import org.apache.calcite.schema.TranslatableTable;
 import org.apache.calcite.schema.impl.AbstractTableQueryable;
 import org.apache.calcite.sql.type.SqlTypeName;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.collect.ImmutableMap;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
+import static org.apache.calcite.adapter.elasticsearch.ElasticsearchAggregate.ES_AGG_NAME;
+
 /**
  * Table based on an Elasticsearch index.
  */
 public class ElasticsearchTable extends AbstractQueryableTable implements TranslatableTable {
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(ElasticsearchTable.class);
 
   /**
    * Used for constructing (possibly nested) Elastic aggregation nodes.
@@ -207,6 +217,14 @@ public class ElasticsearchTable extends AbstractQueryableTable implements Transl
     // construct nested aggregations node(s)
     ObjectNode parent = query.with(AGGREGATIONS);
     for (String name: orderedGroupBy) {
+
+      //select id, count(id) from test group by id order by count(id)
+      //id should not be group again
+      if (null != getFieldTypeFromName(name, aggregations)
+          && transport.mapping.mapping().get(name) == null) {
+        continue;
+      }
+
       final String aggName = "g_" + name;
       fieldMap.put(aggName, name);
 
@@ -304,6 +322,36 @@ public class ElasticsearchTable extends AbstractQueryableTable implements Transl
     return Linq4j.asEnumerable(hits.hits()).select(getter);
   }
 
+  private String getFieldTypeFromName(String key, List<Map.Entry<String, String>> aggregations)
+      throws JsonProcessingException {
+    ElasticsearchMapping.Datatype type = transport.mapping.mapping().get(key);
+    if (null != type) {
+      return type.name();
+    }
+
+    Optional<Map.Entry<String, String>> entryOptional = aggregations.stream()
+        .filter(agg -> agg.getKey().equals(key))
+        .findAny();
+    if (!entryOptional.isPresent()) {
+      return null;
+    }
+
+    String typeJson = entryOptional.get().getValue();
+    return getAggregationsFileds(mapper.readTree(typeJson));
+  }
+
+  private String getAggregationsFileds(JsonNode jsonNode) {
+    Iterator<Map.Entry<String, JsonNode>> it = jsonNode.fields();
+    while (it.hasNext()) {
+      Map.Entry<String, JsonNode> entry = it.next();
+      if (ES_AGG_NAME.contains(entry.getKey())) {
+        return entry.getValue().get("field").asText();
+      }
+    }
+
+    return null;
+  }
+
   @Override public RelDataType getRowType(RelDataTypeFactory relDataTypeFactory) {
     final RelDataType mapType = relDataTypeFactory.createMapType(
         relDataTypeFactory.createSqlType(SqlTypeName.VARCHAR),
@@ -340,7 +388,7 @@ public class ElasticsearchTable extends AbstractQueryableTable implements Transl
       super(queryProvider, schema, table, tableName);
     }
 
-    @Override public Enumerator<T> enumerator() {
+    public Enumerator<T> enumerator() {
       return null;
     }
 
