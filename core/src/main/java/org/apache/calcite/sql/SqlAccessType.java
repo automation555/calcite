@@ -20,9 +20,7 @@ import java.util.EnumSet;
 import java.util.Locale;
 
 /**
- * SqlAccessType is represented by a set of allowed access types.
- *
- * @see SqlAccessEnum
+ * SqlAccessType is represented by a set of allowed access types
  */
 public class SqlAccessType {
   //~ Static fields/initializers ---------------------------------------------
@@ -33,6 +31,8 @@ public class SqlAccessType {
       new SqlAccessType(EnumSet.of(SqlAccessEnum.SELECT));
   public static final SqlAccessType WRITE_ONLY =
       new SqlAccessType(EnumSet.of(SqlAccessEnum.INSERT));
+  public static final SqlAccessType NONE =
+      new SqlAccessType(EnumSet.noneOf(SqlAccessEnum.class));
 
   //~ Instance fields --------------------------------------------------------
 
@@ -50,7 +50,7 @@ public class SqlAccessType {
     return accessEnums.contains(access);
   }
 
-  @Override public String toString() {
+  public String toString() {
     return accessEnums.toString();
   }
 
@@ -72,3 +72,5 @@ public class SqlAccessType {
     return create(accessNames);
   }
 }
+
+// End SqlAccessType.java

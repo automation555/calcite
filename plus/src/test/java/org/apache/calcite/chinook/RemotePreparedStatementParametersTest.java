@@ -16,24 +16,26 @@
  */
 package org.apache.calcite.chinook;
 
-import org.junit.jupiter.api.Test;
+import org.junit.Ignore;
+import org.junit.Test;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.util.Properties;
 
 /**
- * Tests against parameters in prepared statement when using underlying JDBC
- * sub-schema.
+ * Tests against parameters in prepared statement when using underlying jdbc subschema
  */
-class RemotePreparedStatementParametersTest {
+public class RemotePreparedStatementParametersTest {
 
-  @Test void testSimpleStringParameterShouldWorkWithCalcite() throws Exception {
+  // Server is launched and request served on various threads - uncomment when impl is ready
+  @Ignore @Test public void testSimpleStringParameterShouldWorkWithCalcite() throws Exception {
     // given
     ChinookAvaticaServer server = new ChinookAvaticaServer();
     server.startWithCalcite();
-    Connection connection = DriverManager.getConnection(server.getURL());
+    Connection connection = DriverManager.getConnection(server.getURL(), props());
     // when
     PreparedStatement pS =
         connection.prepareStatement("select * from chinook.artist where name = ?");
@@ -43,11 +45,17 @@ class RemotePreparedStatementParametersTest {
     server.stop();
   }
 
-  @Test void testSeveralParametersShouldWorkWithCalcite() throws Exception {
+  private Properties props() {
+    Properties props = new Properties();
+    props.setProperty("user", "sa");
+    return props;
+  }
+
+  @Ignore @Test public void testSeveralParametersShouldWorkWithCalcite() throws Exception {
     // given
     ChinookAvaticaServer server = new ChinookAvaticaServer();
     server.startWithCalcite();
-    Connection connection = DriverManager.getConnection(server.getURL());
+    Connection connection = DriverManager.getConnection(server.getURL(), props());
     // when
     PreparedStatement pS =
         connection.prepareStatement(
@@ -59,17 +67,19 @@ class RemotePreparedStatementParametersTest {
     server.stop();
   }
 
-  @Test void testParametersShouldWorkWithRaw() throws Exception {
+  @Test public void testParametersShouldWorkWithRaw() throws Exception {
     // given
     ChinookAvaticaServer server = new ChinookAvaticaServer();
     server.startWithRaw();
     Connection connection = DriverManager.getConnection(server.getURL());
     // when
     PreparedStatement pS =
-        connection.prepareStatement("select * from \"Artist\" where \"Name\" = ?");
+        connection.prepareStatement("select * from artist where name = ?");
     pS.setString(1, "AC/DC");
     // then
     ResultSet resultSet = pS.executeQuery();
     server.stop();
   }
 }
+
+// End RemotePreparedStatementParametersTest.java

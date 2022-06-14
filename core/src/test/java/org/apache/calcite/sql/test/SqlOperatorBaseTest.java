@@ -16,9 +16,9 @@
  */
 package org.apache.calcite.sql.test;
 
+import org.apache.calcite.access.CalcitePrincipalFairy;
 import org.apache.calcite.avatica.util.DateTimeUtils;
 import org.apache.calcite.config.CalciteConnectionProperty;
-import org.apache.calcite.config.CalciteSystemProperty;
 import org.apache.calcite.linq4j.Linq4j;
 import org.apache.calcite.plan.Strong;
 import org.apache.calcite.rel.type.RelDataType;
@@ -37,19 +37,17 @@ import org.apache.calcite.sql.SqlOperandCountRange;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.dialect.AnsiSqlDialect;
 import org.apache.calcite.sql.dialect.CalciteSqlDialect;
-import org.apache.calcite.sql.fun.SqlLibrary;
-import org.apache.calcite.sql.fun.SqlLibraryOperatorTableFactory;
-import org.apache.calcite.sql.fun.SqlLibraryOperators;
+import org.apache.calcite.sql.fun.OracleSqlOperatorTable;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.pretty.SqlPrettyWriter;
 import org.apache.calcite.sql.type.BasicSqlType;
 import org.apache.calcite.sql.type.SqlOperandTypeChecker;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.sql.util.ChainedSqlOperatorTable;
 import org.apache.calcite.sql.util.SqlString;
 import org.apache.calcite.sql.validate.SqlConformance;
 import org.apache.calcite.sql.validate.SqlConformanceEnum;
-import org.apache.calcite.sql.validate.SqlNameMatchers;
 import org.apache.calcite.sql.validate.SqlValidatorImpl;
 import org.apache.calcite.sql.validate.SqlValidatorScope;
 import org.apache.calcite.test.CalciteAssert;
@@ -57,7 +55,6 @@ import org.apache.calcite.test.SqlLimitsTest;
 import org.apache.calcite.util.Bug;
 import org.apache.calcite.util.Holder;
 import org.apache.calcite.util.Pair;
-import org.apache.calcite.util.TestUtil;
 import org.apache.calcite.util.TimestampString;
 import org.apache.calcite.util.Util;
 
@@ -69,6 +66,7 @@ import org.junit.Test;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -77,12 +75,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Properties;
 import java.util.TimeZone;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.junit.Assert.assertEquals;
@@ -306,12 +305,13 @@ public abstract class SqlOperatorBaseTest {
   @Before
   public void setUp() throws Exception {
     tester.setFor(null);
+    CalcitePrincipalFairy.INSTANCE.register(null);
   }
 
   protected SqlTester oracleTester() {
     return tester.withOperatorTable(
-            SqlLibraryOperatorTableFactory.INSTANCE
-                .getOperatorTable(SqlLibrary.STANDARD, SqlLibrary.ORACLE))
+        ChainedSqlOperatorTable.of(OracleSqlOperatorTable.instance(),
+            SqlStdOperatorTable.instance()))
         .withConnectionFactory(
             CalciteAssert.EMPTY_CONNECTION_FACTORY
                 .with(new CalciteAssert
@@ -326,26 +326,14 @@ public abstract class SqlOperatorBaseTest {
     return tester
         .withConformance(conformance)
         .withOperatorTable(
-            SqlLibraryOperatorTableFactory.INSTANCE
-                .getOperatorTable(SqlLibrary.STANDARD, SqlLibrary.ORACLE))
+            ChainedSqlOperatorTable.of(OracleSqlOperatorTable.instance(),
+                SqlStdOperatorTable.instance()))
         .withConnectionFactory(
             CalciteAssert.EMPTY_CONNECTION_FACTORY
                 .with(new CalciteAssert
                     .AddSchemaSpecPostProcessor(CalciteAssert.SchemaSpec.HR))
                 .with("fun", "oracle")
                 .with("conformance", conformance));
-  }
-
-  /** Creates a tester with special sql library. */
-  protected SqlTester tester(SqlLibrary library) {
-    return tester.withOperatorTable(
-        SqlLibraryOperatorTableFactory.INSTANCE
-            .getOperatorTable(SqlLibrary.STANDARD, library))
-        .withConnectionFactory(
-            CalciteAssert.EMPTY_CONNECTION_FACTORY
-                .with(new CalciteAssert
-                    .AddSchemaSpecPostProcessor(CalciteAssert.SchemaSpec.HR))
-                .with("fun", library.name()));
   }
 
   //--- Tests -----------------------------------------------------------
@@ -361,13 +349,19 @@ public abstract class SqlOperatorBaseTest {
     for (SqlOperator sqlOperator : operatorTable.getOperatorList()) {
       String operatorName = sqlOperator.getName();
       List<SqlOperator> routines = new ArrayList<>();
-      final SqlIdentifier id =
-          new SqlIdentifier(operatorName, SqlParserPos.ZERO);
-      operatorTable.lookupOperatorOverloads(id, null, sqlOperator.getSyntax(),
-          routines, SqlNameMatchers.withCaseSensitive(true));
+      operatorTable.lookupOperatorOverloads(
+          new SqlIdentifier(operatorName, SqlParserPos.ZERO),
+          null,
+          sqlOperator.getSyntax(),
+          routines);
 
-      routines.removeIf(operator ->
-          !sqlOperator.getClass().isInstance(operator));
+      Iterator<SqlOperator> iter = routines.iterator();
+      while (iter.hasNext()) {
+        SqlOperator operator = iter.next();
+        if (!sqlOperator.getClass().isInstance(operator)) {
+          iter.remove();
+        }
+      }
       assertThat(routines.size(), equalTo(1));
       assertThat(sqlOperator, equalTo(routines.get(0)));
     }
@@ -1526,7 +1520,7 @@ public abstract class SqlOperatorBaseTest {
           throw new AssertionError("unexpected time unit: " + timeUnit);
         }
       } catch (InterruptedException e) {
-        throw TestUtil.rethrow(e);
+        throw new RuntimeException(e);
       }
     }
   }
@@ -1832,10 +1826,9 @@ public abstract class SqlOperatorBaseTest {
     tester.checkScalar("{fn TRUNCATE(-12.34, -1)}", -10, "DECIMAL(4, 2) NOT NULL");
 
     // String Functions
-    tester.checkScalar("{fn ASCII('a')}", 97, "INTEGER NOT NULL");
-    tester.checkScalar("{fn ASCII('ABC')}", "65", "INTEGER NOT NULL");
-    tester.checkNull("{fn ASCII(cast(null as varchar(1)))}");
-
+    if (false) {
+      tester.checkScalar("{fn ASCII(string)}", null, "");
+    }
     if (false) {
       tester.checkScalar("{fn CHAR(code)}", null, "");
     }
@@ -1843,21 +1836,12 @@ public abstract class SqlOperatorBaseTest {
         "{fn CONCAT('foo', 'bar')}",
         "foobar",
         "CHAR(6) NOT NULL");
-
-    tester.checkScalar("{fn DIFFERENCE('Miller', 'miller')}", "4", "INTEGER NOT NULL");
-    tester.checkNull("{fn DIFFERENCE('muller', cast(null as varchar(1)))}");
-
-    tester.checkString("{fn REVERSE('abc')}", "cba", "VARCHAR(3) NOT NULL");
-    tester.checkNull("{fn REVERSE(cast(null as varchar(1)))}");
-
-    tester.checkString("{fn LEFT('abcd', 3)}", "abc", "VARCHAR(4) NOT NULL");
-    tester.checkString("{fn LEFT('abcd', 4)}", "abcd", "VARCHAR(4) NOT NULL");
-    tester.checkString("{fn LEFT('abcd', 5)}", "abcd", "VARCHAR(4) NOT NULL");
-    tester.checkNull("{fn LEFT(cast(null as varchar(1)), 3)}");
-    tester.checkString("{fn RIGHT('abcd', 3)}", "bcd", "VARCHAR(4) NOT NULL");
-    tester.checkString("{fn RIGHT('abcd', 4)}", "abcd", "VARCHAR(4) NOT NULL");
-    tester.checkString("{fn RIGHT('abcd', 5)}", "abcd", "VARCHAR(4) NOT NULL");
-    tester.checkNull("{fn RIGHT(cast(null as varchar(1)), 3)}");
+    if (false) {
+      tester.checkScalar(
+          "{fn DIFFERENCE(string1, string2)}",
+          null,
+          "");
+    }
 
     // REVIEW: is this result correct? I think it should be "abcCdef"
     tester.checkScalar(
@@ -1868,6 +1852,9 @@ public abstract class SqlOperatorBaseTest {
         "{fn LCASE('foo' || 'bar')}",
         "foobar",
         "CHAR(6) NOT NULL");
+    if (false) {
+      tester.checkScalar("{fn LEFT(string, count)}", null, "");
+    }
     if (false) {
       tester.checkScalar("{fn LENGTH(string)}", null, "");
     }
@@ -1886,9 +1873,9 @@ public abstract class SqlOperatorBaseTest {
         "xxx  ",
         "VARCHAR(6) NOT NULL");
 
-    tester.checkScalar("{fn REPEAT('a', -100)}", "", "VARCHAR(1) NOT NULL");
-    tester.checkNull("{fn REPEAT('abc', cast(null as integer))}");
-    tester.checkNull("{fn REPEAT(cast(null as varchar(1)), cast(null as integer))}");
+    if (false) {
+      tester.checkScalar("{fn REPEAT(string, count)}", null, "");
+    }
 
     tester.checkString("{fn REPLACE('JACK and JUE','J','BL')}",
         "BLACK and BLUE", "VARCHAR(12) NOT NULL");
@@ -1906,18 +1893,21 @@ public abstract class SqlOperatorBaseTest {
     tester.checkNull("{fn REPLACE('ciao', cast(null as varchar(3)), 'zz')}");
     tester.checkNull("{fn REPLACE('ciao', 'bella', cast(null as varchar(3)))}");
 
+    if (false) {
+      tester.checkScalar("{fn RIGHT(string, count)}", null, "");
+    }
 
     tester.checkScalar(
         "{fn RTRIM(' xxx  ')}",
         " xxx",
         "VARCHAR(6) NOT NULL");
 
-    tester.checkScalar("{fn SOUNDEX('Miller')}", "M460", "VARCHAR(4) NOT NULL");
-    tester.checkNull("{fn SOUNDEX(cast(null as varchar(1)))}");
-
-    tester.checkScalar("{fn SPACE(-100)}", "", "VARCHAR(2000) NOT NULL");
-    tester.checkNull("{fn SPACE(cast(null as integer))}");
-
+    if (false) {
+      tester.checkScalar("{fn SOUNDEX(string)}", null, "");
+    }
+    if (false) {
+      tester.checkScalar("{fn SPACE(count)}", null, "");
+    }
     tester.checkScalar(
         "{fn SUBSTRING('abcdef', 2, 3)}",
         "bcd",
@@ -1927,10 +1917,9 @@ public abstract class SqlOperatorBaseTest {
     // Time and Date Functions
     tester.checkType("{fn CURDATE()}", "DATE NOT NULL");
     tester.checkType("{fn CURTIME()}", "TIME(0) NOT NULL");
-    tester.checkScalar("{fn DAYNAME(DATE '2014-12-10')}",
-        // Day names in root locale changed from long to short in JDK 9
-        TestUtil.getJavaMajorVersion() <= 8 ? "Wednesday" : "Wed",
-        "VARCHAR(2000) NOT NULL");
+    if (false) {
+      tester.checkScalar("{fn DAYNAME(date)}", null, "");
+    }
     tester.checkScalar("{fn DAYOFMONTH(DATE '2014-12-10')}", 10,
         "BIGINT NOT NULL");
     if (Bug.CALCITE_2539_FIXED) {
@@ -1946,17 +1935,16 @@ public abstract class SqlOperatorBaseTest {
     tester.checkScalar("{fn MINUTE(TIMESTAMP '2014-12-10 12:34:56')}", 34,
         "BIGINT NOT NULL");
     tester.checkScalar("{fn MONTH(DATE '2014-12-10')}", 12, "BIGINT NOT NULL");
-    tester.checkScalar("{fn MONTHNAME(DATE '2014-12-10')}",
-        // Month names in root locale changed from long to short in JDK 9
-        TestUtil.getJavaMajorVersion() <= 8 ? "December" : "Dec",
-        "VARCHAR(2000) NOT NULL");
+    if (false) {
+      tester.checkScalar("{fn MONTHNAME(date)}", null, "");
+    }
     tester.checkType("{fn NOW()}", "TIMESTAMP(0) NOT NULL");
     tester.checkScalar("{fn QUARTER(DATE '2014-12-10')}", "4",
         "BIGINT NOT NULL");
     tester.checkScalar("{fn SECOND(TIMESTAMP '2014-12-10 12:34:56')}", 56,
         "BIGINT NOT NULL");
     tester.checkScalar("{fn TIMESTAMPADD(HOUR, 5,"
-            + " TIMESTAMP '2014-03-29 12:34:56')}",
+        + " TIMESTAMP '2014-03-29 12:34:56')}",
         "2014-03-29 17:34:56", "TIMESTAMP(0) NOT NULL");
     tester.checkScalar("{fn TIMESTAMPDIFF(HOUR,"
         + " TIMESTAMP '2014-03-29 12:34:56',"
@@ -1983,19 +1971,6 @@ public abstract class SqlOperatorBaseTest {
     tester.checkScalar("{fn CONVERT(INTERVAL '1' DAY, SQL_INTERVAL_DAY_TO_SECOND)}",
         "+1 00:00:00.000000", "INTERVAL DAY TO SECOND NOT NULL");
 
-  }
-
-  @Test public void testChr() {
-    tester.setFor(SqlLibraryOperators.CHR, VM_FENNEL, VM_JAVA);
-    final SqlTester tester1 = oracleTester();
-    tester1.checkScalar("chr(97)",
-            "a", "CHAR(1) NOT NULL");
-    tester1.checkScalar("chr(48)",
-            "0", "CHAR(1) NOT NULL");
-    tester1.checkScalar("chr(0)",
-            String.valueOf('\u0000'), "CHAR(1) NOT NULL");
-    tester.checkFails("^chr(97.1)^",
-            "No match found for function signature CHR\\(<NUMERIC>\\)", false);
   }
 
   @Test public void testSelect() {
@@ -2205,7 +2180,7 @@ public abstract class SqlOperatorBaseTest {
     // submit as non-runtime because the janino exception does not have
     // error position information and the framework is unhappy with that.
     tester1.checkFails(
-        "3 % case 'a' when 'a' then 0 end", DIVISION_BY_ZERO_MESSAGE, true);
+            "3 % case 'a' when 'a' then 0 end", DIVISION_BY_ZERO_MESSAGE, true);
   }
 
   @Test public void testDivideOperator() {
@@ -4014,17 +3989,12 @@ public abstract class SqlOperatorBaseTest {
             + "      \\^",
         true);   // illegal range
 
-    // Slightly different error message from JDK 13 onwards
-    final String expectedError =
-        TestUtil.getJavaMajorVersion() >= 13
-            ? "Illegal repetition near index 22\n"
-              + "\\[\\:LOWER\\:\\]\\{2\\}\\[\\:DIGIT\\:\\]\\{,5\\}\n"
-              + "                      \\^"
-            : "Illegal repetition near index 20\n"
-                + "\\[\\:LOWER\\:\\]\\{2\\}\\[\\:DIGIT\\:\\]\\{,5\\}\n"
-                + "                    \\^";
-    tester.checkFails("'yd3223' similar to '[:LOWER:]{2}[:DIGIT:]{,5}'",
-        expectedError, true);
+    tester.checkFails(
+        "'yd3223' similar to '[:LOWER:]{2}[:DIGIT:]{,5}'",
+        "Illegal repetition near index 20\n"
+            + "\\[\\:LOWER\\:\\]\\{2\\}\\[\\:DIGIT\\:\\]\\{,5\\}\n"
+            + "                    \\^",
+        true);
 
     if (Bug.CALCITE_2539_FIXED) {
       tester.checkFails(
@@ -4134,7 +4104,7 @@ public abstract class SqlOperatorBaseTest {
 
   @Test public void testTranslate3Func() {
     final SqlTester tester1 = oracleTester();
-    tester1.setFor(SqlLibraryOperators.TRANSLATE3);
+    tester1.setFor(OracleSqlOperatorTable.TRANSLATE3);
     tester1.checkString(
         "translate('aabbcc', 'ab', '+-')",
         "++--cc",
@@ -4279,162 +4249,6 @@ public abstract class SqlOperatorBaseTest {
     tester.checkNull("CHARACTER_LENGTH(cast(null as varchar(1)))");
   }
 
-  @Test public void testAsciiFunc() {
-    tester.setFor(SqlStdOperatorTable.ASCII);
-    tester.checkScalarExact("ASCII('')", "0");
-    tester.checkScalarExact("ASCII('a')", "97");
-    tester.checkScalarExact("ASCII('1')", "49");
-    tester.checkScalarExact("ASCII('abc')", "97");
-    tester.checkScalarExact("ASCII('ABC')", "65");
-    tester.checkScalarExact("ASCII(_UTF8'\u0082')", "130");
-    tester.checkScalarExact("ASCII(_UTF8'\u5B57')", "23383");
-    tester.checkScalarExact("ASCII(_UTF8'\u03a9')", "937"); // omega
-    tester.checkNull("ASCII(cast(null as varchar(1)))");
-  }
-
-  @Test public void testToBase64() {
-    final SqlTester tester1 = tester(SqlLibrary.MYSQL);
-    tester1.setFor(SqlLibraryOperators.TO_BASE64);
-    tester1.checkString("to_base64(x'546869732069732061207465737420537472696e672e')",
-            "VGhpcyBpcyBhIHRlc3QgU3RyaW5nLg==",
-            "VARCHAR NOT NULL");
-    tester1.checkString("to_base64(x'546869732069732061207465737420537472696e672e20636865"
-                    + "636b20726573756c7465206f7574206f66203736546869732069732061207465737420537472696e"
-                    + "672e546869732069732061207465737420537472696e672e54686973206973206120746573742053"
-                    + "7472696e672e546869732069732061207465737420537472696e672e546869732069732061207465"
-                    + "737420537472696e672e20546869732069732061207465737420537472696e672e20636865636b20"
-                    + "726573756c7465206f7574206f66203736546869732069732061207465737420537472696e672e54"
-                    + "6869732069732061207465737420537472696e672e54686973206973206120746573742053747269"
-                    + "6e672e546869732069732061207465737420537472696e672e546869732069732061207465737420"
-                    + "537472696e672e20546869732069732061207465737420537472696e672e20636865636b20726573"
-                    + "756c7465206f7574206f66203736546869732069732061207465737420537472696e672e54686973"
-                    + "2069732061207465737420537472696e672e546869732069732061207465737420537472696e672e"
-                    + "546869732069732061207465737420537472696e672e546869732069732061207465737420537472"
-                    + "696e672e')",
-            "VGhpcyBpcyBhIHRlc3QgU3RyaW5nLiBjaGVjayByZXN1bHRlIG91dCBvZiA3NlRoaXMgaXMgYSB0\n"
-                    + "ZXN0IFN0cmluZy5UaGlzIGlzIGEgdGVzdCBTdHJpbmcuVGhpcyBpcyBhIHRlc3QgU3RyaW5nLlRo\n"
-                    + "aXMgaXMgYSB0ZXN0IFN0cmluZy5UaGlzIGlzIGEgdGVzdCBTdHJpbmcuIFRoaXMgaXMgYSB0ZXN0\n"
-                    + "IFN0cmluZy4gY2hlY2sgcmVzdWx0ZSBvdXQgb2YgNzZUaGlzIGlzIGEgdGVzdCBTdHJpbmcuVGhp\n"
-                    + "cyBpcyBhIHRlc3QgU3RyaW5nLlRoaXMgaXMgYSB0ZXN0IFN0cmluZy5UaGlzIGlzIGEgdGVzdCBT\n"
-                    + "dHJpbmcuVGhpcyBpcyBhIHRlc3QgU3RyaW5nLiBUaGlzIGlzIGEgdGVzdCBTdHJpbmcuIGNoZWNr\n"
-                    + "IHJlc3VsdGUgb3V0IG9mIDc2VGhpcyBpcyBhIHRlc3QgU3RyaW5nLlRoaXMgaXMgYSB0ZXN0IFN0\n"
-                    + "cmluZy5UaGlzIGlzIGEgdGVzdCBTdHJpbmcuVGhpcyBpcyBhIHRlc3QgU3RyaW5nLlRoaXMgaXMg\n"
-                    + "YSB0ZXN0IFN0cmluZy4=",
-            "VARCHAR NOT NULL");
-    tester1.checkString("to_base64('This is a test String.')",
-            "VGhpcyBpcyBhIHRlc3QgU3RyaW5nLg==",
-            "VARCHAR NOT NULL");
-    tester1.checkString("to_base64('This is a test String. check resulte out of 76T"
-                    + "his is a test String.This is a test String.This is a test String.This is a "
-                    + "test String.This is a test String. This is a test String. check resulte out "
-                    + "of 76This is a test String.This is a test String.This is a test String.This "
-                    + "is a test String.This is a test String. This is a test String. check resulte "
-                    + "out of 76This is a test String.This is a test String.This is a test String."
-                    + "This is a test String.This is a test String.')",
-            "VGhpcyBpcyBhIHRlc3QgU3RyaW5nLiBjaGVjayByZXN1bHRlIG91dCBvZiA3NlRoaXMgaXMgYSB0\n"
-                    + "ZXN0IFN0cmluZy5UaGlzIGlzIGEgdGVzdCBTdHJpbmcuVGhpcyBpcyBhIHRlc3QgU3RyaW5nLlRo\n"
-                    + "aXMgaXMgYSB0ZXN0IFN0cmluZy5UaGlzIGlzIGEgdGVzdCBTdHJpbmcuIFRoaXMgaXMgYSB0ZXN0\n"
-                    + "IFN0cmluZy4gY2hlY2sgcmVzdWx0ZSBvdXQgb2YgNzZUaGlzIGlzIGEgdGVzdCBTdHJpbmcuVGhp\n"
-                    + "cyBpcyBhIHRlc3QgU3RyaW5nLlRoaXMgaXMgYSB0ZXN0IFN0cmluZy5UaGlzIGlzIGEgdGVzdCBT\n"
-                    + "dHJpbmcuVGhpcyBpcyBhIHRlc3QgU3RyaW5nLiBUaGlzIGlzIGEgdGVzdCBTdHJpbmcuIGNoZWNr\n"
-                    + "IHJlc3VsdGUgb3V0IG9mIDc2VGhpcyBpcyBhIHRlc3QgU3RyaW5nLlRoaXMgaXMgYSB0ZXN0IFN0\n"
-                    + "cmluZy5UaGlzIGlzIGEgdGVzdCBTdHJpbmcuVGhpcyBpcyBhIHRlc3QgU3RyaW5nLlRoaXMgaXMg\n"
-                    + "YSB0ZXN0IFN0cmluZy4=",
-            "VARCHAR NOT NULL");
-    tester1.checkString("to_base64('')", "", "VARCHAR NOT NULL");
-    tester1.checkString("to_base64('a')", "YQ==", "VARCHAR NOT NULL");
-    tester1.checkString("to_base64(x'61')", "YQ==", "VARCHAR NOT NULL");
-  }
-
-  @Test public void testFromBase64() {
-    final SqlTester tester1 = tester(SqlLibrary.MYSQL);
-    tester1.setFor(SqlLibraryOperators.FROM_BASE64);
-    tester1.checkString("from_base64('VGhpcyBpcyBhIHRlc3QgU3RyaW5nLg==')",
-            "546869732069732061207465737420537472696e672e",
-            "VARBINARY NOT NULL");
-    tester1.checkString("from_base64('VGhpcyBpcyBhIHRlc\t3QgU3RyaW5nLg==')",
-            "546869732069732061207465737420537472696e672e",
-            "VARBINARY NOT NULL");
-    tester1.checkString("from_base64('VGhpcyBpcyBhIHRlc\t3QgU3\nRyaW5nLg==')",
-            "546869732069732061207465737420537472696e672e",
-            "VARBINARY NOT NULL");
-    tester1.checkString("from_base64('VGhpcyB  pcyBhIHRlc3Qg\tU3Ry\naW5nLg==')",
-            "546869732069732061207465737420537472696e672e",
-            "VARBINARY NOT NULL");
-    tester1.checkNull("from_base64('-1')");
-    tester1.checkNull("from_base64('-100')");
-  }
-
-  @Test public void testRepeatFunc() {
-    final SqlTester tester1 = tester(SqlLibrary.MYSQL);
-    tester1.setFor(SqlLibraryOperators.REPEAT);
-    tester1.checkString("REPEAT('a', -100)", "", "VARCHAR(1) NOT NULL");
-    tester1.checkString("REPEAT('a', -1)", "", "VARCHAR(1) NOT NULL");
-    tester1.checkString("REPEAT('a', 0)", "", "VARCHAR(1) NOT NULL");
-    tester1.checkString("REPEAT('a', 2)", "aa", "VARCHAR(1) NOT NULL");
-    tester1.checkString("REPEAT('abc', 3)", "abcabcabc", "VARCHAR(3) NOT NULL");
-    tester1.checkNull("REPEAT(cast(null as varchar(1)), -1)");
-    tester1.checkNull("REPEAT(cast(null as varchar(1)), 2)");
-    tester1.checkNull("REPEAT('abc', cast(null as integer))");
-    tester1.checkNull("REPEAT(cast(null as varchar(1)), cast(null as integer))");
-
-  }
-
-  @Test public void testSpaceFunc() {
-    final SqlTester tester1 = tester(SqlLibrary.MYSQL);
-    tester1.setFor(SqlLibraryOperators.SPACE);
-    tester1.checkString("SPACE(-100)", "", "VARCHAR(2000) NOT NULL");
-    tester1.checkString("SPACE(-1)", "", "VARCHAR(2000) NOT NULL");
-    tester1.checkString("SPACE(0)", "", "VARCHAR(2000) NOT NULL");
-    tester1.checkString("SPACE(2)", "  ", "VARCHAR(2000) NOT NULL");
-    tester1.checkString("SPACE(5)", "     ", "VARCHAR(2000) NOT NULL");
-    tester1.checkNull("SPACE(cast(null as integer))");
-  }
-
-  @Test public void testSoundexFunc() {
-    final SqlTester tester1 = oracleTester();
-    tester1.setFor(SqlLibraryOperators.SOUNDEX);
-    tester1.checkString("SOUNDEX('TECH ON THE NET')", "T253", "VARCHAR(4) NOT NULL");
-    tester1.checkString("SOUNDEX('Miller')", "M460", "VARCHAR(4) NOT NULL");
-    tester1.checkString("SOUNDEX('miler')", "M460", "VARCHAR(4) NOT NULL");
-    tester1.checkString("SOUNDEX('myller')", "M460", "VARCHAR(4) NOT NULL");
-    tester1.checkString("SOUNDEX('muller')", "M460", "VARCHAR(4) NOT NULL");
-    tester1.checkString("SOUNDEX('m')", "M000", "VARCHAR(4) NOT NULL");
-    tester1.checkString("SOUNDEX('mu')", "M000", "VARCHAR(4) NOT NULL");
-    tester1.checkString("SOUNDEX('mile')", "M400", "VARCHAR(4) NOT NULL");
-    tester1.checkNull("SOUNDEX(cast(null as varchar(1)))");
-    tester1.checkFails("SOUNDEX(_UTF8'\u5B57\u5B57')", "The character is not mapped.*", true);
-  }
-
-  @Test public void testDifferenceFunc() {
-    final SqlTester tester1 = tester(SqlLibrary.POSTGRESQL);
-    tester1.setFor(SqlLibraryOperators.DIFFERENCE);
-    tester1.checkScalarExact("DIFFERENCE('Miller', 'miller')", "4");
-    tester1.checkScalarExact("DIFFERENCE('Miller', 'myller')", "4");
-    tester1.checkScalarExact("DIFFERENCE('muller', 'miller')", "4");
-    tester1.checkScalarExact("DIFFERENCE('muller', 'miller')", "4");
-    tester1.checkScalarExact("DIFFERENCE('muller', 'milk')", "2");
-    tester1.checkScalarExact("DIFFERENCE('muller', 'mile')", "2");
-    tester1.checkScalarExact("DIFFERENCE('muller', 'm')", "1");
-    tester1.checkScalarExact("DIFFERENCE('muller', 'lee')", "0");
-    tester1.checkNull("DIFFERENCE('muller', cast(null as varchar(1)))");
-    tester1.checkNull("DIFFERENCE(cast(null as varchar(1)), 'muller')");
-  }
-
-  @Test public void testReverseFunc() {
-    final SqlTester testerMysql = tester(SqlLibrary.MYSQL);
-    testerMysql.setFor(SqlLibraryOperators.REVERSE);
-    testerMysql.checkString("reverse('')", "", "VARCHAR(0) NOT NULL");
-    testerMysql.checkString("reverse('123')", "321", "VARCHAR(3) NOT NULL");
-    testerMysql.checkString("reverse('abc')", "cba", "VARCHAR(3) NOT NULL");
-    testerMysql.checkString("reverse('ABC')", "CBA", "VARCHAR(3) NOT NULL");
-    testerMysql.checkString("reverse('Hello World')", "dlroW olleH",
-        "VARCHAR(11) NOT NULL");
-    testerMysql.checkString("reverse(_UTF8'\u4F60\u597D')", "\u597D\u4F60",
-        "VARCHAR(2) NOT NULL");
-    testerMysql.checkNull("reverse(cast(null as varchar(1)))");
-  }
-
   @Test public void testUpperFunc() {
     tester.setFor(SqlStdOperatorTable.UPPER);
     tester.checkString("upper('a')", "A", "CHAR(1) NOT NULL");
@@ -4442,52 +4256,6 @@ public abstract class SqlOperatorBaseTest {
     tester.checkString("upper('1')", "1", "CHAR(1) NOT NULL");
     tester.checkString("upper('aa')", "AA", "CHAR(2) NOT NULL");
     tester.checkNull("upper(cast(null as varchar(1)))");
-  }
-
-  @Test public void testLeftFunc() {
-    Stream.of(SqlLibrary.MYSQL, SqlLibrary.POSTGRESQL)
-        .map(this::tester)
-        .forEach(t -> {
-          t.setFor(SqlLibraryOperators.LEFT);
-          t.checkString("left('abcd', 3)", "abc", "VARCHAR(4) NOT NULL");
-          t.checkString("left('abcd', 0)", "", "VARCHAR(4) NOT NULL");
-          t.checkString("left('abcd', 5)", "abcd", "VARCHAR(4) NOT NULL");
-          t.checkString("left('abcd', -2)", "", "VARCHAR(4) NOT NULL");
-          t.checkNull("left(cast(null as varchar(1)), -2)");
-          t.checkNull("left('abcd', cast(null as Integer))");
-
-          // test for ByteString
-          t.checkString("left(x'ABCdef', 1)", "ab", "VARBINARY(3) NOT NULL");
-          t.checkString("left(x'ABCdef', 0)", "", "VARBINARY(3) NOT NULL");
-          t.checkString("left(x'ABCdef', 4)", "abcdef",
-              "VARBINARY(3) NOT NULL");
-          t.checkString("left(x'ABCdef', -2)", "", "VARBINARY(3) NOT NULL");
-          t.checkNull("left(cast(null as binary(1)), -2)");
-          t.checkNull("left(x'ABCdef', cast(null as Integer))");
-        });
-  }
-
-  @Test public void testRightFunc() {
-    Stream.of(SqlLibrary.MYSQL, SqlLibrary.POSTGRESQL)
-        .map(this::tester)
-        .forEach(t -> {
-          t.setFor(SqlLibraryOperators.RIGHT);
-          t.checkString("right('abcd', 3)", "bcd", "VARCHAR(4) NOT NULL");
-          t.checkString("right('abcd', 0)", "", "VARCHAR(4) NOT NULL");
-          t.checkString("right('abcd', 5)", "abcd", "VARCHAR(4) NOT NULL");
-          t.checkString("right('abcd', -2)", "", "VARCHAR(4) NOT NULL");
-          t.checkNull("right(cast(null as varchar(1)), -2)");
-          t.checkNull("right('abcd', cast(null as Integer))");
-
-          // test for ByteString
-          t.checkString("right(x'ABCdef', 1)", "ef", "VARBINARY(3) NOT NULL");
-          t.checkString("right(x'ABCdef', 0)", "", "VARBINARY(3) NOT NULL");
-          t.checkString("right(x'ABCdef', 4)", "abcdef",
-              "VARBINARY(3) NOT NULL");
-          t.checkString("right(x'ABCdef', -2)", "", "VARBINARY(3) NOT NULL");
-          t.checkNull("right(cast(null as binary(1)), -2)");
-          t.checkNull("right(x'ABCdef', cast(null as Integer))");
-        });
   }
 
   @Test public void testJsonExists() {
@@ -4525,13 +4293,6 @@ public abstract class SqlOperatorBaseTest {
         + "'lax $.foo1' error on error)", Boolean.FALSE);
     tester.checkBoolean("json_exists('{\"foo\":\"bar\"}', "
         + "'lax $.foo1' unknown on error)", Boolean.FALSE);
-
-    // nulls
-    tester.checkFails("json_exists(^null^, "
-        + "'lax $' unknown on error)", "(?s).*Illegal use of 'NULL'.*", false);
-    tester.checkNull("json_exists(cast(null as varchar), "
-        + "'lax $.foo1' unknown on error)");
-
   }
 
   @Test public void testJsonValue() {
@@ -4543,7 +4304,7 @@ public abstract class SqlOperatorBaseTest {
     tester.checkFails("json_value('{\"foo\":\"100\"}', 'strict $.foo' returning boolean)",
         INVALID_CHAR_MESSAGE, true);
     tester.checkScalar("json_value('{\"foo\":100}', 'lax $.foo1' returning integer "
-        + "null on empty)", null, "INTEGER");
+            + "null on empty)", null, "INTEGER");
     tester.checkScalar("json_value('{\"foo\":\"100\"}', 'strict $.foo1' returning boolean "
         + "null on error)", null, "BOOLEAN");
 
@@ -4605,11 +4366,6 @@ public abstract class SqlOperatorBaseTest {
     tester.checkString("json_value('{\"foo\":{}}', "
             + "'strict $.foo' default 'empty' on error)",
         "empty", "VARCHAR(2000)");
-
-    // nulls
-    tester.checkFails("json_value(^null^, 'strict $')",
-        "(?s).*Illegal use of 'NULL'.*", false);
-    tester.checkNull("json_value(cast(null as varchar), 'strict $')");
   }
 
   @Test public void testJsonQuery() {
@@ -4699,237 +4455,6 @@ public abstract class SqlOperatorBaseTest {
         "[100]", "VARCHAR(2000)");
 
 
-    // nulls
-    tester.checkFails("json_query(^null^, 'lax $')",
-        "(?s).*Illegal use of 'NULL'.*", false);
-    tester.checkNull("json_query(cast(null as varchar), 'lax $')");
-  }
-
-  @Test public void testJsonPretty() {
-    tester.checkString("json_pretty('{\"foo\":100}')",
-        "{\n  \"foo\" : 100\n}", "VARCHAR(2000)");
-    tester.checkString("json_pretty('[1,2,3]')",
-        "[ 1, 2, 3 ]", "VARCHAR(2000)");
-    tester.checkString("json_pretty('null')",
-        "null", "VARCHAR(2000)");
-
-    // nulls
-    tester.checkFails("json_pretty(^null^)",
-        "(?s).*Illegal use of 'NULL'.*", false);
-    tester.checkNull("json_pretty(cast(null as varchar))");
-  }
-
-  @Test public void testJsonStorageSize() {
-    tester.checkString("json_storage_size('[100, \"sakila\", [1, 3, 5], 425.05]')",
-        "29", "INTEGER");
-    tester.checkString("json_storage_size('{\"a\": 1000,\"b\": \"aa\", \"c\": \"[1, 3, 5]\"}')",
-        "35", "INTEGER");
-    tester.checkString("json_storage_size('{\"a\": 1000, \"b\": \"wxyz\", \"c\": \"[1, 3]\"}')",
-        "34", "INTEGER");
-    tester.checkString("json_storage_size('[100, \"json\", [[10, 20, 30], 3, 5], 425.05]')",
-        "36", "INTEGER");
-    tester.checkString("json_storage_size('12')",
-        "2", "INTEGER");
-    tester.checkString("json_storage_size('12' format json)",
-        "2", "INTEGER");
-    tester.checkString("json_storage_size('null')",
-        "4", "INTEGER");
-
-    // nulls
-    tester.checkFails("json_storage_size(^null^)",
-        "(?s).*Illegal use of 'NULL'.*", false);
-    tester.checkNull("json_storage_size(cast(null as varchar))");
-  }
-
-  @Test public void testJsonType() {
-    tester.setFor(SqlLibraryOperators.JSON_TYPE);
-    tester.checkString("json_type('\"1\"')",
-        "STRING", "VARCHAR(20)");
-    tester.checkString("json_type('1')",
-        "INTEGER", "VARCHAR(20)");
-    tester.checkString("json_type('11.45')",
-        "DOUBLE", "VARCHAR(20)");
-    tester.checkString("json_type('true')",
-        "BOOLEAN", "VARCHAR(20)");
-    tester.checkString("json_type('null')",
-        "NULL", "VARCHAR(20)");
-    tester.checkNull("json_type(cast(null as varchar(1)))");
-    tester.checkString("json_type('{\"a\": [10, true]}')",
-        "OBJECT", "VARCHAR(20)");
-    tester.checkString("json_type('{}')",
-        "OBJECT", "VARCHAR(20)");
-    tester.checkString("json_type('[10, true]')",
-        "ARRAY", "VARCHAR(20)");
-    tester.checkString("json_type('\"2019-01-27 21:24:00\"')",
-        "STRING", "VARCHAR(20)");
-
-    // nulls
-    tester.checkFails("json_type(^null^)",
-        "(?s).*Illegal use of 'NULL'.*", false);
-    tester.checkNull("json_type(cast(null as varchar))");
-  }
-
-  @Test public void testJsonDepth() {
-    tester.setFor(SqlLibraryOperators.JSON_DEPTH);
-    tester.checkString("json_depth('1')",
-        "1", "INTEGER");
-    tester.checkString("json_depth('11.45')",
-        "1", "INTEGER");
-    tester.checkString("json_depth('true')",
-        "1", "INTEGER");
-    tester.checkString("json_depth('\"2019-01-27 21:24:00\"')",
-        "1", "INTEGER");
-    tester.checkString("json_depth('{}')",
-        "1", "INTEGER");
-    tester.checkString("json_depth('[]')",
-        "1", "INTEGER");
-    tester.checkString("json_depth('null')",
-        null, "INTEGER");
-    tester.checkString("json_depth(cast(null as varchar(1)))",
-        null, "INTEGER");
-    tester.checkString("json_depth('[10, true]')",
-        "2", "INTEGER");
-    tester.checkString("json_depth('[[], {}]')",
-        "2", "INTEGER");
-    tester.checkString("json_depth('{\"a\": [10, true]}')",
-        "3", "INTEGER");
-    tester.checkString("json_depth('[10, {\"a\": [[1,2]]}]')",
-        "5", "INTEGER");
-
-    // nulls
-    tester.checkFails("json_depth(^null^)",
-        "(?s).*Illegal use of 'NULL'.*", false);
-    tester.checkNull("json_depth(cast(null as varchar))");
-  }
-
-  @Test public void testJsonLength() {
-    // no path context
-    tester.checkString("json_length('{}')",
-        "0", "INTEGER");
-    tester.checkString("json_length('[]')",
-        "0", "INTEGER");
-    tester.checkString("json_length('{\"foo\":100}')",
-        "1", "INTEGER");
-    tester.checkString("json_length('{\"a\": 1, \"b\": {\"c\": 30}}')",
-        "2", "INTEGER");
-    tester.checkString("json_length('[1, 2, {\"a\": 3}]')",
-        "3", "INTEGER");
-
-    // lax test
-    tester.checkString("json_length('{}', 'lax $')",
-        "0", "INTEGER");
-    tester.checkString("json_length('[]', 'lax $')",
-        "0", "INTEGER");
-    tester.checkString("json_length('{\"foo\":100}', 'lax $')",
-        "1", "INTEGER");
-    tester.checkString("json_length('{\"a\": 1, \"b\": {\"c\": 30}}', 'lax $')",
-        "2", "INTEGER");
-    tester.checkString("json_length('[1, 2, {\"a\": 3}]', 'lax $')",
-        "3", "INTEGER");
-    tester.checkString("json_length('{\"a\": 1, \"b\": {\"c\": 30}}', 'lax $.b')",
-        "1", "INTEGER");
-    tester.checkString("json_length('{\"foo\":100}', 'lax $.foo1')",
-        null, "INTEGER");
-
-    // strict test
-    tester.checkString("json_length('{}', 'strict $')",
-        "0", "INTEGER");
-    tester.checkString("json_length('[]', 'strict $')",
-        "0", "INTEGER");
-    tester.checkString("json_length('{\"foo\":100}', 'strict $')",
-        "1", "INTEGER");
-    tester.checkString("json_length('{\"a\": 1, \"b\": {\"c\": 30}}', 'strict $')",
-        "2", "INTEGER");
-    tester.checkString("json_length('[1, 2, {\"a\": 3}]', 'strict $')",
-        "3", "INTEGER");
-    tester.checkString("json_length('{\"a\": 1, \"b\": {\"c\": 30}}', 'strict $.b')",
-        "1", "INTEGER");
-
-    // catch error test
-    tester.checkFails("json_length('{\"foo\":100}', 'invalid $.foo')",
-        "(?s).*Illegal jsonpath spec.*", true);
-    tester.checkFails("json_length('{\"foo\":100}', 'strict $.foo1')",
-        "(?s).*No results for path.*", true);
-
-    // nulls
-    tester.checkFails("json_length(^null^)",
-        "(?s).*Illegal use of 'NULL'.*", false);
-    tester.checkNull("json_length(cast(null as varchar))");
-  }
-
-  @Test public void testJsonKeys() {
-    // no path context
-    tester.checkString("json_keys('{}')",
-        "[]", "VARCHAR(2000)");
-    tester.checkString("json_keys('[]')",
-        "null", "VARCHAR(2000)");
-    tester.checkString("json_keys('{\"foo\":100}')",
-        "[\"foo\"]", "VARCHAR(2000)");
-    tester.checkString("json_keys('{\"a\": 1, \"b\": {\"c\": 30}}')",
-        "[\"a\",\"b\"]", "VARCHAR(2000)");
-    tester.checkString("json_keys('[1, 2, {\"a\": 3}]')",
-        "null", "VARCHAR(2000)");
-
-    // lax test
-    tester.checkString("json_keys('{}', 'lax $')",
-        "[]", "VARCHAR(2000)");
-    tester.checkString("json_keys('[]', 'lax $')",
-        "null", "VARCHAR(2000)");
-    tester.checkString("json_keys('{\"foo\":100}', 'lax $')",
-        "[\"foo\"]", "VARCHAR(2000)");
-    tester.checkString("json_keys('{\"a\": 1, \"b\": {\"c\": 30}}', 'lax $')",
-        "[\"a\",\"b\"]", "VARCHAR(2000)");
-    tester.checkString("json_keys('[1, 2, {\"a\": 3}]', 'lax $')",
-        "null", "VARCHAR(2000)");
-    tester.checkString("json_keys('{\"a\": 1, \"b\": {\"c\": 30}}', 'lax $.b')",
-        "[\"c\"]", "VARCHAR(2000)");
-    tester.checkString("json_keys('{\"foo\":100}', 'lax $.foo1')",
-        "null", "VARCHAR(2000)");
-
-    // strict test
-    tester.checkString("json_keys('{}', 'strict $')",
-        "[]", "VARCHAR(2000)");
-    tester.checkString("json_keys('[]', 'strict $')",
-        "null", "VARCHAR(2000)");
-    tester.checkString("json_keys('{\"foo\":100}', 'strict $')",
-        "[\"foo\"]", "VARCHAR(2000)");
-    tester.checkString("json_keys('{\"a\": 1, \"b\": {\"c\": 30}}', 'strict $')",
-        "[\"a\",\"b\"]", "VARCHAR(2000)");
-    tester.checkString("json_keys('[1, 2, {\"a\": 3}]', 'strict $')",
-        "null", "VARCHAR(2000)");
-    tester.checkString("json_keys('{\"a\": 1, \"b\": {\"c\": 30}}', 'strict $.b')",
-        "[\"c\"]", "VARCHAR(2000)");
-
-    // catch error test
-    tester.checkFails("json_keys('{\"foo\":100}', 'invalid $.foo')",
-        "(?s).*Illegal jsonpath spec.*", true);
-    tester.checkFails("json_keys('{\"foo\":100}', 'strict $.foo1')",
-        "(?s).*No results for path.*", true);
-
-    // nulls
-    tester.checkFails("json_keys(^null^)",
-        "(?s).*Illegal use of 'NULL'.*", false);
-    tester.checkNull("json_keys(cast(null as varchar))");
-  }
-
-  @Test public void testJsonRemove() {
-    tester.checkString("json_remove('{\"foo\":100}', '$.foo')",
-        "{}", "VARCHAR(2000)");
-    tester.checkString("json_remove('{\"foo\":100, \"foo1\":100}', '$.foo')",
-        "{\"foo1\":100}", "VARCHAR(2000)");
-    tester.checkString("json_remove('[\"a\", [\"b\", \"c\"], \"d\"]', '$[1][0]')",
-        "[\"a\",[\"c\"],\"d\"]", "VARCHAR(2000)");
-    tester.checkString("json_remove('[\"a\", [\"b\", \"c\"], \"d\"]', '$[1]')",
-        "[\"a\",\"d\"]", "VARCHAR(2000)");
-    tester.checkString("json_remove('[\"a\", [\"b\", \"c\"], \"d\"]', '$[0]', '$[0]')",
-        "[\"d\"]", "VARCHAR(2000)");
-    tester.checkFails("json_remove('[\"a\", [\"b\", \"c\"], \"d\"]', '$')",
-        "(?s).*Invalid input for.*", true);
-
-    // nulls
-    tester.checkFails("json_remove(^null^, '$')",
-        "(?s).*Illegal use of 'NULL'.*", false);
-    tester.checkNull("json_remove(cast(null as varchar), '$')");
   }
 
   @Test public void testJsonObject() {
@@ -4954,7 +4479,6 @@ public abstract class SqlOperatorBaseTest {
 
   @Test public void testJsonObjectAgg() {
     checkAggType(tester, "json_objectagg('foo': 'bar')", "VARCHAR(2000) NOT NULL");
-    checkAggType(tester, "json_objectagg('foo': null)", "VARCHAR(2000) NOT NULL");
     tester.checkFails("^json_objectagg(100: 'bar')^",
         "(?s).*Cannot apply.*", false);
     final String[][] values = {
@@ -4974,14 +4498,6 @@ public abstract class SqlOperatorBaseTest {
         values,
         "{\"foo\":\"bar\",\"foo3\":\"bar3\"}",
         0.0D);
-  }
-
-  @Test public void testJsonValueExpressionOperator() {
-    tester.checkScalar("'{}' format json", "{}", "ANY NOT NULL");
-    tester.checkScalar("'[1, 2, 3]' format json", "[1, 2, 3]", "ANY NOT NULL");
-    tester.checkNull("cast(null as varchar) format json");
-    tester.checkScalar("'null' format json", "null", "ANY NOT NULL");
-    tester.checkFails("^null^ format json", "(?s).*Illegal use of .NULL.*", false);
   }
 
   @Test public void testJsonArray() {
@@ -5006,7 +4522,6 @@ public abstract class SqlOperatorBaseTest {
 
   @Test public void testJsonArrayAgg() {
     checkAggType(tester, "json_arrayagg('foo')", "VARCHAR(2000) NOT NULL");
-    checkAggType(tester, "json_arrayagg(null)", "VARCHAR(2000) NOT NULL");
     final String[] values = {
         "'foo'",
         "cast(null as varchar(2000))",
@@ -5391,11 +4906,7 @@ public abstract class SqlOperatorBaseTest {
     tester.setFor(
         SqlStdOperatorTable.ATAN2);
     tester.checkType("atan2(2, -2)", "DOUBLE NOT NULL");
-    tester.checkScalarApprox(
-        "atan2(cast(1 as float), -1)",
-        "DOUBLE NOT NULL",
-        2.3562d,
-        0.0001d);
+    tester.checkType("atan2(cast(1 as float), -1)", "DOUBLE NOT NULL");
     tester.checkType(
         "atan2(case when false then 0.5 else null end, -1)", "DOUBLE");
     tester.checkFails(
@@ -5496,12 +5007,6 @@ public abstract class SqlOperatorBaseTest {
     tester.checkScalarApprox("PI", "DOUBLE NOT NULL", 3.1415d, 0.0001d);
     tester.checkFails("^PI()^",
         "No match found for function signature PI\\(\\)", false);
-
-    // assert that PI function is not dynamic [CALCITE-2750]
-    assertEquals(
-        "PI operator should not be identified as dynamic function",
-        SqlStdOperatorTable.PI.isDynamicFunction(),
-        false);
   }
 
   @Test public void testRadiansFunc() {
@@ -5769,14 +5274,60 @@ public abstract class SqlOperatorBaseTest {
     tester.checkString("USER", "sa", "VARCHAR(2000) NOT NULL");
   }
 
+  @Test public void testUserFuncWithNotDefaultUser() {
+    testFuncWithNotDefaultUser("USER");
+  }
+
+  @Test public void testUserFuncWithNoUserLogged() {
+    testFuncWithNoUserLogged("USER");
+  }
+
+  private void testFuncWithNoUserLogged(String userFunc) {
+    tester.setFor(SqlStdOperatorTable.USER, VM_FENNEL);
+    String user = System.getProperty("user.name"); // e.g. "jhyde"
+    tester.withConnectionFactory(new CalciteAssert.ConnectionFactory() {
+      @Override public Connection createConnection() throws SQLException {
+        final Properties info = new Properties();
+        return DriverManager.getConnection("jdbc:calcite:", info);
+      }
+    }).checkString(userFunc, user, "VARCHAR(2000) NOT NULL");
+  }
+
+  private void testFuncWithNotDefaultUser(String userFunc) {
+    tester.setFor(SqlStdOperatorTable.USER, VM_FENNEL);
+    tester.withConnectionFactory(new CalciteAssert.ConnectionFactory() {
+      @Override public Connection createConnection() throws SQLException {
+        final Properties info = new Properties();
+        info.put("user", "somenotdefaultuser");
+        return DriverManager.getConnection("jdbc:calcite:", info);
+      }
+    }).checkString(userFunc, "somenotdefaultuser", "VARCHAR(2000) NOT NULL");
+  }
+
   @Test public void testCurrentUserFunc() {
     tester.setFor(SqlStdOperatorTable.CURRENT_USER, VM_FENNEL);
     tester.checkString("CURRENT_USER", "sa", "VARCHAR(2000) NOT NULL");
   }
 
+  @Test public void testCurrenUserFuncWithNotDefaultUser() {
+    testFuncWithNotDefaultUser("CURRENT_USER");
+  }
+
+  @Test public void testCurrentUserFuncWithNoUserLogged() {
+    testFuncWithNoUserLogged("CURRENT_USER");
+  }
+
   @Test public void testSessionUserFunc() {
     tester.setFor(SqlStdOperatorTable.SESSION_USER, VM_FENNEL);
     tester.checkString("SESSION_USER", "sa", "VARCHAR(2000) NOT NULL");
+  }
+
+  @Test public void testSessionUserFuncWithNotDefaultUser() {
+    testFuncWithNotDefaultUser("SESSION_USER");
+  }
+
+  @Test public void testSessionUserFuncWithNoUserLogged() {
+    testFuncWithNoUserLogged("SESSION_USER");
   }
 
   @Test public void testSystemUserFunc() {
@@ -5927,7 +5478,7 @@ public abstract class SqlOperatorBaseTest {
   protected static Pair<String, Hook.Closeable> currentTimeString(TimeZone tz) {
     final Calendar calendar;
     final Hook.Closeable closeable;
-    if (CalciteSystemProperty.TEST_SLOW.value()) {
+    if (CalciteAssert.ENABLE_SLOW) {
       calendar = getCalendarNotTooNear(Calendar.HOUR_OF_DAY);
       closeable = () -> { };
     } else {
@@ -6001,83 +5552,6 @@ public abstract class SqlOperatorBaseTest {
           dateString.substring(0, 10),
           "DATE NOT NULL");
     }
-  }
-
-  @Test public void testLastDayFunc() {
-    tester.setFor(SqlStdOperatorTable.LAST_DAY);
-    tester.checkScalar("last_day(DATE '2019-02-10')",
-        "2019-02-28", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '2019-06-10')",
-        "2019-06-30", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '2019-07-10')",
-        "2019-07-31", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '2019-09-10')",
-        "2019-09-30", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '2019-12-10')",
-        "2019-12-31", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '9999-12-10')",
-        "9999-12-31", "DATE NOT NULL");
-
-    // Edge tests
-    tester.checkScalar("last_day(DATE '1900-01-01')",
-        "1900-01-31", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '1935-02-01')",
-        "1935-02-28", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '1965-09-01')",
-        "1965-09-30", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '1970-01-01')",
-        "1970-01-31", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '2019-02-28')",
-        "2019-02-28", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '2019-12-31')",
-        "2019-12-31", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '2019-01-01')",
-        "2019-01-31", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '2019-06-30')",
-        "2019-06-30", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '2020-02-20')",
-        "2020-02-29", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '2020-02-29')",
-        "2020-02-29", "DATE NOT NULL");
-    tester.checkScalar("last_day(DATE '9999-12-31')",
-        "9999-12-31", "DATE NOT NULL");
-
-    tester.checkNull("last_day(cast(null as date))");
-
-    tester.checkScalar("last_day(TIMESTAMP '2019-02-10 02:10:12')",
-        "2019-02-28", "DATE NOT NULL");
-    tester.checkScalar("last_day(TIMESTAMP '2019-06-10 06:10:16')",
-        "2019-06-30", "DATE NOT NULL");
-    tester.checkScalar("last_day(TIMESTAMP '2019-07-10 07:10:17')",
-        "2019-07-31", "DATE NOT NULL");
-    tester.checkScalar("last_day(TIMESTAMP '2019-09-10 09:10:19')",
-        "2019-09-30", "DATE NOT NULL");
-    tester.checkScalar("last_day(TIMESTAMP '2019-12-10 12:10:22')",
-        "2019-12-31", "DATE NOT NULL");
-
-    // Edge tests
-    tester.checkScalar("last_day(TIMESTAMP '1900-01-01 01:01:02')",
-        "1900-01-31", "DATE NOT NULL");
-    tester.checkScalar("last_day(TIMESTAMP '1935-02-01 02:01:03')",
-        "1935-02-28", "DATE NOT NULL");
-    tester.checkScalar("last_day(TIMESTAMP '1970-01-01 01:01:02')",
-        "1970-01-31", "DATE NOT NULL");
-    tester.checkScalar("last_day(TIMESTAMP '2019-02-28 02:28:30')",
-        "2019-02-28", "DATE NOT NULL");
-    tester.checkScalar("last_day(TIMESTAMP '2019-12-31 12:31:43')",
-        "2019-12-31", "DATE NOT NULL");
-    tester.checkScalar("last_day(TIMESTAMP '2019-01-01 01:01:02')",
-        "2019-01-31", "DATE NOT NULL");
-    tester.checkScalar("last_day(TIMESTAMP '2019-06-30 06:30:36')",
-        "2019-06-30", "DATE NOT NULL");
-    tester.checkScalar("last_day(TIMESTAMP '2020-02-20 02:20:33')",
-        "2020-02-29", "DATE NOT NULL");
-    tester.checkScalar("last_day(TIMESTAMP '2020-02-29 02:29:31')",
-        "2020-02-29", "DATE NOT NULL");
-    tester.checkScalar("last_day(TIMESTAMP '9999-12-31 12:31:43')",
-        "9999-12-31", "DATE NOT NULL");
-
-    tester.checkNull("last_day(cast(null as timestamp))");
   }
 
   @Test public void testSubstringFunction() {
@@ -6205,21 +5679,21 @@ public abstract class SqlOperatorBaseTest {
   }
 
   @Test public void testRtrimFunc() {
-    tester.setFor(SqlLibraryOperators.RTRIM);
+    tester.setFor(OracleSqlOperatorTable.RTRIM);
     final SqlTester tester1 = oracleTester();
     tester1.checkString("rtrim(' aAa  ')", " aAa", "VARCHAR(6) NOT NULL");
     tester1.checkNull("rtrim(CAST(NULL AS VARCHAR(6)))");
   }
 
   @Test public void testLtrimFunc() {
-    tester.setFor(SqlLibraryOperators.LTRIM);
+    tester.setFor(OracleSqlOperatorTable.LTRIM);
     final SqlTester tester1 = oracleTester();
     tester1.checkString("ltrim(' aAa  ')", "aAa  ", "VARCHAR(6) NOT NULL");
     tester1.checkNull("ltrim(CAST(NULL AS VARCHAR(6)))");
   }
 
   @Test public void testGreatestFunc() {
-    tester.setFor(SqlLibraryOperators.GREATEST);
+    tester.setFor(OracleSqlOperatorTable.GREATEST);
     final SqlTester tester1 = oracleTester();
     tester1.checkString("greatest('on', 'earth')", "on   ", "CHAR(5) NOT NULL");
     tester1.checkString("greatest('show', 'on', 'earth')", "show ",
@@ -6234,7 +5708,7 @@ public abstract class SqlOperatorBaseTest {
   }
 
   @Test public void testLeastFunc() {
-    tester.setFor(SqlLibraryOperators.LEAST);
+    tester.setFor(OracleSqlOperatorTable.LEAST);
     final SqlTester tester1 = oracleTester();
     tester1.checkString("least('on', 'earth')", "earth", "CHAR(5) NOT NULL");
     tester1.checkString("least('show', 'on', 'earth')", "earth",
@@ -6249,7 +5723,7 @@ public abstract class SqlOperatorBaseTest {
   }
 
   @Test public void testNvlFunc() {
-    tester.setFor(SqlLibraryOperators.NVL);
+    tester.setFor(OracleSqlOperatorTable.NVL);
     final SqlTester tester1 = oracleTester();
     tester1.checkScalar("nvl(1, 2)", "1", "INTEGER NOT NULL");
     tester1.checkFails("^nvl(1, true)^", "Parameters must be of the same type",
@@ -6277,7 +5751,7 @@ public abstract class SqlOperatorBaseTest {
   }
 
   @Test public void testDecodeFunc() {
-    tester.setFor(SqlLibraryOperators.DECODE);
+    tester.setFor(OracleSqlOperatorTable.DECODE);
     final SqlTester tester1 = oracleTester();
     tester1.checkScalar("decode(0, 0, 'a', 1, 'b', 2, 'c')", "a", "CHAR(1)");
     tester1.checkScalar("decode(1, 0, 'a', 1, 'b', 2, 'c')", "b", "CHAR(1)");
@@ -6394,11 +5868,11 @@ public abstract class SqlOperatorBaseTest {
     tester.checkBoolean("(multiset['a', 'b', 'c'] "
             + "multiset union distinct multiset['c', 'd', 'e'])"
             + " submultiset of multiset['a', 'b', 'c', 'd', 'e']",
-        Boolean.TRUE);
+         Boolean.TRUE);
     tester.checkBoolean("(multiset['a', 'b', 'c'] "
             + "multiset union distinct multiset['c', 'd', 'e'])"
             + " submultiset of multiset['a', 'b', 'c', 'd', 'e']",
-        Boolean.TRUE);
+         Boolean.TRUE);
     tester.checkScalar(
         "multiset[cast(null as double)] multiset union multiset[cast(null as double)]",
         "[null, null]",
@@ -6512,27 +5986,6 @@ public abstract class SqlOperatorBaseTest {
     tester.checkAgg("collect(DISTINCT CASE x WHEN 0 THEN NULL ELSE -1 END)",
         values, result, (double) 0);
     tester.checkAgg("collect(DISTINCT x)", values, 2, (double) 0);
-  }
-
-  @Test public void testListaggFunc() {
-    tester.setFor(SqlStdOperatorTable.LISTAGG, VM_FENNEL, VM_JAVA);
-    tester.checkFails("listagg(^*^)", "Unknown identifier '\\*'", false);
-    tester.checkFails("^listagg(12)^",
-        "Cannot apply 'LISTAGG' to arguments of type .*'\n.*'", false);
-    tester.checkFails("^listagg(cast(12 as double))^",
-        "Cannot apply 'LISTAGG' to arguments of type .*'\n.*'", false);
-    tester.checkFails("^listagg()^",
-        "Invalid number of arguments to function 'LISTAGG'. Was expecting 1 arguments",
-        false);
-    tester.checkFails("^listagg('1', '2', '3')^",
-        "Invalid number of arguments to function 'LISTAGG'. Was expecting 1 arguments",
-        false);
-    checkAggType(tester, "listagg('test')", "CHAR(4) NOT NULL");
-    checkAggType(tester, "listagg('test', ', ')", "CHAR(4) NOT NULL");
-    final String[] values1 = {"'hello'", "CAST(null AS CHAR)", "'world'", "'!'"};
-    tester.checkAgg("listagg(x)", values1, "hello,world,!", (double) 0);
-    final String[] values2 = {"0", "1", "2", "3"};
-    tester.checkAgg("listagg(cast(x as CHAR))", values2, "0,1,2,3", (double) 0);
   }
 
   @Test public void testFusionFunc() {
@@ -6759,11 +6212,6 @@ public abstract class SqlOperatorBaseTest {
           "BIGINT NOT NULL");
 
       tester.checkScalar(
-          "extract(nanosecond from interval '4-2' year to month)",
-          "0",
-          "BIGINT NOT NULL");
-
-      tester.checkScalar(
           "extract(minute from interval '4-2' year to month)",
           "0",
           "BIGINT NOT NULL");
@@ -6848,11 +6296,6 @@ public abstract class SqlOperatorBaseTest {
         "BIGINT NOT NULL");
 
     tester.checkScalar(
-        "extract(nanosecond from interval '2 3:4:5.678' day to second)",
-        "5678000000",
-        "BIGINT NOT NULL");
-
-    tester.checkScalar(
         "extract(second from interval '2 3:4:5.678' day to second)",
         "5",
         "BIGINT NOT NULL");
@@ -6930,26 +6373,11 @@ public abstract class SqlOperatorBaseTest {
     tester.checkScalar(
         "extract(epoch from date '2008-2-23')",
         "1203724800", // number of seconds elapsed since timestamp
-        // '1970-01-01 00:00:00' for given date
+                      // '1970-01-01 00:00:00' for given date
         "BIGINT NOT NULL");
 
     tester.checkScalar(
         "extract(second from date '2008-2-23')",
-        "0",
-        "BIGINT NOT NULL");
-
-    tester.checkScalar(
-        "extract(millisecond from date '2008-2-23')",
-        "0",
-        "BIGINT NOT NULL");
-
-    tester.checkScalar(
-        "extract(microsecond from date '2008-2-23')",
-        "0",
-        "BIGINT NOT NULL");
-
-    tester.checkScalar(
-        "extract(nanosecond from date '2008-2-23')",
         "0",
         "BIGINT NOT NULL");
 
@@ -7073,7 +6501,7 @@ public abstract class SqlOperatorBaseTest {
     tester.checkScalar(
         "extract(epoch from timestamp '2008-2-23 12:34:56')",
         "1203770096", // number of seconds elapsed since timestamp
-        // '1970-01-01 00:00:00' for given date
+                      // '1970-01-01 00:00:00' for given date
         "BIGINT NOT NULL");
 
     tester.checkScalar(
@@ -7089,11 +6517,6 @@ public abstract class SqlOperatorBaseTest {
     tester.checkScalar(
         "extract(microsecond from timestamp '2008-2-23 12:34:56')",
         "56000000",
-        "BIGINT NOT NULL");
-
-    tester.checkScalar(
-        "extract(nanosecond from timestamp '2008-2-23 12:34:56')",
-        "56000000000",
         "BIGINT NOT NULL");
 
     tester.checkScalar(
@@ -7221,11 +6644,6 @@ public abstract class SqlOperatorBaseTest {
         "5678000",
         "BIGINT NOT NULL");
 
-    tester.checkScalar(
-        "extract(nanosecond from interval '2 3:4:5.678' day to second)",
-        "5678000000",
-        "BIGINT NOT NULL");
-
     tester.checkNull(
         "extract(month from cast(null as interval year))");
   }
@@ -7280,82 +6698,6 @@ public abstract class SqlOperatorBaseTest {
 
     tester.checkNull(
         "extract(microsecond from cast(null as time))");
-
-    tester.checkNull(
-        "extract(nanosecond from cast(null as time))");
-  }
-
-  @Test public void testExtractWithDatesBeforeUnixEpoch() {
-
-    tester.checkScalar(
-            "extract(millisecond from TIMESTAMP '1969-12-31 21:13:17.357')",
-            "17357",
-            "BIGINT NOT NULL");
-
-    tester.checkScalar(
-        "extract(year from TIMESTAMP '1970-01-01 00:00:00')",
-        "1970",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(year from TIMESTAMP '1969-12-31 10:13:17')",
-        "1969",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(quarter from TIMESTAMP '1969-12-31 08:13:17')",
-        "4",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(quarter from TIMESTAMP '1969-5-31 21:13:17')",
-        "2",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(month from TIMESTAMP '1969-12-31 00:13:17')",
-        "12",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(day from TIMESTAMP '1969-12-31 12:13:17')",
-        "31",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(week from TIMESTAMP '1969-2-23 01:23:45')",
-        "8",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(doy from TIMESTAMP '1969-12-31 21:13:17.357')",
-        "365",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(dow from TIMESTAMP '1969-12-31 01:13:17.357')",
-        "4",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(decade from TIMESTAMP '1969-12-31 21:13:17.357')",
-        "196",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(century from TIMESTAMP '1969-12-31 21:13:17.357')",
-        "20",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(hour from TIMESTAMP '1969-12-31 21:13:17.357')",
-        "21",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(minute from TIMESTAMP '1969-12-31 21:13:17.357')",
-        "13",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(second from TIMESTAMP '1969-12-31 21:13:17.357')",
-        "17",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(millisecond from TIMESTAMP '1969-12-31 21:13:17.357')",
-        "17357",
-        "BIGINT NOT NULL");
-    tester.checkScalar(
-        "extract(microsecond from TIMESTAMP '1969-12-31 21:13:17.357')",
-        "17357000",
-        "BIGINT NOT NULL");
   }
 
   @Test public void testArrayValueConstructor() {
@@ -7498,10 +6840,6 @@ public abstract class SqlOperatorBaseTest {
         "(?s)Cannot apply 'FLOOR' to arguments .*", false);
     tester.checkFails("^floor('abcde' to minute)^",
         "(?s)Cannot apply 'FLOOR' to arguments .*", false);
-    tester.checkFails("^floor(timestamp '2015-02-19 12:34:56.78' to microsecond)^",
-            "(?s)Encountered \"microsecond\" at .*", false);
-    tester.checkFails("^floor(timestamp '2015-02-19 12:34:56.78' to nanosecond)^",
-            "(?s)Encountered \"nanosecond\" at .*", false);
     tester.checkScalar(
         "floor(time '12:34:56' to minute)", "12:34:00", "TIME(0) NOT NULL");
     tester.checkScalar("floor(timestamp '2015-02-19 12:34:56.78' to second)",
@@ -7529,10 +6867,6 @@ public abstract class SqlOperatorBaseTest {
         "(?s)Cannot apply 'CEIL' to arguments .*", false);
     tester.checkFails("^ceil('abcde' to minute)^",
         "(?s)Cannot apply 'CEIL' to arguments .*", false);
-    tester.checkFails("^ceil(timestamp '2015-02-19 12:34:56.78' to microsecond)^",
-            "(?s)Encountered \"microsecond\" at .*", false);
-    tester.checkFails("^ceil(timestamp '2015-02-19 12:34:56.78' to nanosecond)^",
-            "(?s)Encountered \"nanosecond\" at .*", false);
     tester.checkScalar("ceil(time '12:34:56' to minute)",
         "12:35:00", "TIME(0) NOT NULL");
     tester.checkScalar("ceil(time '12:59:56' to minute)",
@@ -7673,43 +7007,6 @@ public abstract class SqlOperatorBaseTest {
         "2016-06-30", "DATE NOT NULL");
     tester.checkScalar("timestampadd(MONTH, -1, date '2016-03-31')",
         "2016-02-29", "DATE NOT NULL");
-
-    // TIMESTAMPADD with time; returns a time value.The interval is positive.
-    tester.checkScalar("timestampadd(SECOND, 1, time '23:59:59')",
-        "00:00:00", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(MINUTE, 1, time '00:00:00')",
-        "00:01:00", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(MINUTE, 1, time '23:59:59')",
-        "00:00:59", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(HOUR, 1, time '23:59:59')",
-        "00:59:59", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(DAY, 15, time '23:59:59')",
-        "23:59:59", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(WEEK, 3, time '23:59:59')",
-        "23:59:59", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(MONTH, 6, time '23:59:59')",
-        "23:59:59", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(QUARTER, 1, time '23:59:59')",
-        "23:59:59", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(YEAR, 10, time '23:59:59')",
-        "23:59:59", "TIME(0) NOT NULL");
-    // TIMESTAMPADD with time; returns a time value .The interval is negative.
-    tester.checkScalar("timestampadd(SECOND, -1, time '00:00:00')",
-        "23:59:59", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(MINUTE, -1, time '00:00:00')",
-        "23:59:00", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(HOUR, -1, time '00:00:00')",
-        "23:00:00", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(DAY, -1, time '23:59:59')",
-        "23:59:59", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(WEEK, -1, time '23:59:59')",
-        "23:59:59", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(MONTH, -1, time '23:59:59')",
-        "23:59:59", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(QUARTER, -1, time '23:59:59')",
-        "23:59:59", "TIME(0) NOT NULL");
-    tester.checkScalar("timestampadd(YEAR, -1, time '23:59:59')",
-        "23:59:59", "TIME(0) NOT NULL");
   }
 
   @Test public void testTimestampAddFractionalSeconds() {
@@ -7996,23 +7293,6 @@ public abstract class SqlOperatorBaseTest {
         result, 0d);
   }
 
-  @Test public void testCorrFunc() {
-    tester.setFor(SqlStdOperatorTable.CORR, VM_EXPAND);
-    tester.checkFails("corr(^*^)", "Unknown identifier '\\*'", false);
-    tester.checkFails(
-        "^corr(cast(null as varchar(2)),cast(null as varchar(2)))^",
-        "(?s)Cannot apply 'CORR' to arguments of type 'CORR\\(<VARCHAR\\(2\\)>, <VARCHAR\\(2\\)>\\)'\\. Supported form\\(s\\): 'CORR\\(<NUMERIC>, <NUMERIC>\\)'.*",
-        false);
-    tester.checkType("corr(CAST(NULL AS INTEGER),CAST(NULL AS INTEGER))",
-            "INTEGER");
-    checkAggType(tester, "corr(1.5, 2.5)", "DECIMAL(2, 1) NOT NULL");
-    if (!enable) {
-      return;
-    }
-    // with zero values
-    tester.checkAgg("corr(x)", new String[]{}, null, 0d);
-  }
-
   @Test public void testCovarPopFunc() {
     tester.setFor(SqlStdOperatorTable.COVAR_POP, VM_EXPAND);
     tester.checkFails("covar_pop(^*^)", "Unknown identifier '\\*'", false);
@@ -8048,30 +7328,6 @@ public abstract class SqlOperatorBaseTest {
     }
     // with zero values
     tester.checkAgg("covar_samp(x)", new String[]{}, null, 0d);
-  }
-
-  @Test public void testRegrCountFunc() {
-    tester.setFor(SqlStdOperatorTable.REGR_COUNT, VM_EXPAND);
-    tester.checkType("regr_count(1, 2)", "BIGINT NOT NULL");
-    tester.checkFails(
-        "^REGR_COUNT()^",
-        "Invalid number of arguments to function 'REGR_COUNT'. Was expecting 2 arguments",
-        false);
-    tester.checkFails(
-        "^REGR_COUNT(1)^",
-        "Invalid number of arguments to function 'REGR_COUNT'. Was expecting 2 arguments",
-        false);
-    tester.checkFails(
-        "^REGR_COUNT(1, 2, 3)^",
-        "Invalid number of arguments to function 'REGR_COUNT'. Was expecting 2 arguments",
-        false);
-    tester.checkFails("^regr_count('1', '2')^",
-        "(?s)Cannot apply 'REGR_COUNT' to arguments of type 'REGR_COUNT\\(<CHAR\\(1\\)>, <CHAR\\(1\\)>\\)'. Supported form\\(s\\): 'REGR_COUNT\\(<NUMERIC>, <NUMERIC>\\)'.*",
-        false);
-    tester.checkFails(
-        "REGR_COUNT(^*^)",
-        "Unknown identifier '\\*'",
-        false);
   }
 
   @Test public void testRegrSxxFunc() {
@@ -8112,127 +7368,6 @@ public abstract class SqlOperatorBaseTest {
     }
     // with zero values
     tester.checkAgg("regr_syy(x)", new String[]{}, null, 0d);
-  }
-
-  @Test public void testRegrSxyFunc() {
-    tester.setFor(SqlStdOperatorTable.REGR_SXY, VM_EXPAND);
-    tester.checkFails(
-        "regr_sxy(^*^)",
-        "Unknown identifier '\\*'",
-        false);
-    tester.checkFails(
-        "^regr_sxy(cast(null as varchar(2)), cast(null as varchar(2)))^",
-        "(?s)Cannot apply 'REGR_SXY' to arguments of type 'REGR_SXY\\(<VARCHAR\\(2\\)>, <VARCHAR\\(2\\)>\\)'\\. Supported form\\(s\\): 'REGR_SXY\\(<NUMERIC>, <NUMERIC>\\)'.*",
-        false);
-    tester.checkType("regr_sxy(CAST(NULL AS INTEGER), CAST(NULL AS INTEGER))",
-        "INTEGER");
-    checkAggType(tester, "regr_sxy(1.5, 2.5)", "DECIMAL(2, 1) NOT NULL");
-    if (!enable) {
-      return;
-    }
-    // with zero values
-    tester.checkAgg("regr_sxy(x)", new String[]{}, null, 0d);
-  }
-
-  @Test public void testRegrAvgxFunc() {
-    tester.setFor(SqlStdOperatorTable.REGR_AVGX, VM_EXPAND);
-    tester.checkFails(
-        "regr_avgx(^*^)",
-        "Unknown identifier '\\*'",
-        false);
-    tester.checkFails(
-        "^regr_avgx(cast(null as varchar(2)), cast(null as varchar(2)))^",
-        "(?s)Cannot apply 'REGR_AVGX' to arguments of type 'REGR_AVGX\\(<VARCHAR\\(2\\)>, <VARCHAR\\(2\\)>\\)'\\. Supported form\\(s\\): 'REGR_AVGX\\(<NUMERIC>, <NUMERIC>\\)'.*",
-        false);
-    tester.checkType("regr_avgx(CAST(NULL AS INTEGER), CAST(NULL AS INTEGER))",
-        "INTEGER");
-    checkAggType(tester, "regr_avgx(1.5, 2.5)", "DECIMAL(2, 1) NOT NULL");
-    if (!enable) {
-      return;
-    }
-    // with zero values
-    tester.checkAgg("regr_avgx(x)", new String[]{}, null, 0d);
-  }
-
-  @Test public void testRegrAvgyFunc() {
-    tester.setFor(SqlStdOperatorTable.REGR_AVGY, VM_EXPAND);
-    tester.checkFails(
-        "regr_avgy(^*^)",
-        "Unknown identifier '\\*'",
-        false);
-    tester.checkFails(
-        "^regr_avgy(cast(null as varchar(2)), cast(null as varchar(2)))^",
-        "(?s)Cannot apply 'REGR_AVGY' to arguments of type 'REGR_AVGY\\(<VARCHAR\\(2\\)>, <VARCHAR\\(2\\)>\\)'\\. Supported form\\(s\\): 'REGR_AVGY\\(<NUMERIC>, <NUMERIC>\\)'.*",
-        false);
-    tester.checkType("regr_avgy(CAST(NULL AS INTEGER), CAST(NULL AS INTEGER))",
-        "INTEGER");
-    checkAggType(tester, "regr_avgy(1.5, 2.5)", "DECIMAL(2, 1) NOT NULL");
-    if (!enable) {
-      return;
-    }
-    // with zero values
-    tester.checkAgg("regr_avgy(x)", new String[]{}, null, 0d);
-  }
-
-  @Test public void testRegrSlopeFunc() {
-    tester.setFor(SqlStdOperatorTable.REGR_SLOPE, VM_EXPAND);
-    tester.checkFails(
-        "regr_slope(^*^)",
-        "Unknown identifier '\\*'",
-        false);
-    tester.checkFails(
-        "^regr_slope(cast(null as varchar(2)), cast(null as varchar(2)))^",
-        "(?s)Cannot apply 'REGR_SLOPE' to arguments of type 'REGR_SLOPE\\(<VARCHAR\\(2\\)>, <VARCHAR\\(2\\)>\\)'\\. Supported form\\(s\\): 'REGR_SLOPE\\(<NUMERIC>, <NUMERIC>\\)'.*",
-        false);
-    tester.checkType("regr_slope(CAST(NULL AS INTEGER), CAST(NULL AS INTEGER))",
-        "INTEGER");
-    checkAggType(tester, "regr_slope(1.5, 2.5)", "DECIMAL(2, 1) NOT NULL");
-    if (!enable) {
-      return;
-    }
-    // with zero values
-    tester.checkAgg("regr_slope(x)", new String[]{}, null, 0d);
-  }
-
-
-  @Test public void testRegrR2Func() {
-    tester.setFor(SqlStdOperatorTable.REGR_R2, VM_EXPAND);
-    tester.checkFails(
-        "regr_r2(^*^)",
-        "Unknown identifier '\\*'",
-        false);
-    tester.checkFails(
-        "^regr_r2(cast(null as varchar(2)), cast(null as varchar(2)))^",
-        "(?s)Cannot apply 'REGR_R2' to arguments of type 'REGR_R2\\(<VARCHAR\\(2\\)>, <VARCHAR\\(2\\)>\\)'\\. Supported form\\(s\\): 'REGR_R2\\(<NUMERIC>, <NUMERIC>\\)'.*",
-        false);
-    tester.checkType("regr_r2(CAST(NULL AS INTEGER), CAST(NULL AS INTEGER))",
-        "INTEGER");
-    checkAggType(tester, "regr_r2(1.5, 2.5)", "DECIMAL(2, 1) NOT NULL");
-    if (!enable) {
-      return;
-    }
-    // with zero values
-    tester.checkAgg("regr_r2(x)", new String[]{}, null, 0d);
-  }
-
-  @Test public void testRegrInterceptFunc() {
-    tester.setFor(SqlStdOperatorTable.REGR_INTERCEPT, VM_EXPAND);
-    tester.checkFails(
-        "regr_intercept(^*^)",
-        "Unknown identifier '\\*'",
-        false);
-    tester.checkFails(
-        "^regr_intercept(cast(null as varchar(2)), cast(null as varchar(2)))^",
-        "(?s)Cannot apply 'REGR_INTERCEPT' to arguments of type 'REGR_INTERCEPT\\(<VARCHAR\\(2\\)>, <VARCHAR\\(2\\)>\\)'\\. Supported form\\(s\\): 'REGR_INTERCEPT\\(<NUMERIC>, <NUMERIC>\\)'.*",
-        false);
-    tester.checkType("regr_intercept(CAST(NULL AS INTEGER), CAST(NULL AS INTEGER))",
-        "INTEGER");
-    checkAggType(tester, "regr_intercept(1.5, 2.5)", "DECIMAL(2, 1) NOT NULL");
-    if (!enable) {
-      return;
-    }
-    // with zero values
-    tester.checkAgg("regr_intercept(x)", new String[]{}, null, 0d);
   }
 
   @Test public void testStddevPopFunc() {
@@ -8635,50 +7770,6 @@ public abstract class SqlOperatorBaseTest {
         0d);
   }
 
-  @Test public void testBitAndFunc() {
-    tester.setFor(SqlStdOperatorTable.BIT_AND, VM_FENNEL, VM_JAVA);
-    tester.checkFails("bit_and(^*^)", "Unknown identifier '\\*'", false);
-    tester.checkType("bit_and(1)", "INTEGER");
-    tester.checkType("bit_and(CAST(2 AS TINYINT))", "TINYINT");
-    tester.checkType("bit_and(CAST(2 AS SMALLINT))", "SMALLINT");
-    tester.checkType("bit_and(distinct CAST(2 AS BIGINT))", "BIGINT");
-    tester.checkFails("^bit_and(1.2)^",
-        "Cannot apply 'BIT_AND' to arguments of type 'BIT_AND\\(<DECIMAL\\(2, 1\\)>\\)'\\. Supported form\\(s\\): 'BIT_AND\\(<INTEGER>\\)'",
-        false);
-    tester.checkFails(
-        "^bit_and()^",
-        "Invalid number of arguments to function 'BIT_AND'. Was expecting 1 arguments",
-        false);
-    tester.checkFails(
-        "^bit_and(1, 2)^",
-        "Invalid number of arguments to function 'BIT_AND'. Was expecting 1 arguments",
-        false);
-    final String[] values = {"3", "2", "2"};
-    tester.checkAgg("bit_and(x)", values, 2, 0);
-  }
-
-  @Test public void testBitOrFunc() {
-    tester.setFor(SqlStdOperatorTable.BIT_OR, VM_FENNEL, VM_JAVA);
-    tester.checkFails("bit_or(^*^)", "Unknown identifier '\\*'", false);
-    tester.checkType("bit_or(1)", "INTEGER");
-    tester.checkType("bit_or(CAST(2 AS TINYINT))", "TINYINT");
-    tester.checkType("bit_or(CAST(2 AS SMALLINT))", "SMALLINT");
-    tester.checkType("bit_or(distinct CAST(2 AS BIGINT))", "BIGINT");
-    tester.checkFails("^bit_or(1.2)^",
-        "Cannot apply 'BIT_OR' to arguments of type 'BIT_OR\\(<DECIMAL\\(2, 1\\)>\\)'\\. Supported form\\(s\\): 'BIT_OR\\(<INTEGER>\\)'",
-        false);
-    tester.checkFails(
-        "^bit_or()^",
-        "Invalid number of arguments to function 'BIT_OR'. Was expecting 1 arguments",
-        false);
-    tester.checkFails(
-        "^bit_or(1, 2)^",
-        "Invalid number of arguments to function 'BIT_OR'. Was expecting 1 arguments",
-        false);
-    final String[] values = {"1", "2", "2"};
-    tester.checkAgg("bit_or(x)", values, 3, 0);
-  }
-
   /**
    * Tests that CAST fails when given a value just outside the valid range for
    * that type. For example,
@@ -8817,7 +7908,7 @@ public abstract class SqlOperatorBaseTest {
   /** Test that calls all operators with all possible argument types, and for
    * each type, with a set of tricky values. */
   @Test public void testArgumentBounds() {
-    if (!CalciteSystemProperty.TEST_SLOW.value()) {
+    if (!CalciteAssert.ENABLE_SLOW) {
       return;
     }
     final SqlValidatorImpl validator = (SqlValidatorImpl) tester.getValidator();
@@ -9024,8 +8115,10 @@ public abstract class SqlOperatorBaseTest {
         final ResultSet resultSet =
             statement.executeQuery(query);
         resultChecker.checkResult(resultSet);
+      } catch (RuntimeException e) {
+        throw e;
       } catch (Exception e) {
-        throw TestUtil.rethrow(e);
+        throw new RuntimeException(e);
       }
     }
 

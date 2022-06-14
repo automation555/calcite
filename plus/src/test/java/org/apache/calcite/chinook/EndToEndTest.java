@@ -20,13 +20,21 @@ import org.apache.calcite.test.QuidemTest;
 
 import net.hydromatic.quidem.Quidem;
 
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
 import java.util.Collection;
 
 /**
  * Entry point for all end-to-end tests based on Chinook data in HSQLDB wrapped
  * by Calcite schema.
  */
-class EndToEndTest extends QuidemTest {
+@RunWith(Parameterized.class)
+public class EndToEndTest extends QuidemTest {
+  public EndToEndTest(String path) {
+    super(path);
+  }
+
   /** Runs a test from the command line.
    *
    * <p>For example:
@@ -36,15 +44,16 @@ class EndToEndTest extends QuidemTest {
    * </blockquote> */
   public static void main(String[] args) throws Exception {
     for (String arg : args) {
-      new EndToEndTest().test(arg);
+      new EndToEndTest(arg).test();
     }
   }
 
-  /** For {@link QuidemTest#test(String)} parameters. */
+  /** For {@link Parameterized} runner. */
+  @Parameterized.Parameters(name = "{index}: quidem({0})")
   public static Collection<Object[]> data() {
     // Start with a test file we know exists, then find the directory and list
     // its files.
-    final String first = "sql/basic.iq";
+    final String first = "sql/basic_test.iq";
     return data(first);
   }
 
@@ -52,3 +61,5 @@ class EndToEndTest extends QuidemTest {
     return new ConnectionFactory();
   }
 }
+
+// End EndToEndTest.java

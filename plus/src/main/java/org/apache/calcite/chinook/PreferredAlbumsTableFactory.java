@@ -30,16 +30,15 @@ import com.google.common.collect.ContiguousSet;
 import com.google.common.collect.DiscreteDomain;
 import com.google.common.collect.Range;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.util.Map;
 
 /**
  * Factory for the table of albums preferred by the current user.
  */
 public class PreferredAlbumsTableFactory implements TableFactory<AbstractQueryableTable> {
-  private static final Integer[] SPECIFIC_USER_PREFERRED_ALBUMS =
-      {4, 56, 154, 220, 321};
+
+  private static final Integer[] SPECIFIC_CONDITION_ALBUMS
+          = new Integer[]{4, 56, 154, 220, 321};
   private static final int FIRST_ID = 1;
   private static final int LAST_ID = 347;
 
@@ -47,7 +46,7 @@ public class PreferredAlbumsTableFactory implements TableFactory<AbstractQueryab
       SchemaPlus schema,
       String name,
       Map<String, Object> operand,
-      @Nullable RelDataType rowType) {
+      RelDataType rowType) {
     return new AbstractQueryableTable(Integer.class) {
       @Override public RelDataType getRowType(RelDataTypeFactory typeFactory) {
         return typeFactory.builder().add("ID", SqlTypeName.INTEGER).build();
@@ -62,9 +61,9 @@ public class PreferredAlbumsTableFactory implements TableFactory<AbstractQueryab
     };
   }
 
-  private static Queryable<Integer> fetchPreferredAlbums() {
-    if (EnvironmentFairy.getUser() == EnvironmentFairy.User.SPECIFIC_USER) {
-      return Linq4j.asEnumerable(SPECIFIC_USER_PREFERRED_ALBUMS).asQueryable();
+  private Queryable<Integer> fetchPreferredAlbums() {
+    if (EnvironmentFairy.getCondition() == EnvironmentFairy.Condition.SPECIFIC_CONDITION) {
+      return Linq4j.asEnumerable(SPECIFIC_CONDITION_ALBUMS).asQueryable();
     } else {
       final ContiguousSet<Integer> set =
           ContiguousSet.create(Range.closed(FIRST_ID, LAST_ID),
@@ -73,3 +72,5 @@ public class PreferredAlbumsTableFactory implements TableFactory<AbstractQueryab
     }
   }
 }
+
+// End PreferredAlbumsTableFactory.java

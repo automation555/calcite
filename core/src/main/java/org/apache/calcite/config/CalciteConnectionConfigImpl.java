@@ -20,14 +20,17 @@ import org.apache.calcite.avatica.ConnectionConfigImpl;
 import org.apache.calcite.avatica.util.Casing;
 import org.apache.calcite.avatica.util.Quoting;
 import org.apache.calcite.model.JsonSchema;
-import org.apache.calcite.runtime.ConsList;
+import org.apache.calcite.prepare.CalciteCatalogReader;
+import org.apache.calcite.runtime.GeoFunctions;
 import org.apache.calcite.sql.SqlOperatorTable;
-import org.apache.calcite.sql.fun.SqlLibrary;
-import org.apache.calcite.sql.fun.SqlLibraryOperatorTableFactory;
+import org.apache.calcite.sql.fun.OracleSqlOperatorTable;
+import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.sql.util.ChainedSqlOperatorTable;
 import org.apache.calcite.sql.validate.SqlConformance;
 import org.apache.calcite.sql.validate.SqlConformanceEnum;
 
-import java.util.List;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.Properties;
 
 /** Implementation of {@link CalciteConnectionConfig}. */
@@ -83,17 +86,44 @@ public class CalciteConnectionConfigImpl extends ConnectionConfigImpl
         .getEnum(NullCollation.class, NullCollation.HIGH);
   }
 
+  public String user() {
+    return CalciteConnectionProperty.USER
+            .wrap(properties)
+            .getString();
+  }
+
   public <T> T fun(Class<T> operatorTableClass, T defaultOperatorTable) {
     final String fun =
         CalciteConnectionProperty.FUN.wrap(properties).getString();
     if (fun == null || fun.equals("") || fun.equals("standard")) {
       return defaultOperatorTable;
     }
-    final List<SqlLibrary> libraryList = SqlLibrary.parse(fun);
-    final SqlOperatorTable operatorTable =
-            SqlLibraryOperatorTableFactory.INSTANCE.getOperatorTable(
-                ConsList.of(SqlLibrary.STANDARD, libraryList));
-    return operatorTableClass.cast(operatorTable);
+    final Collection<SqlOperatorTable> tables = new LinkedHashSet<>();
+    for (String s : fun.split(",")) {
+      operatorTable(s, tables);
+    }
+    tables.add(SqlStdOperatorTable.instance());
+    return operatorTableClass.cast(
+        ChainedSqlOperatorTable.of(
+            tables.toArray(new SqlOperatorTable[0])));
+  }
+
+  private static void operatorTable(String s,
+        Collection<SqlOperatorTable> tables) {
+    switch (s) {
+    case "standard":
+      tables.add(SqlStdOperatorTable.instance());
+      return;
+    case "oracle":
+      tables.add(OracleSqlOperatorTable.instance());
+      return;
+    case "spatial":
+      tables.add(
+          CalciteCatalogReader.operatorTable(GeoFunctions.class.getName()));
+      return;
+    default:
+      throw new IllegalArgumentException("Unknown operator table: " + s);
+    }
   }
 
   public String model() {
@@ -158,21 +188,6 @@ public class CalciteConnectionConfigImpl extends ConnectionConfigImpl
   public SqlConformance conformance() {
     return CalciteConnectionProperty.CONFORMANCE.wrap(properties)
         .getEnum(SqlConformanceEnum.class);
-  }
-
-  @Override public String timeZone() {
-    return CalciteConnectionProperty.TIME_ZONE.wrap(properties)
-            .getString();
-  }
-
-  public String locale() {
-    return CalciteConnectionProperty.LOCALE.wrap(properties)
-        .getString();
-  }
-
-  @Override public String sqlMode() {
-    return CalciteConnectionProperty.SQL_MODE.wrap(properties)
-        .getString();
   }
 }
 

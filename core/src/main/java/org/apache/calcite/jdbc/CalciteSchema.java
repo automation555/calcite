@@ -16,8 +16,8 @@
  */
 package org.apache.calcite.jdbc;
 
-import org.apache.calcite.adapter.jdbc.JdbcCatalogSchema;
-import org.apache.calcite.adapter.jdbc.JdbcSchema;
+import org.apache.calcite.access.AlwaysPassAuthorization;
+import org.apache.calcite.access.Authorization;
 import org.apache.calcite.linq4j.function.Experimental;
 import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.materialize.Lattice;
@@ -41,8 +41,6 @@ import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Lists;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -51,7 +49,6 @@ import java.util.NavigableMap;
 import java.util.NavigableSet;
 import java.util.Objects;
 import java.util.Set;
-import javax.sql.DataSource;
 
 /**
  * Schema.
@@ -60,7 +57,7 @@ import javax.sql.DataSource;
  */
 public abstract class CalciteSchema {
 
-  private final @Nullable CalciteSchema parent;
+  private final CalciteSchema parent;
   public final Schema schema;
   public final String name;
   /** Tables explicitly defined in this schema. Does not include tables in
@@ -72,35 +69,32 @@ public abstract class CalciteSchema {
   protected final NameSet functionNames;
   protected final NameMap<FunctionEntry> nullaryFunctionMap;
   protected final NameMap<CalciteSchema> subSchemaMap;
-  private @Nullable List<? extends List<String>> path;
+  private List<? extends List<String>> path;
+  private Authorization guard = AlwaysPassAuthorization.INSTANCE;
 
-  protected CalciteSchema(@Nullable CalciteSchema parent, Schema schema,
-      String name,
-      @Nullable NameMap<CalciteSchema> subSchemaMap,
-      @Nullable NameMap<TableEntry> tableMap,
-      @Nullable NameMap<LatticeEntry> latticeMap,
-      @Nullable NameMap<TypeEntry> typeMap,
-      @Nullable NameMultimap<FunctionEntry> functionMap,
-      @Nullable NameSet functionNames,
-      @Nullable NameMap<FunctionEntry> nullaryFunctionMap,
-      @Nullable List<? extends List<String>> path) {
+  protected CalciteSchema(CalciteSchema parent, Schema schema,
+      String name, NameMap<CalciteSchema> subSchemaMap,
+      NameMap<TableEntry> tableMap, NameMap<LatticeEntry> latticeMap, NameMap<TypeEntry> typeMap,
+      NameMultimap<FunctionEntry> functionMap, NameSet functionNames,
+      NameMap<FunctionEntry> nullaryFunctionMap,
+      List<? extends List<String>> path) {
     this.parent = parent;
     this.schema = schema;
     this.name = name;
     if (tableMap == null) {
       this.tableMap = new NameMap<>();
     } else {
-      this.tableMap = Objects.requireNonNull(tableMap, "tableMap");
+      this.tableMap = Objects.requireNonNull(tableMap);
     }
     if (latticeMap == null) {
       this.latticeMap = new NameMap<>();
     } else {
-      this.latticeMap = Objects.requireNonNull(latticeMap, "latticeMap");
+      this.latticeMap = Objects.requireNonNull(latticeMap);
     }
     if (subSchemaMap == null) {
       this.subSchemaMap = new NameMap<>();
     } else {
-      this.subSchemaMap = Objects.requireNonNull(subSchemaMap, "subSchemaMap");
+      this.subSchemaMap = Objects.requireNonNull(subSchemaMap);
     }
     if (functionMap == null) {
       this.functionMap = new NameMultimap<>();
@@ -109,14 +103,14 @@ public abstract class CalciteSchema {
     } else {
       // If you specify functionMap, you must also specify functionNames and
       // nullaryFunctionMap.
-      this.functionMap = Objects.requireNonNull(functionMap, "functionMap");
-      this.functionNames = Objects.requireNonNull(functionNames, "functionNames");
-      this.nullaryFunctionMap = Objects.requireNonNull(nullaryFunctionMap, "nullaryFunctionMap");
+      this.functionMap = Objects.requireNonNull(functionMap);
+      this.functionNames = Objects.requireNonNull(functionNames);
+      this.nullaryFunctionMap = Objects.requireNonNull(nullaryFunctionMap);
     }
     if (typeMap == null) {
       this.typeMap = new NameMap<>();
     } else {
-      this.typeMap = Objects.requireNonNull(typeMap, "typeMap");
+      this.typeMap = Objects.requireNonNull(typeMap);
     }
     this.path = path;
   }
@@ -124,25 +118,25 @@ public abstract class CalciteSchema {
   /** Returns a sub-schema with a given name that is defined implicitly
    * (that is, by the underlying {@link Schema} object, not explicitly
    * by a call to {@link #add(String, Schema)}), or null. */
-  protected abstract @Nullable CalciteSchema getImplicitSubSchema(String schemaName,
+  protected abstract CalciteSchema getImplicitSubSchema(String schemaName,
       boolean caseSensitive);
 
   /** Returns a table with a given name that is defined implicitly
    * (that is, by the underlying {@link Schema} object, not explicitly
    * by a call to {@link #add(String, Table)}), or null. */
-  protected abstract @Nullable TableEntry getImplicitTable(String tableName,
+  protected abstract TableEntry getImplicitTable(String tableName,
       boolean caseSensitive);
 
   /** Returns a type with a given name that is defined implicitly
    * (that is, by the underlying {@link Schema} object, not explicitly
    * by a call to {@link #add(String, RelProtoDataType)}), or null. */
-  protected abstract @Nullable TypeEntry getImplicitType(String name,
+  protected abstract TypeEntry getImplicitType(String name,
                                                 boolean caseSensitive);
 
   /** Returns table function with a given name and zero arguments that is
    * defined implicitly (that is, by the underlying {@link Schema} object,
    * not explicitly by a call to {@link #add(String, Function)}), or null. */
-  protected abstract @Nullable TableEntry getImplicitTableBasedOnNullaryFunction(String tableName,
+  protected abstract TableEntry getImplicitTableBasedOnNullaryFunction(String tableName,
       boolean caseSensitive);
 
   /** Adds implicit sub-schemas to a builder. */
@@ -172,7 +166,7 @@ public abstract class CalciteSchema {
 
   /** Returns a snapshot representation of this CalciteSchema. */
   protected abstract CalciteSchema snapshot(
-      @Nullable CalciteSchema parent, SchemaVersion version);
+      CalciteSchema parent, SchemaVersion version);
 
   protected abstract boolean isCacheEnabled();
 
@@ -245,7 +239,7 @@ public abstract class CalciteSchema {
   }
 
   /** Returns the path of an object in this schema. */
-  public List<String> path(@Nullable String name) {
+  public List<String> path(String name) {
     final List<String> list = new ArrayList<>();
     if (name != null) {
       list.add(name);
@@ -260,7 +254,7 @@ public abstract class CalciteSchema {
     return ImmutableList.copyOf(Lists.reverse(list));
   }
 
-  public final @Nullable CalciteSchema getSubSchema(String schemaName,
+  public final CalciteSchema getSubSchema(String schemaName,
       boolean caseSensitive) {
     // Check explicit schemas.
     //noinspection LoopStatementThatDoesntLoop
@@ -275,7 +269,7 @@ public abstract class CalciteSchema {
   public abstract CalciteSchema add(String name, Schema schema);
 
   /** Returns a table that materializes the given SQL statement. */
-  public final @Nullable TableEntry getTableBySql(String sql) {
+  public final TableEntry getTableBySql(String sql) {
     for (TableEntry tableEntry : tableMap.map().values()) {
       if (tableEntry.sqls.contains(sql)) {
         return tableEntry;
@@ -285,7 +279,7 @@ public abstract class CalciteSchema {
   }
 
   /** Returns a table with the given name. Does not look for views. */
-  public final @Nullable TableEntry getTable(String tableName, boolean caseSensitive) {
+  public final TableEntry getTable(String tableName, boolean caseSensitive) {
     // Check explicit tables.
     //noinspection LoopStatementThatDoesntLoop
     for (Map.Entry<String, TableEntry> entry
@@ -370,7 +364,7 @@ public abstract class CalciteSchema {
 
   /** Returns a type, explicit and implicit, with a given
    * name. Never null. */
-  public final @Nullable TypeEntry getType(String name, boolean caseSensitive) {
+  public final TypeEntry getType(String name, boolean caseSensitive) {
     for (Map.Entry<String, TypeEntry> entry
         : typeMap.range(name, caseSensitive).entrySet()) {
       return entry.getValue();
@@ -425,7 +419,7 @@ public abstract class CalciteSchema {
 
   /** Returns a tables derived from explicit and implicit functions
    * that take zero parameters. */
-  public final @Nullable TableEntry getTableBasedOnNullaryFunction(String tableName,
+  public final TableEntry getTableBasedOnNullaryFunction(String tableName,
       boolean caseSensitive) {
     for (Map.Entry<String, FunctionEntry> entry
         : nullaryFunctionMap.range(tableName, caseSensitive).entrySet()) {
@@ -509,14 +503,8 @@ public abstract class CalciteSchema {
    */
   public static CalciteSchema createRootSchema(boolean addMetadataSchema,
       boolean cache, String name) {
-    final Schema rootSchema = new CalciteConnectionImpl.RootSchema();
-    return createRootSchema(addMetadataSchema, cache, name, rootSchema);
-  }
-
-  @Experimental
-  public static CalciteSchema createRootSchema(boolean addMetadataSchema,
-      boolean cache, String name, Schema schema) {
     CalciteSchema rootSchema;
+    final Schema schema = new CalciteConnectionImpl.RootSchema();
     if (cache) {
       rootSchema = new CachingCalciteSchema(null, schema, name);
     } else {
@@ -553,6 +541,14 @@ public abstract class CalciteSchema {
     return typeMap.remove(name) != null;
   }
 
+  public void setGuard(Authorization guard) {
+    this.guard = guard;
+  }
+
+  public Authorization getAuthorization() {
+    return guard;
+  }
+
   /**
    * Entry in a schema, such as a table or sub-schema.
    *
@@ -567,9 +563,9 @@ public abstract class CalciteSchema {
     public final CalciteSchema schema;
     public final String name;
 
-    protected Entry(CalciteSchema schema, String name) {
-      this.schema = Objects.requireNonNull(schema, "schema");
-      this.name = Objects.requireNonNull(name, "name");
+    public Entry(CalciteSchema schema, String name) {
+      this.schema = Objects.requireNonNull(schema);
+      this.name = Objects.requireNonNull(name);
     }
 
     /** Returns this object's path. For example ["hr", "emps"]. */
@@ -582,10 +578,10 @@ public abstract class CalciteSchema {
   public abstract static class TableEntry extends Entry {
     public final ImmutableList<String> sqls;
 
-    protected TableEntry(CalciteSchema schema, String name,
+    public TableEntry(CalciteSchema schema, String name,
         ImmutableList<String> sqls) {
       super(schema, name);
-      this.sqls = Objects.requireNonNull(sqls, "sqls");
+      this.sqls = Objects.requireNonNull(sqls);
     }
 
     public abstract Table getTable();
@@ -593,7 +589,7 @@ public abstract class CalciteSchema {
 
   /** Membership of a type in a schema. */
   public abstract static class TypeEntry extends Entry {
-    protected TypeEntry(CalciteSchema schema, String name) {
+    public TypeEntry(CalciteSchema schema, String name) {
       super(schema, name);
     }
 
@@ -602,7 +598,7 @@ public abstract class CalciteSchema {
 
   /** Membership of a function in a schema. */
   public abstract static class FunctionEntry extends Entry {
-    protected FunctionEntry(CalciteSchema schema, String name) {
+    public FunctionEntry(CalciteSchema schema, String name) {
       super(schema, name);
     }
 
@@ -615,7 +611,7 @@ public abstract class CalciteSchema {
 
   /** Membership of a lattice in a schema. */
   public abstract static class LatticeEntry extends Entry {
-    protected LatticeEntry(CalciteSchema schema, String name) {
+    public LatticeEntry(CalciteSchema schema, String name) {
       super(schema, name);
     }
 
@@ -631,44 +627,44 @@ public abstract class CalciteSchema {
       return CalciteSchema.this;
     }
 
-    @Override public @Nullable SchemaPlus getParentSchema() {
+    public SchemaPlus getParentSchema() {
       return parent == null ? null : parent.plus();
     }
 
-    @Override public String getName() {
+    public String getName() {
       return CalciteSchema.this.getName();
     }
 
-    @Override public boolean isMutable() {
+    public boolean isMutable() {
       return schema.isMutable();
     }
 
-    @Override public void setCacheEnabled(boolean cache) {
+    public void setCacheEnabled(boolean cache) {
       CalciteSchema.this.setCache(cache);
     }
 
-    @Override public boolean isCacheEnabled() {
+    public boolean isCacheEnabled() {
       return CalciteSchema.this.isCacheEnabled();
     }
 
-    @Override public Schema snapshot(SchemaVersion version) {
+    public Schema snapshot(SchemaVersion version) {
       throw new UnsupportedOperationException();
     }
 
-    @Override public Expression getExpression(@Nullable SchemaPlus parentSchema, String name) {
+    public Expression getExpression(SchemaPlus parentSchema, String name) {
       return schema.getExpression(parentSchema, name);
     }
 
-    @Override public @Nullable Table getTable(String name) {
+    public Table getTable(String name) {
       final TableEntry entry = CalciteSchema.this.getTable(name, true);
       return entry == null ? null : entry.getTable();
     }
 
-    @Override public NavigableSet<String> getTableNames() {
+    public NavigableSet<String> getTableNames() {
       return CalciteSchema.this.getTableNames();
     }
 
-    @Override public @Nullable RelProtoDataType getType(String name) {
+    @Override public RelProtoDataType getType(String name) {
       final TypeEntry entry = CalciteSchema.this.getType(name, true);
       return entry == null ? null : entry.getType();
     }
@@ -677,31 +673,30 @@ public abstract class CalciteSchema {
       return CalciteSchema.this.getTypeNames();
     }
 
-    @Override public Collection<Function> getFunctions(String name) {
+    public Collection<Function> getFunctions(String name) {
       return CalciteSchema.this.getFunctions(name, true);
     }
 
-    @Override public NavigableSet<String> getFunctionNames() {
+    public NavigableSet<String> getFunctionNames() {
       return CalciteSchema.this.getFunctionNames();
     }
 
-    @Override public @Nullable SchemaPlus getSubSchema(String name) {
+    public SchemaPlus getSubSchema(String name) {
       final CalciteSchema subSchema =
           CalciteSchema.this.getSubSchema(name, true);
       return subSchema == null ? null : subSchema.plus();
     }
 
-    @Override public Set<String> getSubSchemaNames() {
-      //noinspection RedundantCast
-      return (Set<String>) CalciteSchema.this.getSubSchemaMap().keySet();
+    public Set<String> getSubSchemaNames() {
+      return CalciteSchema.this.getSubSchemaMap().keySet();
     }
 
-    @Override public SchemaPlus add(String name, Schema schema) {
+    public SchemaPlus add(String name, Schema schema) {
       final CalciteSchema calciteSchema = CalciteSchema.this.add(name, schema);
       return calciteSchema.plus();
     }
 
-    @Override public <T extends Object> T unwrap(Class<T> clazz) {
+    public <T> T unwrap(Class<T> clazz) {
       if (clazz.isInstance(this)) {
         return clazz.cast(this);
       }
@@ -711,39 +706,31 @@ public abstract class CalciteSchema {
       if (clazz.isInstance(CalciteSchema.this.schema)) {
         return clazz.cast(CalciteSchema.this.schema);
       }
-      if (clazz == DataSource.class) {
-        if (schema instanceof JdbcSchema) {
-          return clazz.cast(((JdbcSchema) schema).getDataSource());
-        }
-        if (schema instanceof JdbcCatalogSchema) {
-          return clazz.cast(((JdbcCatalogSchema) schema).getDataSource());
-        }
-      }
       throw new ClassCastException("not a " + clazz);
     }
 
-    @Override public void setPath(ImmutableList<ImmutableList<String>> path) {
+    public void setPath(ImmutableList<ImmutableList<String>> path) {
       CalciteSchema.this.path = path;
     }
 
-    @Override public void add(String name, Table table) {
+    public void add(String name, Table table) {
       CalciteSchema.this.add(name, table);
     }
 
-    @Override public boolean removeTable(String name) {
-      return CalciteSchema.this.removeTable(name);
-    }
-
-    @Override public void add(String name, Function function) {
+    public void add(String name, Function function) {
       CalciteSchema.this.add(name, function);
     }
 
-    @Override public void add(String name, RelProtoDataType type) {
+    public void add(String name, RelProtoDataType type) {
       CalciteSchema.this.add(name, type);
     }
 
-    @Override public void add(String name, Lattice lattice) {
+    public void add(String name, Lattice lattice) {
       CalciteSchema.this.add(name, lattice);
+    }
+
+    @Override public void setAuthorization(Authorization guard) {
+      CalciteSchema.this.setGuard(guard);
     }
   }
 
@@ -758,10 +745,10 @@ public abstract class CalciteSchema {
     public TableEntryImpl(CalciteSchema schema, String name, Table table,
         ImmutableList<String> sqls) {
       super(schema, name, sqls);
-      this.table = Objects.requireNonNull(table, "table");
+      this.table = Objects.requireNonNull(table);
     }
 
-    @Override public Table getTable() {
+    public Table getTable() {
       return table;
     }
   }
@@ -779,7 +766,7 @@ public abstract class CalciteSchema {
       this.protoDataType = protoDataType;
     }
 
-    @Override public RelProtoDataType getType() {
+    public RelProtoDataType getType() {
       return protoDataType;
     }
   }
@@ -798,11 +785,11 @@ public abstract class CalciteSchema {
       this.function = function;
     }
 
-    @Override public Function getFunction() {
+    public Function getFunction() {
       return function;
     }
 
-    @Override public boolean isMaterialization() {
+    public boolean isMaterialization() {
       return function
           instanceof MaterializedViewTable.MaterializedViewTableMacro;
     }
@@ -827,13 +814,15 @@ public abstract class CalciteSchema {
       starTableEntry = schema.add(name, starTable);
     }
 
-    @Override public Lattice getLattice() {
+    public Lattice getLattice() {
       return lattice;
     }
 
-    @Override public TableEntry getStarTable() {
+    public TableEntry getStarTable() {
       return starTableEntry;
     }
   }
 
 }
+
+// End CalciteSchema.java

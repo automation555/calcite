@@ -16,6 +16,7 @@
  */
 package org.apache.calcite.prepare;
 
+import org.apache.calcite.access.Authorization;
 import org.apache.calcite.config.CalciteConnectionConfig;
 import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
@@ -82,16 +83,6 @@ import java.util.function.Predicate;
  * functions defined schemas.
  */
 public class CalciteCatalogReader implements Prepare.CatalogReader {
-
-  public static final CatalogReaderFactory FACTORY = new CatalogReaderFactory() {
-    @Override public Prepare.CatalogReader create(CalciteSchema rootSchema,
-        List<String> defaultSchema, RelDataTypeFactory typeFactory,
-        CalciteConnectionConfig config1) {
-      return new CalciteCatalogReader(rootSchema, defaultSchema,
-          typeFactory, config1);
-    }
-  };
-
   protected final CalciteSchema rootSchema;
   protected final RelDataTypeFactory typeFactory;
   private final List<List<String>> schemaPaths;
@@ -173,8 +164,7 @@ public class CalciteCatalogReader implements Prepare.CatalogReader {
               Iterables.concat(schemaNames, Util.skipLast(names)), nameMatcher);
       if (schema != null) {
         final String name = Util.last(names);
-        boolean caseSensitive = nameMatcher.isCaseSensitive();
-        functions2.addAll(schema.getFunctions(name, caseSensitive));
+        functions2.addAll(schema.getFunctions(name, true));
       }
     }
     return functions2;
@@ -257,8 +247,7 @@ public class CalciteCatalogReader implements Prepare.CatalogReader {
   public void lookupOperatorOverloads(final SqlIdentifier opName,
       SqlFunctionCategory category,
       SqlSyntax syntax,
-      List<SqlOperator> operatorList,
-      SqlNameMatcher nameMatcher) {
+      List<SqlOperator> operatorList) {
     if (syntax != SqlSyntax.FUNCTION) {
       return;
     }
@@ -420,6 +409,10 @@ public class CalciteCatalogReader implements Prepare.CatalogReader {
       return aClass.cast(this);
     }
     return null;
+  }
+
+  @Override public Authorization getAuthorization() {
+    return rootSchema.getAuthorization();
   }
 }
 

@@ -28,7 +28,6 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
-import java.util.TimeZone;
 
 import static org.apache.calcite.avatica.ConnectionConfigImpl.PropEnv;
 
@@ -79,8 +78,8 @@ public enum CalciteConnectionProperty implements ConnectionProperty {
   LEX("lex", Type.ENUM, Lex.ORACLE, false),
 
   /** Collection of built-in functions and operators. Valid values include
-   * "standard", "mysql", "oracle", "postgresql" and "spatial", and also
-   * comma-separated lists, for example "oracle,spatial". */
+   * "standard", "oracle" and "spatial", and also comma-separated lists, for
+   * example "oracle,spatial". */
   FUN("fun", Type.STRING, "standard", true),
 
   /** How identifiers are quoted.
@@ -129,17 +128,8 @@ public enum CalciteConnectionProperty implements ConnectionProperty {
    * generates code that implements the Enumerable interface. */
   SPARK("spark", Type.BOOLEAN, false, false),
 
-  /** Returns the time zone from the connect string, for example 'gmt-3'.
-   * If the time zone is not set then the JVM time zone is returned.
-   * Never null. */
-  TIME_ZONE("timeZone", Type.STRING, TimeZone.getDefault().getID(), false),
-
-  /** Returns the locale from the connect string.
-   * If the locale is not set, returns the root locale.
-   * Never null.
-   * Examples of valid locales: 'en', 'en_US',
-   * 'de_DE', '_GB', 'en_US_WIN', 'de__POSIX', 'fr__MAC', ''. */
-  LOCALE("locale", Type.STRING, Locale.ROOT.toString(), false),
+  /** Time zone, for example 'gmt-3'. Default is the JVM's time zone. */
+  TIME_ZONE("timeZone", Type.STRING, null, false),
 
   /** If the planner should try de-correlating as much as it is possible.
    * If true (the default), Calcite de-correlates the plan. */
@@ -153,8 +143,7 @@ public enum CalciteConnectionProperty implements ConnectionProperty {
   /** SQL conformance level. */
   CONFORMANCE("conformance", Type.ENUM, SqlConformanceEnum.DEFAULT, false),
 
-  /** SQL mode. */
-  SQL_MODE("sql_mode", Type.STRING, "", false);
+  USER("user", Type.STRING, null, false);
 
   private final String camelName;
   private final Type type;

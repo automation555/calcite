@@ -16,6 +16,8 @@
  */
 package org.apache.calcite.model;
 
+import org.apache.calcite.access.Authorization;
+import org.apache.calcite.access.AuthorizationFactory;
 import org.apache.calcite.adapter.jdbc.JdbcSchema;
 import org.apache.calcite.avatica.AvaticaUtils;
 import org.apache.calcite.jdbc.CalciteConnection;
@@ -32,18 +34,14 @@ import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.TableFactory;
 import org.apache.calcite.schema.TableFunction;
 import org.apache.calcite.schema.TableMacro;
-import org.apache.calcite.schema.UDFDescription;
 import org.apache.calcite.schema.impl.AbstractSchema;
 import org.apache.calcite.schema.impl.AggregateFunctionImpl;
-import org.apache.calcite.schema.impl.JavaScalarFunction;
-import org.apache.calcite.schema.impl.JavaTableFunction;
 import org.apache.calcite.schema.impl.MaterializedViewTable;
 import org.apache.calcite.schema.impl.ScalarFunctionImpl;
 import org.apache.calcite.schema.impl.TableFunctionImpl;
 import org.apache.calcite.schema.impl.TableMacroImpl;
 import org.apache.calcite.schema.impl.ViewTable;
 import org.apache.calcite.sql.SqlDialectFactory;
-import org.apache.calcite.sql.SqlFunctionCategory;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
@@ -79,6 +77,7 @@ public class ModelHandler {
   private final CalciteConnection connection;
   private final Deque<Pair<String, SchemaPlus>> schemaStack = new ArrayDeque<>();
   private final String modelUri;
+  private AuthorizationFactory authFactory;
   Lattice.Builder latticeBuilder;
   Lattice.TileBuilder tileBuilder;
 
@@ -133,25 +132,6 @@ public class ModelHandler {
     } catch (ClassNotFoundException e) {
       throw new RuntimeException("UDF class '"
           + className + "' not found");
-    }
-    UDFDescription udfDescription = clazz.getAnnotation(UDFDescription.class);
-    if (udfDescription != null) {
-      if (udfDescription.name() != null) {
-        functionName = udfDescription.name();
-      }
-      SqlFunctionCategory category = udfDescription.category();
-      if (category == SqlFunctionCategory.USER_DEFINED_FUNCTION) {
-        JavaScalarFunction scalarFunction = new JavaScalarFunction(clazz);
-        schema.add(functionName, scalarFunction);
-        return;
-      } else if (category == SqlFunctionCategory.USER_DEFINED_TABLE_FUNCTION) {
-        JavaTableFunction tableFunction = new JavaTableFunction(clazz);
-        schema.add(functionName, tableFunction);
-        return;
-      } else {
-        throw new UnsupportedOperationException("UnSupport " + category
-            + " in " + UDFDescription.class.getName());
-      }
     }
     final TableFunction tableFunction =
         TableFunctionImpl.create(clazz, Util.first(methodName, "eval"));
@@ -227,6 +207,10 @@ public class ModelHandler {
     final Pair<String, SchemaPlus> pair =
         Pair.of(null, connection.getRootSchema());
     schemaStack.push(pair);
+    if (jsonRoot.authorization != null) {
+      // not the real visitor pattern, but better readability
+      visit(jsonRoot.authorization);
+    }
     for (JsonSchema schema : jsonRoot.schemas) {
       schema.accept(this);
     }
@@ -239,6 +223,13 @@ public class ModelHandler {
         throw new RuntimeException(e);
       }
     }
+  }
+
+  public void visit(JsonAuthorization authorization) {
+    authFactory = AvaticaUtils.instantiatePlugin(
+            AuthorizationFactory.class,
+            authorization.factory);
+    authFactory.init(authorization.operand);
   }
 
   public void visit(JsonMapSchema jsonSchema) {
@@ -292,6 +283,11 @@ public class ModelHandler {
     jsonSchema.visitChildren(this);
     final Pair<String, SchemaPlus> p = schemaStack.pop();
     assert p == pair;
+    if (authFactory != null) {
+      Authorization authorization = authFactory.create(
+          jsonSchema == null ? Collections.<String, String>emptyMap() : jsonSchema.authConfig);
+      schema.setAuthorization(authorization);
+    }
   }
 
   public void visit(JsonCustomSchema jsonSchema) {

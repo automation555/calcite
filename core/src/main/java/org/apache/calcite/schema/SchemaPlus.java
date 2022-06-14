@@ -16,12 +16,11 @@
  */
 package org.apache.calcite.schema;
 
+import org.apache.calcite.access.Authorization;
 import org.apache.calcite.materialize.Lattice;
 import org.apache.calcite.rel.type.RelProtoDataType;
 
 import com.google.common.collect.ImmutableList;
-
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * Extension to the {@link Schema} interface.
@@ -48,7 +47,7 @@ public interface SchemaPlus extends Schema {
   /**
    * Returns the parent schema, or null if this schema has no parent.
    */
-  @Nullable SchemaPlus getParentSchema();
+  SchemaPlus getParentSchema();
 
   /**
    * Returns the name of this schema.
@@ -59,7 +58,7 @@ public interface SchemaPlus extends Schema {
   String getName();
 
   // override with stricter return
-  @Override @Nullable SchemaPlus getSubSchema(String name);
+  SchemaPlus getSubSchema(String name);
 
   /** Adds a schema as a sub-schema of this schema, and returns the wrapped
    * object. */
@@ -67,13 +66,6 @@ public interface SchemaPlus extends Schema {
 
   /** Adds a table to this schema. */
   void add(String name, Table table);
-
-  /** Removes a table from this schema, used e.g. to clean-up temporary tables. */
-  default boolean removeTable(String name) {
-    // Default implementation provided for backwards compatibility, to be removed before 2.0
-    return false;
-  }
-
 
   /** Adds a function to this schema. */
   void add(String name, Function function);
@@ -84,14 +76,19 @@ public interface SchemaPlus extends Schema {
   /** Adds a lattice to this schema. */
   void add(String name, Lattice lattice);
 
-  @Override boolean isMutable();
+  boolean isMutable();
 
   /** Returns an underlying object. */
-  <T extends Object> @Nullable T unwrap(Class<T> clazz);
+  <T> T unwrap(Class<T> clazz);
 
   void setPath(ImmutableList<ImmutableList<String>> path);
 
   void setCacheEnabled(boolean cache);
 
   boolean isCacheEnabled();
+
+  /** Registers guard for this schema */
+  void setAuthorization(Authorization authorization);
 }
+
+// End SchemaPlus.java
