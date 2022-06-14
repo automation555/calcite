@@ -955,17 +955,10 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         "INTEGER NOT NULL MULTISET NOT NULL");
   }
 
-  @Test public void testCastRegisteredType() {
-    checkExpFails("cast(123 as customBigInt)",
-        "class org.apache.calcite.sql.SqlIdentifier: CUSTOMBIGINT");
-    checkExpType("cast(123 as sales.customBigInt)", "BIGINT NOT NULL");
-    checkExpType("cast(123 as catalog.sales.customBigInt)", "BIGINT NOT NULL");
-  }
-
   @Test public void testCastFails() {
     checkExpFails(
         "cast('foo' as ^bar^)",
-        "class org.apache.calcite.sql.SqlIdentifier: BAR");
+        "(?s).*Unknown datatype name 'BAR'");
     checkWholeExpFails(
         "cast(multiset[1] as integer)",
         "(?s).*Cast function cannot convert value of type INTEGER MULTISET to type INTEGER");
@@ -5487,22 +5480,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
   }
 
   @Test public void testJoinUsing() {
-    final String empDeptType = "RecordType(INTEGER NOT NULL DEPTNO,"
-        + " INTEGER NOT NULL EMPNO,"
-        + " VARCHAR(20) NOT NULL ENAME,"
-        + " VARCHAR(10) NOT NULL JOB,"
-        + " INTEGER MGR,"
-        + " TIMESTAMP(0) NOT NULL HIREDATE,"
-        + " INTEGER NOT NULL SAL,"
-        + " INTEGER NOT NULL COMM,"
-        + " BOOLEAN NOT NULL SLACKER,"
-        + " VARCHAR(10) NOT NULL NAME) NOT NULL";
-    sql("select * from emp join dept using (deptno)").ok()
-        .type(empDeptType);
-
-    // NATURAL has same effect as USING
-    sql("select * from emp natural join dept").ok()
-        .type(empDeptType);
+    check("select * from emp join dept using (deptno)");
 
     // fail: comm exists on one side not the other
     // todo: The error message could be improved.
@@ -5525,9 +5503,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         "Column 'deptno' not found in any table");
 
     // ok to repeat (ok in Oracle10g too)
-    final String sql = "select * from emp join dept using (deptno, deptno)";
-    sql(sql).ok()
-        .type(empDeptType);
+    check("select * from emp join dept using (deptno, deptno)");
 
     // inherited column, not found in either side of the join, in the
     // USING clause
@@ -5570,25 +5546,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         "Cannot specify NATURAL keyword with ON or USING clause");
   }
 
-  @Test public void testNaturalJoinCaseSensitive() {
-    // With case-insensitive match, more columns are recognized as join columns
-    // and therefore "*" expands to fewer columns.
-    final String sql = "select *\n"
-        + "from (select empno, deptno from emp)\n"
-        + "natural join (select deptno as \"deptno\", name from dept)";
-    final String type0 = "RecordType(INTEGER NOT NULL EMPNO,"
-        + " INTEGER NOT NULL DEPTNO,"
-        + " INTEGER NOT NULL deptno,"
-        + " VARCHAR(10) NOT NULL NAME) NOT NULL";
-    final String type1 = "RecordType(INTEGER NOT NULL DEPTNO,"
-        + " INTEGER NOT NULL EMPNO,"
-        + " VARCHAR(10) NOT NULL NAME) NOT NULL";
-    sql(sql)
-        .type(type0)
-        .tester(tester.withCaseSensitive(false))
-        .type(type1);
-  }
-
   @Test public void testNaturalJoinIncompatibleDatatype() {
     checkFails("select *\n"
             + "from (select ename as name, hiredate as deptno from emp)\n"
@@ -5597,13 +5554,13 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         "Column 'DEPTNO' matched using NATURAL keyword or USING clause has incompatible types: cannot compare 'TIMESTAMP\\(0\\)' to 'INTEGER'");
 
     // INTEGER and VARCHAR are comparable: VARCHAR implicit converts to INTEGER
-    sql("select * from emp natural ^join^\n"
-        + "(select deptno, name as sal from dept)").ok();
+    check("select * from emp natural ^join^\n"
+            + "(select deptno, name as sal from dept)");
 
     // make sal occur more than once on rhs, it is ignored and therefore
     // there is no error about incompatible types
-    sql("select * from emp natural join\n"
-        + " (select deptno, name as sal, 'foo' as sal from dept)").ok();
+    check("select * from emp natural join\n"
+        + " (select deptno, name as sal, 'foo' as sal from dept)");
   }
 
   @Test public void testJoinUsingIncompatibleDatatype() {
@@ -5613,9 +5570,8 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         "Column 'DEPTNO' matched using NATURAL keyword or USING clause has incompatible types: cannot compare 'TIMESTAMP\\(0\\)' to 'INTEGER'");
 
     // INTEGER and VARCHAR are comparable: VARCHAR implicit converts to INTEGER
-    final String sql = "select * from emp\n"
-        + "join (select deptno, name as sal from dept) using (deptno, sal)";
-    sql(sql).ok();
+    check("select * from emp\n"
+        + "join (select deptno, name as sal from dept) using (deptno, sal)");
   }
 
   @Test public void testJoinUsingInvalidColsFails() {
@@ -5742,51 +5698,16 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
   }
 
   @Test public void testJoinUsingThreeWay() {
-    final String sql0 = "select *\n"
+    check("select *\n"
         + "from emp as e\n"
         + "join dept as d using (deptno)\n"
-        + "join emp as e2 using (empno)";
-    sql(sql0).ok();
-
-    final String sql1 = "select *\n"
-        + "from emp as e\n"
-        + "join dept as d using (deptno)\n"
-        + "join dept as d2 using (^deptno^)";
-    final String expected = "Column name 'DEPTNO' in USING clause is not "
-        + "unique on one side of join";
-    sql(sql1).fails(expected);
-
-    final String sql2 = "select *\n"
-        + "from emp as e\n"
-        + "join dept as d using (deptno)";
-    final String type2 = "RecordType(INTEGER NOT NULL DEPTNO,"
-        + " INTEGER NOT NULL EMPNO,"
-        + " VARCHAR(20) NOT NULL ENAME,"
-        + " VARCHAR(10) NOT NULL JOB,"
-        + " INTEGER MGR,"
-        + " TIMESTAMP(0) NOT NULL HIREDATE,"
-        + " INTEGER NOT NULL SAL,"
-        + " INTEGER NOT NULL COMM,"
-        + " BOOLEAN NOT NULL SLACKER,"
-        + " VARCHAR(10) NOT NULL NAME) NOT NULL";
-    sql(sql2).type(type2);
-
-    final String sql3 = "select *\n"
-        + "from emp as e\n"
-        + "join dept as d using (deptno)\n"
-        + "join (values (10, 1000)) as b (empno, bonus) using (empno)";
-    final String type3 = "RecordType(INTEGER NOT NULL EMPNO,"
-        + " INTEGER NOT NULL DEPTNO,"
-        + " VARCHAR(20) NOT NULL ENAME,"
-        + " VARCHAR(10) NOT NULL JOB,"
-        + " INTEGER MGR,"
-        + " TIMESTAMP(0) NOT NULL HIREDATE,"
-        + " INTEGER NOT NULL SAL,"
-        + " INTEGER NOT NULL COMM,"
-        + " BOOLEAN NOT NULL SLACKER,"
-        + " VARCHAR(10) NOT NULL NAME,"
-        + " INTEGER NOT NULL BONUS) NOT NULL";
-    sql(sql3).type(type3);
+        + "join emp as e2 using (empno)");
+    checkFails(
+        "select *\n"
+            + "from emp as e\n"
+            + "join dept as d using (deptno)\n"
+            + "join dept as d2 using (^deptno^)",
+        "Column name 'DEPTNO' in USING clause is not unique on one side of join");
   }
 
   @Test public void testWhere() {
@@ -7875,216 +7796,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + "select min(deptno) from dept as depts2)");
   }
 
-  @Test public void testCorrelatedSubQueryInHaving() {
-    // SCALAR_QUERY
-    check("select ename, deptno, sum(sal) from emp group by ename, deptno\n"
-            + "having max(sal) > \n"
-            + "  (select max(sal) from emp e where emp.ename = e.ename group by deptno)");
-
-    check("select ename, deptno2, max(sal)\n"
-            + "from (select ename, deptno as deptno2, sum(sal) as sal from sales.emp group by ename, deptno) t\n"
-            + "group by ename, deptno2\n"
-            + "having max(sal) <= \n"
-            + "  (select max(sal) from sales.emp_b where deptno2 = emp_b.deptno group by ename)");
-
-    // correlated fields are not being grouped
-    checkFails("select deptno, sum(sal) from emp group by deptno\n"
-                    + "having max(sal) > \n"
-                    + "  (select max(sal) from emp e where ^emp.ename^ = e.ename group by deptno)",
-            "Expression 'EMP.ENAME' is not being grouped");
-
-    // correlated fields are in aggCall
-    check("select ename, sum(sal) from emp group by ename\n"
-            + "having max(deptno) > \n"
-            + "  (select max(emp.deptno) from emp e group by e.ename)");
-
-    // nested ScalarQuery
-    check("select ename from sales.emp group by ename, deptno\n"
-            + "having max(sal) <= \n"
-            + "  (select max(sal) from sales.emp_b e1 group by e1.ename\n"
-            + "     having min(sal) < \n"
-            + "       (select min(sal) from sales.emp_b e2 where emp.deptno = e2.deptno group by ename))");
-
-    check("select ename from sales.emp group by ename, deptno\n"
-            + "having max(sal) <= \n"
-            + "  (select max(sal) from sales.emp_b e1 group by e1.ename\n"
-            + "     having min(sal) < \n"
-            + "       (select min(sal) from sales.emp_b e2 where e1.ename = e2.ename group by deptno))");
-
-    check("select ename from sales.emp group by ename, deptno\n"
-            + "having max(sal) <= \n"
-            + "  (select max(sal) from sales.emp_b e1 group by e1.ename\n"
-            + "     having min(sal) < \n"
-            + "       (select min(sal) from sales.emp_b e2 where e1.ename = emp.ename group by deptno))");
-
-    checkFails("select ename from sales.emp group by ename, deptno\n"
-                    + "having max(sal) <= \n"
-                    + "  (select max(sal) from sales.emp_b e1 group by e1.ename\n"
-                    + "     having min(sal) < \n"
-                    + "       (select min(sal) from sales.emp_b e2 where ^emp.job^ = e2.job group by ename))",
-            "Expression 'EMP.JOB' is not being grouped");
-
-    // group by expr
-    check("select deptno + 1, sum(sal) from emp group by deptno + 1\n"
-            + "having max(sal) > \n"
-            + "    (select max(sal) from emp e where emp.deptno + 1 = e.deptno group by ename)");
-
-    checkFails("select deptno + 1, sum(sal) from emp group by deptno + 1\n"
-                    + "having max(sal) > \n"
-                    + "  (select max(sal) from emp e where ^emp.deptno^ + 2 = e.deptno group by ename)",
-            "Expression 'EMP.DEPTNO' is not being grouped");
-
-    check("select ename from sales.emp group by ename, deptno\n"
-            + "having max(sal) <= \n"
-            + "  (select max(sal) from sales.emp_b e1 group by e1.deptno\n"
-            + "      having min(sal) < \n"
-            + "        (select min(sal) from sales.emp_b e2 "
-            + "          where e1.deptno + emp.deptno = e2.deptno group by ename))");
-
-    check("select ename from sales.emp group by ename, deptno + 1\n"
-            + "having max(sal) <= \n"
-            + "  (select max(sal) from sales.emp_b e1 group by e1.deptno\n"
-            + "     having min(sal) < \n"
-            + "       (select min(sal) from sales.emp_b e2 \n"
-            + "          where emp.deptno + 1 + e1.deptno = e2.deptno group by ename))");
-
-    checkFails("select ename from sales.emp group by ename, deptno + 1\n"
-                    + "having max(sal) <= \n"
-                    + "  (select max(sal) from sales.emp_b e1 group by e1.deptno\n"
-                    + "     having min(sal) < \n"
-                    + "       (select min(sal) from sales.emp_b e2 \n"
-                    + "          where e1.deptno + ^emp.deptno^ + 1 = e2.deptno group by ename))",
-            "Expression 'EMP.DEPTNO' is not being grouped");
-
-    // correlated fields are aggCall's alias
-    checkFails("select ename, deptno, sum(sal) as s from emp group by ename, deptno\n"
-                    + "having max(sal) > \n"
-                    + "  (select max(sal) from emp e where ^s^ = e.ename group by deptno)",
-            "Column 'S' not found in any table");
-
-    checkFails("select ename, deptno, sum(sal) as s from emp group by ename, deptno\n"
-                    + "having max(sal) > \n"
-                    + "  (select max(sal) from emp e where emp.^s^ = e.ename group by deptno)",
-            "Column 'S' not found in table 'EMP'");
-
-    checkFails("select ename, deptno, sum(sal) as sal from emp group by ename, deptno\n"
-                    + "having max(sal) > \n"
-                    + "  (select max(sal) from emp e where ^emp.sal^ = e.ename group by deptno)",
-            "Expression 'EMP.SAL' is not being grouped");
-
-    // IN
-    check("select ename, deptno, sum(sal) from emp group by ename, deptno\n"
-            + "having deptno in \n"
-            + "  (select deptno from emp e where emp.ename = e.ename group by deptno)");
-
-    check("select ename, deptno, sum(sal) from emp group by ename, deptno\n"
-            + "having deptno in (select emp.deptno from emp e where emp.ename = e.ename)");
-
-    checkFails("select ename, deptno, sum(sal) from emp group by ename, deptno\n"
-                    + "having deptno in (select deptno from emp e where ^emp.empno^ = e.empno)",
-            "Expression 'EMP.EMPNO' is not being grouped");
-
-    checkFails("select ename, deptno, sum(sal) from emp group by ename, deptno\n"
-                    + "having deptno in\n"
-                    + "  (select ^emp.deptno^ from emp e where emp.ename = e.ename group by deptno)",
-            "Expression 'EMP.DEPTNO' is not being grouped");
-
-    checkFails("select ename, deptno, sum(sal) from emp group by ename, deptno\n"
-                    + "having deptno in (select ^emp.empno^ from emp e where emp.ename = e.ename)",
-            "Expression 'EMP.EMPNO' is not being grouped");
-
-    // correlated fields are in aggCall
-    check("select ename, sum(sal) from emp group by ename, deptno\n"
-            + "having deptno in \n"
-            + "  (select max(emp.deptno + 1) from emp e group by e.ename)");
-
-    // nested IN
-    check("select ename from sales.emp group by ename, deptno\n"
-            + "having deptno in \n"
-            + "  (select max(sal) from sales.emp_b e1 group by e1.ename\n"
-            + "     having ename in \n"
-            + "       (select ename from sales.emp_b e2 where emp.deptno = e2.deptno))");
-
-    // group by expr
-    check("select deptno + 1, sum(sal) from emp group by ename, deptno + 1\n"
-            + "having deptno + 1 in (select emp.deptno + 1 from emp e)");
-
-    checkFails("select deptno + 1, sum(sal) from emp group by ename, deptno + 1\n"
-                    + "having deptno + 1 in (select ^emp.deptno^ + 2 from emp e)",
-            "Expression 'EMP.DEPTNO' is not being grouped");
-
-    // EXISTS
-    check("select ename, deptno, sum(sal) from emp group by ename, deptno\n"
-            + "having exists \n"
-            + "  (select count(*) from emp e where emp.ename = e.ename group by deptno)");
-
-    checkFails("select ename, deptno, sum(sal) from emp group by ename, deptno\n"
-                    + "having exists (select * from emp e where ^emp.empno^ = e.empno)",
-            "Expression 'EMP.EMPNO' is not being grouped");
-
-    // correlated fields are in aggCall
-    check("select ename, deptno, sum(sal) from emp group by ename, deptno\n"
-            + "having exists \n"
-            + "  (select max(emp.sal) from emp e where emp.ename = e.ename group by deptno)");
-
-    // nested EXISTS
-    check("select ename from sales.emp group by ename, deptno\n"
-            + "having exists \n"
-            + "  (select max(sal) from sales.emp_b e1 group by e1.ename\n"
-            + "     having exists \n"
-            + "       (select ename from sales.emp_b e2 where emp.deptno = e2.deptno))");
-
-    // group by expr
-    check("select deptno + 1, sum(sal) from emp group by ename, deptno + 1\n"
-            + "having exists (select emp.deptno + 1 from emp e)");
-
-    checkFails("select deptno + 1, sum(sal) from emp group by ename, deptno + 1\n"
-                    + "having exists (select ^emp.deptno^ + 2 from emp e)",
-            "Expression 'EMP.DEPTNO' is not being grouped");
-  }
-
-  @Test public void testCorrelatedSubQueryInAggregate() {
-    check("SELECT SUM(\n"
-            + "  (select char_length(name) from dept\n"
-            + "   where dept.deptno = emp.empno))\n"
-            + "FROM emp");
-
-    check("SELECT SUM(\n"
-            + "  10 + (select char_length(name) from dept\n"
-            + "   where dept.deptno = emp.empno))\n"
-            + "FROM emp");
-
-    check("select deptno, sum(sal) from emp group by deptno\n"
-            + "having max(sal) >\n"
-            + "  max(select max(sal) from emp e where emp.ename = e.ename group by deptno)");
-
-    // nested ScalarQuery
-    check("select ename from sales.emp group by ename, deptno\n"
-            + "having max(sal) <= \n"
-            + "  max(select max(sal) from sales.emp_b e1 group by e1.ename\n"
-            + "     having min(sal) < \n"
-            + "       (select min(sal) from sales.emp_b e2 where emp.job = e2.job group by ename))");
-
-    check("select ename from sales.emp group by ename, deptno\n"
-            + "having max(sal) <= \n"
-            + "  (select max(sal) from sales.emp_b e1 group by e1.ename\n"
-            + "     having min(sal) < \n"
-            + "       max(select min(sal) from sales.emp_b e2 where emp.job = e2.job group by ename))");
-
-    check("select ename from sales.emp group by ename, deptno\n"
-            + "having max(sal) <= \n"
-            + "  max(select max(sal) from sales.emp_b e1 where emp.job = e1.job group by e1.ename\n"
-            + "     having min(sal) < \n"
-            + "       (select min(sal) from sales.emp_b e2 where e1.ename = e2.ename group by deptno))");
-
-    checkFails("select ename from sales.emp group by ename, deptno\n"
-                    + "having max(sal) <= \n"
-                    + "  max(select max(sal) from sales.emp_b e1 group by e1.ename\n"
-                    + "     having min(sal) < \n"
-                    + "       (select min(sal) from sales.emp_b e2 where ^e1.job^ = e2.job group by ename))",
-            "Expression 'E1.JOB' is not being grouped");
-  }
-
   @Test public void testRecordType() {
     // Have to qualify columns with table name.
     checkFails(
@@ -8837,9 +8548,9 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + "|| left\n"
         + "\n"
         + "+ left\n"
-        + "+ -\n"
         + "- left\n"
         + "- -\n"
+        + "DATETIME_PLUS -\n"
         + "EXISTS pre\n"
         + "\n"
         + "< ALL left\n"
