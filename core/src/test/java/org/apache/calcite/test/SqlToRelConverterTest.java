@@ -21,11 +21,15 @@ import org.apache.calcite.config.CalciteConnectionProperty;
 import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.plan.Contexts;
 import org.apache.calcite.plan.RelOptUtil;
+import org.apache.calcite.prepare.Prepare;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelRoot;
+import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.RelVisitor;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.externalize.RelXmlWriter;
+import org.apache.calcite.rel.logical.LogicalCorrelate;
+import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.validate.SqlConformance;
 import org.apache.calcite.sql.validate.SqlConformanceEnum;
@@ -35,6 +39,7 @@ import org.apache.calcite.util.Litmus;
 import org.apache.calcite.util.TestUtil;
 import org.apache.calcite.util.Util;
 
+import com.google.common.base.Function;
 import com.google.common.collect.ImmutableSet;
 
 import org.junit.Ignore;
@@ -49,6 +54,7 @@ import java.util.Set;
 
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Unit test for {@link org.apache.calcite.sql2rel.SqlToRelConverter}.
@@ -109,14 +115,6 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
         + ") join dept on dept.deptno = c\n"
         + "order by c + a";
     sql(sql).ok();
-  }
-
-  @Test
-  public void testJoinUsingDynamicTable() {
-    final String sql = "select * from SALES.NATION t1\n"
-        + "join SALES.NATION t2\n"
-        + "using (n_nationkey)";
-    sql(sql).with(getTesterWithDynamicTable()).ok();
   }
 
   /**
@@ -2614,32 +2612,26 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
     sql(sql).with(getTesterWithDynamicTable()).ok();
   }
 
-  /** Test case for
-   * <a href="https://issues.apache.org/jira/browse/CALCITE-2366">[CALCITE-2366]
-   * Add support for ANY_VALUE aggregate function</a>. */
-  @Test public void testAnyValueAggregateFunctionNoGroupBy() throws Exception {
-    final String sql = "SELECT any_value(empno) as anyempno FROM emp AS e";
-    sql(sql).ok();
-  }
-
-  @Test public void testAnyValueAggregateFunctionGroupBy() throws Exception {
-    final String sql = "SELECT any_value(empno) as anyempno FROM emp AS e group by e.sal";
-    sql(sql).ok();
-  }
-
   private Tester getExtendedTester() {
-    return tester.withCatalogReaderFactory(typeFactory ->
-        new MockCatalogReader(typeFactory, true).init().init2());
+    return tester.withCatalogReaderFactory(
+      new Function<RelDataTypeFactory, Prepare.CatalogReader>() {
+        public Prepare.CatalogReader apply(RelDataTypeFactory typeFactory) {
+          return new MockCatalogReader(typeFactory, true)
+              .init().init2();
+        }
+      });
   }
 
   @Test public void testLarge() {
-    // Size factor used to be 400, but lambdas use a lot of stack
-    final int x = 300;
-    SqlValidatorTest.checkLarge(x, input -> {
-      final RelRoot root = tester.convertSqlToRel(input);
-      final String s = RelOptUtil.toString(root.project());
-      assertThat(s, notNullValue());
-    });
+    SqlValidatorTest.checkLarge(400,
+        new Function<String, Void>() {
+          public Void apply(String input) {
+            final RelRoot root = tester.convertSqlToRel(input);
+            final String s = RelOptUtil.toString(root.project());
+            assertThat(s, notNullValue());
+            return null;
+          }
+        });
   }
 
   @Test public void testUnionInFrom() {
@@ -2799,13 +2791,6 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
         + ") AS T";
     sql(sql).ok();
   }
-  
-  @Test public void testUpdatability() {
-    final String sql = "SELECT *\n"
-        + "FROM emp\n"
-        + "FOR UPDATE";
-    sql(sql).ok();
-  }
 
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-2323">[CALCITE-2323]
@@ -2826,6 +2811,33 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
         null, null, SqlToRelConverter.Config.DEFAULT,
         SqlConformanceEnum.DEFAULT, Contexts.of(connectionConfig));
     sql(sql).with(tester).ok();
+  }
+
+  @Test public void testCorrelationIdHasColumnIndex() {
+    final String sql = "select * from emp\n"
+            + "where exists (\n"
+            + "  with dept2 as (select * from dept where dept.deptno >= emp.deptno)\n"
+            + "  select 1 from dept2 where deptno <= emp.deptno)";
+
+    final RelNode root = tester.convertSqlToRel(sql).rel;
+
+    // There should be one RelNode with a correlationId. That correlationId should
+    // have a non-empty set of columns.
+    final boolean[] hasValidCorrelationId = new boolean[] { false };
+    final RelShuttleImpl visitor = new RelShuttleImpl() {
+      @Override public RelNode visit(LogicalCorrelate correlate) {
+        if (!hasValidCorrelationId[0]) {
+          if (!correlate.getCorrelationId().getColumnIndex().isEmpty()) {
+            hasValidCorrelationId[0] = true;
+          }
+        }
+
+        return super.visit(correlate);
+      }
+    };
+
+    root.accept(visitor);
+    assertTrue("The column index on a CorrelationId must be non-empty.", hasValidCorrelationId[0]);
   }
 
   /**

@@ -16,15 +16,15 @@
  */
 package org.apache.calcite.rel.core;
 
-import com.google.common.collect.ImmutableSet;
+import org.apache.calcite.util.ImmutableBitSet;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
+import com.google.common.collect.ImmutableSet;
 
 import java.util.Set;
 
 /**
  * Describes the necessary parameters for an implementation in order to
- * identify and set dynamic variables.
+ * identify and set dynamic variables
  */
 public class CorrelationId implements Cloneable, Comparable<CorrelationId> {
   /**
@@ -34,6 +34,13 @@ public class CorrelationId implements Cloneable, Comparable<CorrelationId> {
 
   private final int id;
   private final String name;
+
+  /**
+   * columnIndex is only used when unparsing the reltree into a sql to pushdown.
+   * A CorrelationId is uniquely defined by its id and name.  Do not add columnIndex
+   * to hashCode/equals.
+   */
+  private transient ImmutableBitSet columnIndex = ImmutableBitSet.of();
 
   /**
    * Creates a correlation identifier.
@@ -83,19 +90,28 @@ public class CorrelationId implements Cloneable, Comparable<CorrelationId> {
     return name;
   }
 
-  @Override public String toString() {
+  public String toString() {
     return name;
   }
 
-  @Override public int compareTo(CorrelationId other) {
+  public int compareTo(CorrelationId other) {
     return id - other.id;
+  }
+
+  public void setColumnIndex(ImmutableBitSet columnIndex) {
+    assert this.columnIndex.isEmpty();
+    this.columnIndex = columnIndex;
+  }
+
+  public ImmutableBitSet getColumnIndex() {
+    return columnIndex;
   }
 
   @Override public int hashCode() {
     return id;
   }
 
-  @Override public boolean equals(@Nullable Object obj) {
+  @Override public boolean equals(Object obj) {
     return this == obj
         || obj instanceof CorrelationId
         && this.id == ((CorrelationId) obj).id;
@@ -125,3 +141,5 @@ public class CorrelationId implements Cloneable, Comparable<CorrelationId> {
     return builder.build();
   }
 }
+
+// End CorrelationId.java
