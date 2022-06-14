@@ -16,47 +16,24 @@
  */
 package org.apache.calcite.sql.dialect;
 
+import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
-import org.apache.calcite.sql.SqlNode;
-import org.apache.calcite.sql.SqlWriter;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
-
-import static java.util.Objects.requireNonNull;
+import java.sql.DatabaseMetaData;
 
 /**
  * A <code>SqlDialect</code> implementation for the Sybase database.
  */
 public class SybaseSqlDialect extends SqlDialect {
-  public static final SqlDialect.Context DEFAULT_CONTEXT = SqlDialect.EMPTY_CONTEXT
-      .withDatabaseProduct(SqlDialect.DatabaseProduct.SYBASE);
+  public static final SqlDialect DEFAULT = new SybaseSqlDialect();
 
-  public static final SqlDialect DEFAULT = new SybaseSqlDialect(DEFAULT_CONTEXT);
-
-  /** Creates a SybaseSqlDialect. */
-  public SybaseSqlDialect(Context context) {
-    super(context);
+  public SybaseSqlDialect(DatabaseMetaData databaseMetaData) {
+    super(DatabaseProduct.SYBASE, databaseMetaData, null);
   }
 
-  @Override public void unparseOffsetFetch(SqlWriter writer, @Nullable SqlNode offset,
-      @Nullable SqlNode fetch) {
-    // No-op; see unparseTopN.
-    // Sybase uses "SELECT TOP (n)" rather than "FETCH NEXT n ROWS".
-  }
-
-  @Override public void unparseTopN(SqlWriter writer, @Nullable SqlNode offset,
-      @Nullable SqlNode fetch) {
-    // Parentheses are not required, but we use them to be consistent with
-    // Microsoft SQL Server, which recommends them but does not require them.
-    writer.keyword("TOP");
-    writer.keyword("(");
-    requireNonNull(fetch, "fetch");
-    fetch.unparse(writer, -1, -1);
-    writer.keyword(")");
-    if (offset != null) {
-      writer.keyword("START");
-      writer.keyword("AT");
-      offset.unparse(writer, -1, -1);
-    }
+  private SybaseSqlDialect() {
+    super(DatabaseProduct.SYBASE, null, NullCollation.HIGH, null);
   }
 }
+
+// End SybaseSqlDialect.java

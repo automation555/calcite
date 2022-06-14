@@ -16,11 +16,13 @@
  */
 package org.apache.calcite.rex;
 
+import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 
 import java.util.ArrayList;
 import java.util.List;
+import javax.annotation.Nullable;
 
 /**
  * Passes over a row-expression, calling a handler method for each node,
@@ -49,8 +51,7 @@ public class RexShuttle implements RexVisitor<RexNode> {
           over.getAggOperator(),
           clonedOperands,
           window,
-          over.isDistinct(),
-          over.ignoreNulls());
+          over.isDistinct());
     } else {
       return over;
     }
@@ -105,7 +106,24 @@ public class RexShuttle implements RexVisitor<RexNode> {
       // To do that, we would need to take a RexBuilder and
       // watch out for special operators like CAST and NEW where
       // the type is embedded in the original call.
-      return call.clone(call.getType(), clonedOperands);
+      return new RexCall(
+          call.getType(),
+          call.getOperator(),
+          clonedOperands);
+    } else {
+      return call;
+    }
+  }
+
+  public RexNode visitSeqCall(final RexSeqCall call) {
+    boolean[] update = {false};
+    List<RexNode> clonedOperands = visitList(call.operands, update);
+    if (update[0]) {
+      return new RexSeqCall(
+          call.getType(),
+          call.getOperator(),
+          clonedOperands,
+          call.rel);
     } else {
       return call;
     }
@@ -145,8 +163,7 @@ public class RexShuttle implements RexVisitor<RexNode> {
   protected List<RexNode> visitList(
       List<? extends RexNode> exprs, boolean[] update) {
     ImmutableList.Builder<RexNode> clonedOperands = ImmutableList.builder();
-    for (int i = 0; i < exprs.size(); i++) {
-      RexNode operand = exprs.get(i);
+    for (RexNode operand : exprs) {
       RexNode clonedOperand = operand.accept(this);
       if ((clonedOperand != operand) && (update != null)) {
         update[0] = true;
@@ -161,8 +178,8 @@ public class RexShuttle implements RexVisitor<RexNode> {
    */
   public void visitList(
       List<? extends RexNode> exprs, List<RexNode> outExprs) {
-    for (int i = 0; i < exprs.size(); i++) {
-      outExprs.add(exprs.get(i).accept(this));
+    for (RexNode expr : exprs) {
+      outExprs.add(expr.accept(this));
     }
   }
 
@@ -266,8 +283,11 @@ public class RexShuttle implements RexVisitor<RexNode> {
    * Applies this shuttle to each expression in an iterable.
    */
   public final Iterable<RexNode> apply(Iterable<? extends RexNode> iterable) {
-    return Iterables.transform(iterable,
-        t -> t == null ? null : t.accept(RexShuttle.this));
+    return Iterables.transform(iterable, new Function<RexNode, RexNode>() {
+      public RexNode apply(@Nullable RexNode t) {
+        return t == null ? null : t.accept(RexShuttle.this);
+      }
+    });
   }
 
   /**

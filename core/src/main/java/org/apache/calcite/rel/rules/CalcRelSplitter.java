@@ -32,6 +32,7 @@ import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexLocalRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexProgram;
+import org.apache.calcite.rex.RexSeqCall;
 import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.rex.RexVisitorImpl;
@@ -39,9 +40,9 @@ import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.util.Litmus;
 import org.apache.calcite.util.Util;
 import org.apache.calcite.util.graph.DefaultDirectedGraph;
+import org.apache.calcite.util.graph.DefaultEdge;
 import org.apache.calcite.util.graph.DirectedGraph;
 import org.apache.calcite.util.graph.TopologicalOrderIterator;
-import org.apache.calcite.util.graph.TypedEdge;
 
 import com.google.common.base.Preconditions;
 import com.google.common.primitives.Ints;
@@ -126,7 +127,7 @@ public abstract class CalcRelSplitter {
     // expressions to the left.
     assert program.isValid(Litmus.THROW, null);
     final List<RexNode> exprList = program.getExprList();
-    final RexNode[] exprs = exprList.toArray(new RexNode[0]);
+    final RexNode[] exprs = exprList.toArray(new RexNode[exprList.size()]);
     assert !RexUtil.containComplexExprs(exprList);
 
     // Figure out what level each expression belongs to.
@@ -428,7 +429,7 @@ public abstract class CalcRelSplitter {
   private List<Integer> computeTopologicalOrdering(
       RexNode[] exprs,
       List<Set<Integer>> cohorts) {
-    final DirectedGraph<Integer, TypedEdge<Integer>> graph =
+    final DirectedGraph<Integer, DefaultEdge> graph =
         DefaultDirectedGraph.create();
     for (int i = 0; i < exprs.length; i++) {
       graph.addVertex(i);
@@ -452,7 +453,7 @@ public abstract class CalcRelSplitter {
             }
           });
     }
-    TopologicalOrderIterator<Integer, TypedEdge<Integer>> iter =
+    TopologicalOrderIterator<Integer, DefaultEdge> iter =
         new TopologicalOrderIterator<>(graph);
     final List<Integer> permutation = new ArrayList<>();
     while (iter.hasNext()) {
@@ -835,6 +836,13 @@ public abstract class CalcRelSplitter {
       return null;
     }
 
+    public Void visitSeqCall(RexSeqCall call) {
+      if (!relType.canImplement(call)) {
+        throw CannotImplement.INSTANCE;
+      }
+      return null;
+    }
+
     public Void visitDynamicParam(RexDynamicParam dynamicParam) {
       if (!relType.canImplement(dynamicParam)) {
         throw CannotImplement.INSTANCE;
@@ -988,3 +996,5 @@ public abstract class CalcRelSplitter {
     }
   }
 }
+
+// End CalcRelSplitter.java

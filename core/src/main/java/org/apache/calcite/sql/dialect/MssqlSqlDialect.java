@@ -17,67 +17,55 @@
 package org.apache.calcite.sql.dialect;
 
 import org.apache.calcite.avatica.util.TimeUnitRange;
-import org.apache.calcite.rel.type.RelDataTypeSystem;
-import org.apache.calcite.sql.SqlAbstractDateTimeLiteral;
+import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlFunction;
 import org.apache.calcite.sql.SqlFunctionCategory;
-import org.apache.calcite.sql.SqlIntervalLiteral;
-import org.apache.calcite.sql.SqlIntervalQualifier;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlLiteral;
-import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.ReturnTypes;
 
+import java.sql.DatabaseMetaData;
+
 /**
- * A <code>SqlDialect</code> implementation for the Microsoft SQL Server
- * database.
+ * A <code>SqlDialect</code> implementation for the Mssql database.
  */
 public class MssqlSqlDialect extends SqlDialect {
-  public static final SqlDialect DEFAULT =
-      new MssqlSqlDialect(EMPTY_CONTEXT
-          .withDatabaseProduct(DatabaseProduct.MSSQL)
-          .withIdentifierQuoteString("["));
+  public static final SqlDialect DEFAULT = new MssqlSqlDialect();
 
   private static final SqlFunction MSSQL_SUBSTRING =
       new SqlFunction("SUBSTRING", SqlKind.OTHER_FUNCTION,
           ReturnTypes.ARG0_NULLABLE_VARYING, null, null,
           SqlFunctionCategory.STRING);
 
-  private static final SqlFunction MSSQL_DATEADD =
-      new SqlFunction("DATEADD", SqlStdOperatorTable.TIMESTAMP_ADD.getKind(),
-          SqlStdOperatorTable.TIMESTAMP_ADD.getReturnTypeInference(),
-          SqlStdOperatorTable.TIMESTAMP_ADD.getOperandTypeInference(),
-          SqlStdOperatorTable.TIMESTAMP_ADD.getOperandTypeChecker(),
-          SqlStdOperatorTable.TIMESTAMP_ADD.getFunctionType());
-
-  /** Creates a MssqlSqlDialect. */
-  public MssqlSqlDialect(Context context) {
-    super(context);
+  public MssqlSqlDialect(DatabaseMetaData databaseMetaData) {
+    super(
+        DatabaseProduct.MSSQL,
+        databaseMetaData,
+        resolveSequenceSupport(MssqlSequenceSupportResolver.INSTANCE, databaseMetaData)
+    );
   }
 
-  @Override public boolean useTimestampAddInsteadOfDatetimePlus() {
-    return true;
+  private MssqlSqlDialect() {
+    super(
+        DatabaseProduct.MSSQL,
+        "[",
+        NullCollation.HIGH,
+        resolveSequenceSupport(MssqlSequenceSupportResolver.INSTANCE, null)
+    );
   }
 
-  @Override public void unparseDateTimeLiteral(SqlWriter writer,
-      SqlAbstractDateTimeLiteral literal, int leftPrec, int rightPrec) {
-    writer.literal("'" + literal.toFormattedString() + "'");
-  }
-
-  @Override public void unparseCall(SqlWriter writer, SqlCall call,
-      int leftPrec, int rightPrec) {
+  @Override public void unparseCall(SqlWriter writer, SqlCall call, int leftPrec, int rightPrec) {
     if (call.getOperator() == SqlStdOperatorTable.SUBSTRING) {
       if (call.operandCount() != 3) {
         throw new IllegalArgumentException("MSSQL SUBSTRING requires FROM and FOR arguments");
       }
       SqlUtil.unparseFunctionSyntax(MSSQL_SUBSTRING, writer, call);
-    } else if (call.getOperator() == SqlStdOperatorTable.TIMESTAMP_ADD) {
-      SqlUtil.unparseFunctionSyntax(MSSQL_DATEADD, writer, call);
+
     } else {
       switch (call.getKind()) {
       case FLOOR:
@@ -92,10 +80,6 @@ public class MssqlSqlDialect extends SqlDialect {
         super.unparseCall(writer, call, leftPrec, rightPrec);
       }
     }
-  }
-
-  @Override public boolean supportsCharSet() {
-    return false;
   }
 
   /**
@@ -140,68 +124,6 @@ public class MssqlSqlDialect extends SqlDialect {
       throw new IllegalArgumentException("MSSQL does not support FLOOR for time unit: "
           + unit);
     }
-  }
-
-  @Override public void unparseSqlDatetimeArithmetic(SqlWriter writer,
-      SqlCall call, SqlKind sqlKind, int leftPrec, int rightPrec) {
-
-    final SqlWriter.Frame frame = writer.startFunCall("DATEADD");
-    SqlNode operand = call.operand(1);
-    if (operand instanceof SqlIntervalLiteral) {
-      //There is no DATESUB method available, so change the sign.
-      unparseSqlIntervalLiteralMssql(
-          writer, (SqlIntervalLiteral) operand, sqlKind == SqlKind.MINUS ? -1 : 1);
-    } else {
-      operand.unparse(writer, leftPrec, rightPrec);
-    }
-    writer.sep(",", true);
-
-    call.operand(0).unparse(writer, leftPrec, rightPrec);
-    writer.endList(frame);
-  }
-
-  @Override public void unparseSqlIntervalQualifier(SqlWriter writer,
-      SqlIntervalQualifier qualifier, RelDataTypeSystem typeSystem) {
-    switch (qualifier.timeUnitRange) {
-    case YEAR:
-    case QUARTER:
-    case MONTH:
-    case WEEK:
-    case DAY:
-    case HOUR:
-    case MINUTE:
-    case SECOND:
-    case MILLISECOND:
-    case MICROSECOND:
-      final String timeUnit = qualifier.timeUnitRange.startUnit.name();
-      writer.keyword(timeUnit);
-      break;
-    default:
-      throw new AssertionError("Unsupported type: " + qualifier.timeUnitRange);
-    }
-
-    if (null != qualifier.timeUnitRange.endUnit) {
-      throw new AssertionError("End unit is not supported now: "
-          + qualifier.timeUnitRange.endUnit);
-    }
-  }
-
-  @Override public void unparseSqlIntervalLiteral(
-      SqlWriter writer, SqlIntervalLiteral literal, int leftPrec, int rightPrec) {
-    unparseSqlIntervalLiteralMssql(writer, literal, 1);
-  }
-
-  private void unparseSqlIntervalLiteralMssql(
-      SqlWriter writer, SqlIntervalLiteral literal, int sign) {
-    final SqlIntervalLiteral.IntervalValue interval =
-        (SqlIntervalLiteral.IntervalValue) literal.getValue();
-    unparseSqlIntervalQualifier(writer, interval.getIntervalQualifier(),
-        RelDataTypeSystem.DEFAULT);
-    writer.sep(",", true);
-    if (interval.getSign() * sign == -1) {
-      writer.print("-");
-    }
-    writer.literal(literal.getValue().toString());
   }
 
   private void unparseFloorWithUnit(SqlWriter writer, SqlCall call, int charLen,

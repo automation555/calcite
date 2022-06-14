@@ -17,48 +17,39 @@
 package org.apache.calcite.sql.dialect;
 
 import org.apache.calcite.avatica.util.TimeUnitRange;
-import org.apache.calcite.sql.SqlBasicCall;
+import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlLiteral;
-import org.apache.calcite.sql.SqlNode;
-import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlWriter;
-import org.apache.calcite.sql.fun.SqlCase;
 import org.apache.calcite.sql.fun.SqlFloorFunction;
-import org.apache.calcite.sql.fun.SqlStdOperatorTable;
-import org.apache.calcite.sql.parser.SqlParserPos;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
+import java.sql.DatabaseMetaData;
 
 /**
  * A <code>SqlDialect</code> implementation for the Hsqldb database.
  */
 public class HsqldbSqlDialect extends SqlDialect {
-  public static final SqlDialect.Context DEFAULT_CONTEXT = SqlDialect.EMPTY_CONTEXT
-      .withDatabaseProduct(SqlDialect.DatabaseProduct.HSQLDB);
+  public static final SqlDialect DEFAULT = new HsqldbSqlDialect();
 
-  public static final SqlDialect DEFAULT = new HsqldbSqlDialect(DEFAULT_CONTEXT);
-
-  /** Creates an HsqldbSqlDialect. */
-  public HsqldbSqlDialect(Context context) {
-    super(context);
+  public HsqldbSqlDialect(DatabaseMetaData databaseMetaData) {
+    super(
+        DatabaseProduct.HSQLDB,
+        databaseMetaData,
+        resolveSequenceSupport(HsqldbSequenceSupport.INSTANCE, databaseMetaData)
+    );
   }
 
-  @Override public boolean supportsCharSet() {
-    return false;
+  private HsqldbSqlDialect() {
+    super(
+        DatabaseProduct.HSQLDB,
+        null,
+        NullCollation.HIGH,
+        resolveSequenceSupport(HsqldbSequenceSupport.INSTANCE, null)
+    );
   }
 
-  @Override public boolean supportsAggregateFunctionFilter() {
-    return false;
-  }
-
-  @Override public boolean supportsWindowFunctions() {
-    return false;
-  }
-
-  @Override public void unparseCall(SqlWriter writer, SqlCall call,
-      int leftPrec, int rightPrec) {
+  @Override public void unparseCall(SqlWriter writer, SqlCall call, int leftPrec, int rightPrec) {
     switch (call.getKind()) {
     case FLOOR:
       if (call.operandCount() != 2) {
@@ -78,40 +69,6 @@ public class HsqldbSqlDialect extends SqlDialect {
     default:
       super.unparseCall(writer, call, leftPrec, rightPrec);
     }
-  }
-
-  @Override public void unparseOffsetFetch(SqlWriter writer, @Nullable SqlNode offset,
-      @Nullable SqlNode fetch) {
-    unparseFetchUsingLimit(writer, offset, fetch);
-  }
-
-  @Override public SqlNode rewriteSingleValueExpr(SqlNode aggCall) {
-    final SqlNode operand = ((SqlBasicCall) aggCall).operand(0);
-    final SqlLiteral nullLiteral = SqlLiteral.createNull(SqlParserPos.ZERO);
-    final SqlNode unionOperand = SqlStdOperatorTable.VALUES.createCall(SqlParserPos.ZERO,
-        SqlLiteral.createApproxNumeric("0", SqlParserPos.ZERO));
-    // For hsqldb, generate
-    //   CASE COUNT(*)
-    //   WHEN 0 THEN NULL
-    //   WHEN 1 THEN MIN(<result>)
-    //   ELSE (VALUES 1 UNION ALL VALUES 1)
-    //   END
-    final SqlNode caseExpr =
-        new SqlCase(SqlParserPos.ZERO,
-            SqlStdOperatorTable.COUNT.createCall(SqlParserPos.ZERO, operand),
-            SqlNodeList.of(
-                SqlLiteral.createExactNumeric("0", SqlParserPos.ZERO),
-                SqlLiteral.createExactNumeric("1", SqlParserPos.ZERO)),
-            SqlNodeList.of(
-                nullLiteral,
-                SqlStdOperatorTable.MIN.createCall(SqlParserPos.ZERO, operand)),
-            SqlStdOperatorTable.SCALAR_QUERY.createCall(SqlParserPos.ZERO,
-                SqlStdOperatorTable.UNION_ALL
-                    .createCall(SqlParserPos.ZERO, unionOperand, unionOperand)));
-
-    LOGGER.debug("SINGLE_VALUE rewritten into [{}]", caseExpr);
-
-    return caseExpr;
   }
 
   private static String convertTimeUnit(TimeUnitRange unit) {
@@ -136,3 +93,5 @@ public class HsqldbSqlDialect extends SqlDialect {
     }
   }
 }
+
+// End HsqldbSqlDialect.java

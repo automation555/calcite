@@ -16,33 +16,33 @@
  */
 package org.apache.calcite.sql.dialect;
 
-import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
+
+import java.sql.DatabaseMetaData;
 
 /**
  * A <code>SqlDialect</code> implementation for the H2 database.
  */
 public class H2SqlDialect extends SqlDialect {
-  public static final Context DEFAULT_CONTEXT = SqlDialect.EMPTY_CONTEXT
-      .withDatabaseProduct(SqlDialect.DatabaseProduct.H2)
-      .withIdentifierQuoteString("\"");
+  public static final SqlDialect DEFAULT = new H2SqlDialect();
 
-  public static final SqlDialect DEFAULT = new H2SqlDialect(DEFAULT_CONTEXT);
-
-  /** Creates an H2SqlDialect. */
-  public H2SqlDialect(Context context) {
-    super(context);
+  public H2SqlDialect(DatabaseMetaData databaseMetaData) {
+    super(
+        DatabaseProduct.H2,
+        databaseMetaData,
+        resolveSequenceSupport(PostgresqlSequenceSupport.INSTANCE, databaseMetaData)
+    );
   }
 
-  @Override public boolean supportsCharSet() {
-    return false;
-  }
-
-  @Override public boolean supportsWindowFunctions() {
-    return false;
-  }
-
-  @Override public boolean supportsJoinType(JoinRelType joinType) {
-    return joinType != JoinRelType.FULL;
+  private H2SqlDialect() {
+    super(
+        DatabaseProduct.H2,
+        "\"",
+        NullCollation.HIGH,
+        resolveSequenceSupport(PostgresqlSequenceSupport.INSTANCE, null)
+    );
   }
 }
+
+// End H2SqlDialect.java

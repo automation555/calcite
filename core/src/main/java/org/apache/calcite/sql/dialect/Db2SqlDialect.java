@@ -16,106 +16,33 @@
  */
 package org.apache.calcite.sql.dialect;
 
-import org.apache.calcite.avatica.util.TimeUnit;
-import org.apache.calcite.rel.type.RelDataTypeSystem;
+import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
-import org.apache.calcite.sql.SqlIntervalLiteral;
-import org.apache.calcite.sql.SqlIntervalQualifier;
-import org.apache.calcite.sql.SqlWriter;
-import org.apache.calcite.sql.parser.SqlParserPos;
+
+import java.sql.DatabaseMetaData;
 
 /**
- * A <code>SqlDialect</code> implementation for the IBM DB2 database.
+ * A <code>SqlDialect</code> implementation for the Db2 database.
  */
 public class Db2SqlDialect extends SqlDialect {
-  public static final SqlDialect DEFAULT =
-      new Db2SqlDialect(EMPTY_CONTEXT
-          .withDatabaseProduct(DatabaseProduct.DB2));
+  public static final SqlDialect DEFAULT = new Db2SqlDialect();
 
-  /** Creates a Db2SqlDialect. */
-  public Db2SqlDialect(Context context) {
-    super(context);
+  public Db2SqlDialect(DatabaseMetaData databaseMetaData) {
+    super(
+        DatabaseProduct.DB2,
+        databaseMetaData,
+        resolveSequenceSupport(Db2SequenceSupport.INSTANCE, databaseMetaData)
+    );
   }
 
-  @Override public boolean supportsCharSet() {
-    return false;
+  private Db2SqlDialect() {
+    super(
+        DatabaseProduct.DB2,
+        null,
+        NullCollation.HIGH,
+        resolveSequenceSupport(Db2SequenceSupport.INSTANCE, null)
+    );
   }
-
-  @Override public boolean hasImplicitTableAlias() {
-    return false;
-  }
-
-  @Override public void unparseSqlIntervalQualifier(SqlWriter writer,
-      SqlIntervalQualifier qualifier, RelDataTypeSystem typeSystem) {
-
-    // DB2 supported qualifiers. Singular form of these keywords are also acceptable.
-    // YEAR/YEARS
-    // MONTH/MONTHS
-    // DAY/DAYS
-    // HOUR/HOURS
-    // MINUTE/MINUTES
-    // SECOND/SECONDS
-
-    switch (qualifier.timeUnitRange) {
-    case YEAR:
-    case MONTH:
-    case DAY:
-    case HOUR:
-    case MINUTE:
-    case SECOND:
-    case MICROSECOND:
-      final String timeUnit = qualifier.timeUnitRange.startUnit.name();
-      writer.keyword(timeUnit);
-      break;
-    default:
-      throw new AssertionError("Unsupported type: " + qualifier.timeUnitRange);
-    }
-
-    if (null != qualifier.timeUnitRange.endUnit) {
-      throw new AssertionError("Unsupported end unit: "
-          + qualifier.timeUnitRange.endUnit);
-    }
-  }
-
-  @Override public void unparseSqlIntervalLiteral(SqlWriter writer,
-      SqlIntervalLiteral literal, int leftPrec, int rightPrec) {
-    // A duration is a positive or negative number representing an interval of time.
-    // If one operand is a date, the other labeled duration of YEARS, MONTHS, or DAYS.
-    // If one operand is a time, the other must be labeled duration of HOURS, MINUTES, or SECONDS.
-    // If one operand is a timestamp, the other operand can be any of teh duration.
-
-    final SqlIntervalLiteral.IntervalValue interval =
-        (SqlIntervalLiteral.IntervalValue) literal.getValue();
-    final SqlIntervalQualifier qualifier;
-
-    // Correct invalid single-field interval literals, such as those holding weeks or quarters.
-    // These could have been created as part of the TimestampAddConvertlet.
-    if (interval.getIntervalQualifier().isSingleDatetimeField()) {
-      switch (interval.getIntervalQualifier().getStartUnit()) {
-      case WEEK:
-        qualifier = new SqlIntervalQualifier(TimeUnit.DAY, null, SqlParserPos.ZERO);
-        break;
-
-      case QUARTER:
-        qualifier = new SqlIntervalQualifier(TimeUnit.MONTH, null, SqlParserPos.ZERO);
-        break;
-
-      default:
-        qualifier = interval.getIntervalQualifier();
-        break;
-      }
-    } else {
-      qualifier = interval.getIntervalQualifier();
-    }
-
-    if (interval.getSign() == -1) {
-      writer.print("-");
-    }
-    writer.literal(literal.getValue().toString());
-    unparseSqlIntervalQualifier(writer, qualifier,
-        RelDataTypeSystem.DEFAULT);
-  }
-
 }
 
 // End Db2SqlDialect.java

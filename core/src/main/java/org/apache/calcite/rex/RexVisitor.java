@@ -32,11 +32,11 @@ public interface RexVisitor<R> {
 
   R visitLocalRef(RexLocalRef localRef);
 
-  R visitLambdaRef(RexLambdaRef localRef);
-
   R visitLiteral(RexLiteral literal);
 
   R visitCall(RexCall call);
+
+  R visitSeqCall(RexSeqCall seqCall);
 
   R visitOver(RexOver over);
 
@@ -53,6 +53,6 @@ public interface RexVisitor<R> {
   R visitTableInputRef(RexTableInputRef fieldRef);
 
   R visitPatternFieldRef(RexPatternFieldRef fieldRef);
-
-  R visitLambda(RexLambda lambda);
 }
+
+// End RexVisitor.java

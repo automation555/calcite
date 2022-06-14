@@ -16,24 +16,33 @@
  */
 package org.apache.calcite.sql.dialect;
 
+import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
 
+import java.sql.DatabaseMetaData;
+
 /**
- * A <code>SqlDialect</code> implementation for the Apache Phoenix database.
+ * A <code>SqlDialect</code> implementation for the Phoenix database.
  */
 public class PhoenixSqlDialect extends SqlDialect {
-  public static final SqlDialect.Context DEFAULT_CONTEXT = SqlDialect.EMPTY_CONTEXT
-      .withDatabaseProduct(SqlDialect.DatabaseProduct.PHOENIX)
-      .withIdentifierQuoteString("\"");
+  public static final SqlDialect DEFAULT = new PhoenixSqlDialect();
 
-  public static final SqlDialect DEFAULT = new PhoenixSqlDialect(DEFAULT_CONTEXT);
-
-  /** Creates a PhoenixSqlDialect. */
-  public PhoenixSqlDialect(Context context) {
-    super(context);
+  public PhoenixSqlDialect(DatabaseMetaData databaseMetaData) {
+    super(
+        DatabaseProduct.PHOENIX,
+        databaseMetaData,
+        resolveSequenceSupport(PhoenixSequenceSupport.INSTANCE, databaseMetaData)
+    );
   }
 
-  @Override public boolean supportsCharSet() {
-    return false;
+  private PhoenixSqlDialect() {
+    super(
+        DatabaseProduct.PHOENIX,
+        "\"",
+        NullCollation.HIGH,
+        resolveSequenceSupport(PhoenixSequenceSupport.INSTANCE, null)
+    );
   }
 }
+
+// End PhoenixSqlDialect.java

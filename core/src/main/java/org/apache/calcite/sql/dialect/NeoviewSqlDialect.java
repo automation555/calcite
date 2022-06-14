@@ -16,19 +16,24 @@
  */
 package org.apache.calcite.sql.dialect;
 
+import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
+
+import java.sql.DatabaseMetaData;
 
 /**
  * A <code>SqlDialect</code> implementation for the Neoview database.
  */
 public class NeoviewSqlDialect extends SqlDialect {
-  public static final SqlDialect.Context DEFAULT_CONTEXT = SqlDialect.EMPTY_CONTEXT
-      .withDatabaseProduct(SqlDialect.DatabaseProduct.NEOVIEW);
+  public static final SqlDialect DEFAULT = new NeoviewSqlDialect();
 
-  public static final SqlDialect DEFAULT = new NeoviewSqlDialect(DEFAULT_CONTEXT);
+  public NeoviewSqlDialect(DatabaseMetaData databaseMetaData) {
+    super(DatabaseProduct.NEOVIEW, databaseMetaData, null);
+  }
 
-  /** Creates a NeoviewSqlDialect. */
-  public NeoviewSqlDialect(Context context) {
-    super(context);
+  private NeoviewSqlDialect() {
+    super(DatabaseProduct.NEOVIEW, null, NullCollation.HIGH, null);
   }
 }
+
+// End NeoviewSqlDialect.java

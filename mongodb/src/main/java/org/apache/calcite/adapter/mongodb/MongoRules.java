@@ -36,12 +36,14 @@ import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexSeqCall;
 import org.apache.calcite.rex.RexVisitorImpl;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
+import org.apache.calcite.util.Bug;
 import org.apache.calcite.util.Util;
 import org.apache.calcite.util.trace.CalciteTrace;
 
@@ -51,7 +53,6 @@ import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -132,7 +133,6 @@ public class MongoRules {
 
     private static final Map<SqlOperator, String> MONGO_OPERATORS =
         new HashMap<SqlOperator, String>();
-    private static final String ARRAY_ELEM_AT = "{ $arrayElemAt: [ %s, %d ] }";
 
     static {
       // Arithmetic
@@ -191,12 +191,11 @@ public class MongoRules {
       }
       if (call.getOperator() == SqlStdOperatorTable.ITEM) {
         final RexNode op1 = call.operands.get(1);
-        final RexNode op0 = call.operands.get(0);
-
-        if (op1 instanceof RexLiteral && op1.getType().getSqlTypeName() == SqlTypeName.INTEGER) {
-          if (op0 instanceof RexCall) {
-            Integer index = ((RexLiteral) op1).getValueAs(Integer.class);
-            return String.format(Locale.ROOT, ARRAY_ELEM_AT, strings.get(0), index);
+        if (op1 instanceof RexLiteral
+            && op1.getType().getSqlTypeName() == SqlTypeName.INTEGER) {
+          if (!Bug.CALCITE_194_FIXED) {
+            return "'" + stripQuotes(strings.get(0)) + "["
+                + ((RexLiteral) op1).getValue2() + "]'";
           }
           return strings.get(0) + "[" + strings.get(1) + "]";
         }
@@ -228,6 +227,12 @@ public class MongoRules {
         return sb.toString();
       }
       throw new IllegalArgumentException("Translation of " + call.toString()
+          + " is not supported by MongoProject");
+    }
+
+    @Override
+    public String visitSeqCall(RexSeqCall seqCall) {
+      throw new IllegalArgumentException("Translation of " + seqCall.toString()
           + " is not supported by MongoProject");
     }
 

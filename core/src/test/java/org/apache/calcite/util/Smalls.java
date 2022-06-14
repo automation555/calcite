@@ -27,11 +27,14 @@ import org.apache.calcite.linq4j.Linq4j;
 import org.apache.calcite.linq4j.QueryProvider;
 import org.apache.calcite.linq4j.Queryable;
 import org.apache.calcite.linq4j.function.Deterministic;
+import org.apache.calcite.linq4j.function.Function1;
+import org.apache.calcite.linq4j.function.Function2;
 import org.apache.calcite.linq4j.function.Parameter;
 import org.apache.calcite.linq4j.function.SemiStrict;
 import org.apache.calcite.linq4j.tree.Types;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
+import org.apache.calcite.rel.type.RelProtoDataType;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.runtime.SqlFunctions;
 import org.apache.calcite.schema.QueryableTable;
@@ -51,12 +54,10 @@ import org.apache.calcite.sql.type.SqlTypeName;
 import com.google.common.collect.ImmutableList;
 
 import java.lang.reflect.Method;
-import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.util.AbstractList;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -64,6 +65,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertThat;
+
 
 /**
  * Holder for various classes and functions used in tests as user-defined
@@ -87,8 +89,6 @@ public class Smalls {
       Types.lookupMethod(Smalls.class, "fibonacciTable");
   public static final Method FIBONACCI2_TABLE_METHOD =
       Types.lookupMethod(Smalls.class, "fibonacciTableWithLimit", long.class);
-  public static final Method DAYSBETWEEN_METHOD =
-      Types.lookupMethod(Smalls.class, "daysBetween", Timestamp.class, Timestamp.class);
   public static final Method VIEW_METHOD =
       Types.lookupMethod(Smalls.class, "view", String.class);
   public static final Method STR_METHOD =
@@ -287,29 +287,6 @@ public class Smalls {
     };
   }
 
-  public static QueryableTable daysBetween(Timestamp from, Timestamp to) {
-    return new AbstractQueryableTable(Object[].class) {
-
-      @Override public RelDataType getRowType(RelDataTypeFactory typeFactory) {
-        return typeFactory.builder()
-            .add("daybetween", typeFactory.createJavaType(Timestamp.class))
-            .build();
-      }
-
-      @Override public Queryable<Timestamp> asQueryable(QueryProvider queryProvider,
-                                                        SchemaPlus schema,
-                                                        String tableName) {
-        List<Timestamp> days = new ArrayList<>();
-        Long day = 24L * 60L * 60L * 1000L;
-        for (Timestamp t = new Timestamp(from.getTime() + day); t.before(to);
-             t = new Timestamp(t.getTime() + day)) {
-          days.add(t);
-        }
-        return Linq4j.asEnumerable(days).asQueryable();
-      }
-    };
-  }
-
   /**
    * A function that adds a number to the first column of input cursor
    */
@@ -325,7 +302,11 @@ public class Smalls {
       public <T> Queryable<T> asQueryable(QueryProvider queryProvider,
           SchemaPlus schema, String tableName) {
         final Enumerable<Integer> enumerable =
-            a.select(a0 -> offset + ((Integer) a0[0]));
+            a.select(new Function1<Object[], Integer>() {
+              public Integer apply(Object[] a0) {
+                return offset + ((Integer) a0[0]);
+              }
+            });
         //noinspection unchecked
         return (Queryable) enumerable.asQueryable();
       }
@@ -348,7 +329,11 @@ public class Smalls {
       public <T> Queryable<T> asQueryable(QueryProvider queryProvider,
           SchemaPlus schema, String tableName) {
         final Enumerable<Integer> enumerable =
-            a.zip(b, (v0, v1) -> ((Integer) v0[1]) + v1.n + offset);
+            a.zip(b, new Function2<Object[], IntString, Integer>() {
+              public Integer apply(Object[] v0, IntString v1) {
+                return ((Integer) v0[1]) + v1.n + offset;
+              }
+            });
         //noinspection unchecked
         return (Queryable) enumerable.asQueryable();
       }
@@ -356,26 +341,39 @@ public class Smalls {
   }
 
   public static TranslatableTable view(String s) {
-    return new ViewTable(Object.class, typeFactory ->
-        typeFactory.builder().add("c", SqlTypeName.INTEGER).build(),
-        "values (1), (3), " + s, ImmutableList.of(), Arrays.asList("view"));
+    return new ViewTable(Object.class,
+        new RelProtoDataType() {
+          public RelDataType apply(RelDataTypeFactory typeFactory) {
+            return typeFactory.builder().add("c", SqlTypeName.INTEGER)
+                .build();
+          }
+        }, "values (1), (3), " + s, ImmutableList.<String>of(), Arrays.asList("view"));
   }
 
   public static TranslatableTable strView(String s) {
-    return new ViewTable(Object.class, typeFactory ->
-        typeFactory.builder().add("c", SqlTypeName.VARCHAR, 100).build(),
-        "values (" + CalciteSqlDialect.DEFAULT.quoteStringLiteral(s) + ")",
-        ImmutableList.of(), Arrays.asList("view"));
+    return new ViewTable(Object.class,
+        new RelProtoDataType() {
+          public RelDataType apply(RelDataTypeFactory typeFactory) {
+            return typeFactory.builder().add("c", SqlTypeName.VARCHAR, 100)
+                    .build();
+          }
+        }, "values (" + CalciteSqlDialect.DEFAULT.quoteStringLiteral(s) + ")",
+        ImmutableList.<String>of(), Arrays.asList("view"));
   }
 
   public static TranslatableTable str(Object o, Object p) {
     assertThat(RexLiteral.validConstant(o, Litmus.THROW), is(true));
     assertThat(RexLiteral.validConstant(p, Litmus.THROW), is(true));
-    return new ViewTable(Object.class, typeFactory ->
-        typeFactory.builder().add("c", SqlTypeName.VARCHAR, 100).build(),
+    return new ViewTable(Object.class,
+        new RelProtoDataType() {
+          public RelDataType apply(RelDataTypeFactory typeFactory) {
+            return typeFactory.builder().add("c", SqlTypeName.VARCHAR, 100)
+                .build();
+          }
+        },
         "values " + CalciteSqlDialect.DEFAULT.quoteStringLiteral(o.toString())
             + ", " + CalciteSqlDialect.DEFAULT.quoteStringLiteral(p.toString()),
-        ImmutableList.of(), Arrays.asList("view"));
+        ImmutableList.<String>of(), Arrays.asList("view"));
   }
 
   /** Class with int and String fields. */
@@ -600,18 +598,6 @@ public class Smalls {
     public static java.sql.Time toTimeFun(Long v) {
       return v == null ? null : SqlFunctions.internalToTime(v.intValue());
     }
-    /** for Overloaded user-defined functions that have Double and BigDecimal
-     * arguments will goes wrong
-     * */
-    public static double toDouble(BigDecimal var) {
-      return var == null ? null : var.doubleValue();
-    }
-    public static double toDouble(Double var) {
-      return var == null ? 0.0d : var;
-    }
-    public static double toDouble(Float var) {
-      return var == null ? 0.0d : Double.valueOf(var.toString());
-    }
 
     public static List arrayAppendFun(List v, Integer i) {
       if (v == null || i == null) {
@@ -834,13 +820,6 @@ public class Smalls {
         }
         sb.append('(').append(s).append(')');
       }
-    }
-  }
-
-  /** A table function that returns a {@link QueryableTable}. */
-  public static class SimpleTableFunction {
-    public QueryableTable eval(Integer s) {
-      return generateStrings(s);
     }
   }
 

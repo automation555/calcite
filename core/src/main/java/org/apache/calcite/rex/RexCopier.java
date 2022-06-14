@@ -24,6 +24,9 @@ import org.apache.calcite.rel.type.RelDataType;
  * <p>This is useful when copying objects from one type factory or builder to
  * another.
  *
+ * <p>Due to the laziness of the author, not all Rex types are supported at
+ * present.
+ *
  * @see RexBuilder#copy(RexNode)
  */
 class RexCopier extends RexShuttle {
@@ -48,50 +51,56 @@ class RexCopier extends RexShuttle {
     return builder.getTypeFactory().copyType(type);
   }
 
-  @Override public RexNode visitOver(RexOver over) {
-    final boolean[] update = null;
-    return new RexOver(copy(over.getType()), over.getAggOperator(),
-        visitList(over.getOperands(), update), visitWindow(over.getWindow()),
-        over.isDistinct(), over.ignoreNulls());
+  public RexNode visitOver(RexOver over) {
+    throw new UnsupportedOperationException();
   }
 
-  @Override public RexNode visitCall(final RexCall call) {
+  public RexWindow visitWindow(RexWindow window) {
+    throw new UnsupportedOperationException();
+  }
+
+  public RexNode visitCall(final RexCall call) {
     final boolean[] update = null;
     return builder.makeCall(copy(call.getType()),
         call.getOperator(),
         visitList(call.getOperands(), update));
   }
 
-  @Override public RexNode visitCorrelVariable(RexCorrelVariable variable) {
-    return builder.makeCorrel(copy(variable.getType()), variable.id);
+  public RexNode visitSeqCall(final RexSeqCall seqCall) {
+    final boolean[] update = null;
+    return seqCall.clone(copy(seqCall.getType()),
+        visitList(seqCall.getOperands(), update));
   }
 
-  @Override public RexNode visitFieldAccess(RexFieldAccess fieldAccess) {
+  public RexNode visitCorrelVariable(RexCorrelVariable variable) {
+    throw new UnsupportedOperationException();
+  }
+
+  public RexNode visitFieldAccess(RexFieldAccess fieldAccess) {
     return builder.makeFieldAccess(fieldAccess.getReferenceExpr().accept(this),
         fieldAccess.getField().getIndex());
   }
 
-  @Override public RexNode visitInputRef(RexInputRef inputRef) {
+  public RexNode visitInputRef(RexInputRef inputRef) {
     return builder.makeInputRef(copy(inputRef.getType()), inputRef.getIndex());
   }
 
-  @Override public RexNode visitLocalRef(RexLocalRef localRef) {
-    return new RexLocalRef(localRef.getIndex(), copy(localRef.getType()));
+  public RexNode visitLocalRef(RexLocalRef localRef) {
+    throw new UnsupportedOperationException();
   }
 
-  @Override public RexNode visitLiteral(RexLiteral literal) {
-    // Get the value as is
-    return new RexLiteral(RexLiteral.value(literal), copy(literal.getType()),
+  public RexNode visitLiteral(RexLiteral literal) {
+    return new RexLiteral(literal.getValue(), copy(literal.getType()),
         literal.getTypeName());
   }
 
-  @Override public RexNode visitDynamicParam(RexDynamicParam dynamicParam) {
-    return builder.makeDynamicParam(copy(dynamicParam.getType()),
-        dynamicParam.getIndex());
+  public RexNode visitDynamicParam(RexDynamicParam dynamicParam) {
+    throw new UnsupportedOperationException();
   }
 
-  @Override public RexNode visitRangeRef(RexRangeRef rangeRef) {
-    return builder.makeRangeReference(copy(rangeRef.getType()),
-        rangeRef.getOffset(), false);
+  public RexNode visitRangeRef(RexRangeRef rangeRef) {
+    throw new UnsupportedOperationException();
   }
 }
+
+// End RexCopier.java

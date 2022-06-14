@@ -42,12 +42,11 @@ import org.apache.calcite.sql.SqlUpdate;
 import org.apache.calcite.sql.SqlWindow;
 import org.apache.calcite.sql.SqlWith;
 import org.apache.calcite.sql.SqlWithItem;
-import org.apache.calcite.sql.type.SqlTypeCoercionRule;
-import org.apache.calcite.sql.validate.implicit.TypeCoercion;
+import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.util.Util;
 
 import java.util.List;
 import java.util.Map;
-import javax.annotation.Nullable;
 
 /**
  * Validates the parse tree of a SQL statement, and provides semantic
@@ -105,6 +104,9 @@ import javax.annotation.Nullable;
  * names in a particular clause of a SQL statement.</p>
  */
 public interface SqlValidator {
+  /** Whether to follow the SQL standard strictly. */
+  boolean STRICT = Util.getBooleanProperty("calcite.strict.sql");
+
   //~ Methods ----------------------------------------------------------------
 
   /**
@@ -293,14 +295,12 @@ public interface SqlValidator {
   /**
    * Validates parameters for aggregate function.
    *
-   * @param aggCall     Call to aggregate function
-   * @param filter      Filter ({@code FILTER (WHERE)} clause), or null
-   * @param orderList   Ordering specification ({@code WITHING GROUP} clause),
-   *                    or null
+   * @param aggCall     Function containing COLUMN_LIST parameter
+   * @param filter      Filter, or null
    * @param scope       Syntactic scope
    */
   void validateAggregateParams(SqlCall aggCall, SqlNode filter,
-      SqlNodeList orderList, SqlValidatorScope scope);
+      SqlValidatorScope scope);
 
   /**
    * Validates a COLUMN_LIST parameter
@@ -313,13 +313,6 @@ public interface SqlValidator {
       SqlFunction function,
       List<RelDataType> argTypes,
       List<SqlNode> operands);
-
-  /**
-   * If an identifier is a legitimate call to a function that has no
-   * arguments and requires no parentheses (for example "CURRENT_USER"),
-   * returns a call to that function, otherwise returns null.
-   */
-  @Nullable SqlCall makeNullaryCall(SqlIdentifier id);
 
   /**
    * Derives the type of a node in a given scope. If the type has already been
@@ -767,67 +760,9 @@ public interface SqlValidator {
 
   void validateWithItem(SqlWithItem withItem);
 
-  void validateSequenceValue(SqlValidatorScope scope, SqlIdentifier id);
+  SqlTypeName validateSequenceValue(SqlValidatorScope scope, SqlIdentifier id);
 
   SqlValidatorScope getWithScope(SqlNode withItem);
-
-  SqlValidatorScope getLambdaScope(SqlNode lambda);
-
-  /**
-   * Sets whether this validator should be lenient upon encountering an unknown
-   * function.
-   *
-   * @param lenient Whether to be lenient when encountering an unknown function
-   */
-  SqlValidator setLenientOperatorLookup(boolean lenient);
-
-  /** Returns whether this validator should be lenient upon encountering an
-   * unknown function.
-   *
-   * <p>If true, if a statement contains a call to a function that is not
-   * present in the operator table, or if the call does not have the required
-   * number or types of operands, the validator nevertheless regards the
-   * statement as valid. The type of the function call will be
-   * {@link #getUnknownType() UNKNOWN}.
-   *
-   * <p>If false (the default behavior), an unknown function call causes a
-   * validation error to be thrown. */
-  boolean isLenientOperatorLookup();
-
-  /**
-   * Sets enable or disable implicit type coercion when the validator does validation.
-   *
-   * @param enabled if enable the type coercion, default is true
-   *
-   * @see org.apache.calcite.sql.validate.implicit.TypeCoercionImpl TypeCoercionImpl
-   */
-  SqlValidator setEnableTypeCoercion(boolean enabled);
-
-  /** Returns if this validator supports implicit type coercion. */
-  boolean isTypeCoercionEnabled();
-
-  /**
-   * Sets an instance of type coercion, you can customize the coercion rules to
-   * override the default ones defined in
-   * {@link org.apache.calcite.sql.validate.implicit.TypeCoercionImpl}.
-   *
-   * @param typeCoercion {@link TypeCoercion} instance
-   */
-  void setTypeCoercion(TypeCoercion typeCoercion);
-
-  /** Get the type coercion instance. */
-  TypeCoercion getTypeCoercion();
-
-  /**
-   * Sets the {@link SqlTypeCoercionRule} instance which defines the type conversion matrix
-   * for the explicit type coercion.
-   *
-   * <p>The {@code typeCoercionRules} setting should be thread safe.
-   * In the default implementation,
-   * the {@code typeCoercionRules} is set to a ThreadLocal variable.
-   *
-   * @param typeCoercionRules The {@link SqlTypeCoercionRule} instance, see its documentation
-   *                          for how to customize the rules.
-   */
-  void setSqlTypeCoercionRules(SqlTypeCoercionRule typeCoercionRules);
 }
+
+// End SqlValidator.java

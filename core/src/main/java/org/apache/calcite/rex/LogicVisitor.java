@@ -114,8 +114,12 @@ public class LogicVisitor implements RexBiVisitor<Logic, Logic> {
     return end(call, arg0);
   }
 
+  public Logic visitSeqCall(RexSeqCall seqCall, Logic arg) {
+    return end(seqCall, arg);
+  }
+
   private Logic end(RexNode node, Logic arg) {
-    if (node.equals(seek)) {
+    if (RexUtil.eq(node, seek)) {
       logicCollection.add(arg);
     }
     return arg;
@@ -127,10 +131,6 @@ public class LogicVisitor implements RexBiVisitor<Logic, Logic> {
 
   public Logic visitLocalRef(RexLocalRef localRef, Logic arg) {
     return end(localRef, arg);
-  }
-
-  @Override public Logic visitLambdaRef(RexLambdaRef lambdaRef, Logic arg) {
-    return end(lambdaRef, arg);
   }
 
   public Logic visitLiteral(RexLiteral literal, Logic arg) {
@@ -174,8 +174,6 @@ public class LogicVisitor implements RexBiVisitor<Logic, Logic> {
   @Override public Logic visitPatternFieldRef(RexPatternFieldRef ref, Logic arg) {
     return end(ref, arg);
   }
-
-  @Override public Logic visitLambda(RexLambda ref, Logic arg) {
-    return end(ref, arg);
-  }
 }
+
+// End LogicVisitor.java

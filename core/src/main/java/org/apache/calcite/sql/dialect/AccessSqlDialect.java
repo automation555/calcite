@@ -16,24 +16,25 @@
  */
 package org.apache.calcite.sql.dialect;
 
+import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
+
+import java.sql.DatabaseMetaData;
 
 /**
  * A <code>SqlDialect</code> implementation for the Access database.
  */
 public class AccessSqlDialect extends SqlDialect {
-  public static final SqlDialect.Context DEFAULT_CONTEXT = SqlDialect.EMPTY_CONTEXT
-      .withDatabaseProduct(SqlDialect.DatabaseProduct.ACCESS)
-      .withIdentifierQuoteString("\"");
 
-  public static final SqlDialect DEFAULT = new AccessSqlDialect(DEFAULT_CONTEXT);
+  public static final SqlDialect DEFAULT = new AccessSqlDialect();
 
-  /** Creates an AccessSqlDialect. */
-  public AccessSqlDialect(Context context) {
-    super(context);
+  public AccessSqlDialect(DatabaseMetaData databaseMetaData) {
+    super(DatabaseProduct.ACCESS, databaseMetaData, null);
   }
 
-  @Override public boolean supportsWindowFunctions() {
-    return false;
+  private AccessSqlDialect() {
+    super(DatabaseProduct.ACCESS, "\"", NullCollation.HIGH, null);
   }
 }
+
+// End AccessSqlDialect.java

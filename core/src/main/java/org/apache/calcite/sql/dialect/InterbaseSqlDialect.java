@@ -16,19 +16,24 @@
  */
 package org.apache.calcite.sql.dialect;
 
+import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
+
+import java.sql.DatabaseMetaData;
 
 /**
  * A <code>SqlDialect</code> implementation for the Interbase database.
  */
 public class InterbaseSqlDialect extends SqlDialect {
-  public static final SqlDialect.Context DEFAULT_CONTEXT = SqlDialect.EMPTY_CONTEXT
-      .withDatabaseProduct(SqlDialect.DatabaseProduct.INTERBASE);
+  public static final SqlDialect DEFAULT = new InterbaseSqlDialect();
 
-  public static final SqlDialect DEFAULT = new InterbaseSqlDialect(DEFAULT_CONTEXT);
+  public InterbaseSqlDialect(DatabaseMetaData databaseMetaData) {
+    super(DatabaseProduct.INTERBASE, databaseMetaData, null);
+  }
 
-  /** Creates an InterbaseSqlDialect. */
-  public InterbaseSqlDialect(Context context) {
-    super(context);
+  private InterbaseSqlDialect() {
+    super(DatabaseProduct.INTERBASE, null, NullCollation.HIGH, null);
   }
 }
+
+// End InterbaseSqlDialect.java

@@ -17,7 +17,6 @@
 package org.apache.calcite.sql;
 
 import org.apache.calcite.sql.dialect.AnsiSqlDialect;
-import org.apache.calcite.sql.fun.SqlCase;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.pretty.SqlPrettyWriter;
 import org.apache.calcite.sql.util.SqlString;
@@ -29,15 +28,11 @@ import org.apache.calcite.sql.validate.SqlValidatorScope;
 import org.apache.calcite.util.Litmus;
 import org.apache.calcite.util.Util;
 
-import org.checkerframework.checker.nullness.qual.Nullable;
+import com.google.common.base.Preconditions;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
-import java.util.function.UnaryOperator;
-import java.util.stream.Collector;
 
 /**
  * A <code>SqlNode</code> is a SQL parse tree.
@@ -49,7 +44,7 @@ import java.util.stream.Collector;
 public abstract class SqlNode implements Cloneable {
   //~ Static fields/initializers ---------------------------------------------
 
-  public static final @Nullable SqlNode[] EMPTY_ARRAY = new SqlNode[0];
+  public static final SqlNode[] EMPTY_ARRAY = new SqlNode[0];
 
   //~ Instance fields --------------------------------------------------------
 
@@ -63,25 +58,13 @@ public abstract class SqlNode implements Cloneable {
    * @param pos Parser position, must not be null.
    */
   SqlNode(SqlParserPos pos) {
-    this.pos = Objects.requireNonNull(pos, "pos");
+    this.pos = Preconditions.checkNotNull(pos);
   }
 
   //~ Methods ----------------------------------------------------------------
 
-  // CHECKSTYLE: IGNORE 1
-  /** @deprecated Please use {@link #clone(SqlNode)}; this method brings
-   * along too much baggage from early versions of Java */
-  @Deprecated
-  @SuppressWarnings({"MethodDoesntCallSuperMethod", "AmbiguousMethodReference"})
-  @Override public Object clone() {
+  public Object clone() {
     return clone(getParserPosition());
-  }
-
-  /** Creates a copy of a SqlNode. */
-  @SuppressWarnings("AmbiguousMethodReference")
-  public static <E extends SqlNode> E clone(E e) {
-    //noinspection unchecked
-    return (E) e.clone(e.pos);
   }
 
   /**
@@ -122,69 +105,46 @@ public abstract class SqlNode implements Cloneable {
     for (int i = 0; i < clones.length; i++) {
       SqlNode node = clones[i];
       if (node != null) {
-        clones[i] = SqlNode.clone(node);
+        clones[i] = (SqlNode) node.clone();
       }
     }
     return clones;
   }
 
-  @Override public String toString() {
-    return toSqlString(c -> c.withDialect(AnsiSqlDialect.DEFAULT)
-        .withAlwaysUseParentheses(false)
-        .withSelectListItemsOnSeparateLines(false)
-        .withUpdateSetListNewline(false)
-        .withIndentation(0)).getSql();
+  public String toString() {
+    return toSqlString(null).getSql();
   }
 
   /**
    * Returns the SQL text of the tree of which this <code>SqlNode</code> is
    * the root.
    *
-   * <p>Typical return values are:
+   * @param dialect     Dialect
+   * @param forceParens wraps all expressions in parentheses; good for parse
+   *                    test, but false by default.
    *
-   * <ul>
-   * <li>'It''s a bird!'
-   * <li>NULL
-   * <li>12.3
-   * <li>DATE '1969-04-29'
-   * </ul>
-   *
-   * @param transform   Transform that sets desired writer configuration
+   *                    <p>Typical return values are:</p>
+   *                    <ul>
+   *                    <li>'It''s a bird!'</li>
+   *                    <li>NULL</li>
+   *                    <li>12.3</li>
+   *                    <li>DATE '1969-04-29'</li>
+   *                    </ul>
    */
-  public SqlString toSqlString(UnaryOperator<SqlWriterConfig> transform) {
-    final SqlWriterConfig config = transform.apply(SqlPrettyWriter.config());
-    SqlPrettyWriter writer = new SqlPrettyWriter(config);
+  public SqlString toSqlString(SqlDialect dialect, boolean forceParens) {
+    if (dialect == null) {
+      dialect = AnsiSqlDialect.DEFAULT;
+    }
+    SqlPrettyWriter writer = new SqlPrettyWriter(dialect);
+    writer.setAlwaysUseParentheses(forceParens);
+    writer.setSelectListItemsOnSeparateLines(false);
+    writer.setIndentation(0);
     unparse(writer, 0, 0);
-    return writer.toSqlString();
+    final String sql = writer.toString();
+    return new SqlString(dialect, sql);
   }
 
-  /**
-   * Returns the SQL text of the tree of which this <code>SqlNode</code> is
-   * the root.
-   *
-   * <p>Typical return values are:
-   *
-   * <ul>
-   * <li>'It''s a bird!'
-   * <li>NULL
-   * <li>12.3
-   * <li>DATE '1969-04-29'
-   * </ul>
-   *
-   * @param dialect     Dialect (null for ANSI SQL)
-   * @param forceParens Whether to wrap all expressions in parentheses;
-   *                    useful for parse test, but false by default
-   */
-  public SqlString toSqlString(@Nullable SqlDialect dialect, boolean forceParens) {
-    return toSqlString(c ->
-        c.withDialect(Util.first(dialect, AnsiSqlDialect.DEFAULT))
-            .withAlwaysUseParentheses(forceParens)
-            .withSelectListItemsOnSeparateLines(false)
-            .withUpdateSetListNewline(false)
-            .withIndentation(0));
-  }
-
-  public SqlString toSqlString(@Nullable SqlDialect dialect) {
+  public SqlString toSqlString(SqlDialect dialect) {
     return toSqlString(dialect, false);
   }
 
@@ -215,17 +175,6 @@ public abstract class SqlNode implements Cloneable {
       SqlWriter writer,
       int leftPrec,
       int rightPrec);
-
-  public void unparseWithParentheses(SqlWriter writer, int leftPrec,
-      int rightPrec, boolean parentheses) {
-    if (parentheses) {
-      final SqlWriter.Frame frame = writer.startList("(", ")");
-      unparse(writer, 0, 0);
-      writer.endList(frame);
-    } else {
-      unparse(writer, leftPrec, rightPrec);
-    }
-  }
 
   public SqlParserPos getParserPosition() {
     return pos;
@@ -299,10 +248,10 @@ public abstract class SqlNode implements Cloneable {
    * (2 + 3), because the '+' operator is left-associative</li>
    * </ul>
    */
-  public abstract boolean equalsDeep(@Nullable SqlNode node, Litmus litmus);
+  public abstract boolean equalsDeep(SqlNode node, Litmus litmus);
 
   @Deprecated // to be removed before 2.0
-  public final boolean equalsDeep(@Nullable SqlNode node, boolean fail) {
+  public final boolean equalsDeep(SqlNode node, boolean fail) {
     return equalsDeep(node, fail ? Litmus.THROW : Litmus.IGNORE);
   }
 
@@ -316,8 +265,8 @@ public abstract class SqlNode implements Cloneable {
    *              not equal)
    */
   public static boolean equalDeep(
-      @Nullable SqlNode node1,
-      @Nullable SqlNode node2,
+      SqlNode node1,
+      SqlNode node2,
       Litmus litmus) {
     if (node1 == null) {
       return node2 == null;
@@ -338,7 +287,7 @@ public abstract class SqlNode implements Cloneable {
    *
    * @param scope Scope
    */
-  public SqlMonotonicity getMonotonicity(@Nullable SqlValidatorScope scope) {
+  public SqlMonotonicity getMonotonicity(SqlValidatorScope scope) {
     return SqlMonotonicity.NOT_MONOTONIC;
   }
 
@@ -355,69 +304,6 @@ public abstract class SqlNode implements Cloneable {
     }
     return litmus.succeed();
   }
-
-  /**
-   * Returns a {@code Collector} that accumulates the input elements into a
-   * {@link SqlNodeList}, with zero position.
-   *
-   * @param <T> Type of the input elements
-   *
-   * @return a {@code Collector} that collects all the input elements into a
-   * {@link SqlNodeList}, in encounter order
-   */
-  public static <T extends SqlNode> Collector<T, ArrayList<@Nullable SqlNode>, SqlNodeList>
-      toList() {
-    return toList(SqlParserPos.ZERO);
-  }
-
-  /**
-   * Returns a {@code Collector} that accumulates the input elements into a
-   * {@link SqlNodeList}.
-   *
-   * @param <T> Type of the input elements
-   *
-   * @return a {@code Collector} that collects all the input elements into a
-   * {@link SqlNodeList}, in encounter order
-   */
-  public static <T extends @Nullable SqlNode> Collector<T,
-      ArrayList<@Nullable SqlNode>, SqlNodeList> toList(SqlParserPos pos) {
-    //noinspection RedundantTypeArguments
-    return Collector.<T, ArrayList<@Nullable SqlNode>, SqlNodeList>of(
-        ArrayList::new, ArrayList::add, Util::combine,
-        (ArrayList<@Nullable SqlNode> list) -> SqlNodeList.of(pos, list));
-  }
-
-  public boolean hasUnderlyingColumnSameAsAlias(String alias) {
-    if (this instanceof SqlBasicCall) {
-      List<SqlNode> operands = ((SqlBasicCall) this).getOperandList();
-      boolean ret = false;
-      for (int i = 0; i < operands.size(); i++) {
-        if (operands.get(i) != null) {
-          ret = ret || operands.get(i).hasUnderlyingColumnSameAsAlias(alias);
-        }
-      }
-      return ret;
-    } else if (this instanceof SqlCase) {
-      List<SqlNode> operandList = ((SqlCase) this).getOperandList();
-      boolean ret = false;
-      for (int i = 0; i < operandList.size(); i++) {
-        if (operandList.get(i) != null) {
-          ret = ret || operandList.get(i).hasUnderlyingColumnSameAsAlias(alias);
-        }
-      }
-      return ret;
-    } else if (this instanceof SqlNodeList) {
-      List<@Nullable SqlNode> list = ((SqlNodeList) this).getList();
-      boolean ret = false;
-      for (int i = 0; i < list.size(); i++) {
-        if (list.get(i) != null) {
-          ret = ret || list.get(i).hasUnderlyingColumnSameAsAlias(alias);
-        }
-      }
-      return ret;
-    } else if (this instanceof SqlIdentifier) {
-      return this.toString().equals(alias);
-    }
-    return false;
-  }
 }
+
+// End SqlNode.java

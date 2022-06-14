@@ -16,19 +16,25 @@
  */
 package org.apache.calcite.sql.dialect;
 
+import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
 
+import java.sql.DatabaseMetaData;
+
 /**
- * A <code>SqlDialect</code> implementation for the Apache Derby database.
+ * A <code>SqlDialect</code> implementation for the Derby database.
  */
 public class DerbySqlDialect extends SqlDialect {
-  public static final SqlDialect.Context DEFAULT_CONTEXT = SqlDialect.EMPTY_CONTEXT
-      .withDatabaseProduct(SqlDialect.DatabaseProduct.DERBY);
 
-  public static final SqlDialect DEFAULT = new DerbySqlDialect(DEFAULT_CONTEXT);
+  public static final SqlDialect DEFAULT = new DerbySqlDialect();
 
-  /** Creates a DerbySqlDialect. */
-  public DerbySqlDialect(Context context) {
-    super(context);
+  public DerbySqlDialect(DatabaseMetaData databaseMetaData) {
+    super(DatabaseProduct.DERBY, databaseMetaData, null);
+  }
+
+  private DerbySqlDialect() {
+    super(DatabaseProduct.DERBY, null, NullCollation.HIGH, null);
   }
 }
+
+// End DerbySqlDialect.java

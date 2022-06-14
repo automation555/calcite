@@ -20,7 +20,7 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 
 /**
- * Creates a <code>SqlDialect</code> appropriate
+ * <code>SqlDialectFactory</code> constructs a <code>SqlDialect</code> appropriate
  * for a given database metadata object.
  */
 public interface SqlDialectFactory {
@@ -34,9 +34,9 @@ public interface SqlDialectFactory {
    *
    * @param databaseMetaData used to determine which dialect of SQL to
    *                         generate
-   *
-   * @throws RuntimeException if there was an error creating the dialect
    */
   SqlDialect create(DatabaseMetaData databaseMetaData);
 
 }
+
+// End SqlDialectFactory.java
