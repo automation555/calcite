@@ -23,38 +23,37 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.AbstractRelNode;
 import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelShuttle;
 import org.apache.calcite.rel.RelWriter;
-import org.apache.calcite.rel.hint.Hintable;
-import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.util.Util;
 
+import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /**
  * <code>SetOp</code> is an abstract base for relational set operators such
  * as UNION, MINUS (aka EXCEPT), and INTERSECT.
  */
-public abstract class SetOp extends AbstractRelNode implements Hintable {
+public abstract class SetOp extends AbstractRelNode {
   //~ Instance fields --------------------------------------------------------
 
   protected ImmutableList<RelNode> inputs;
   public final SqlKind kind;
   public final boolean all;
-  protected final ImmutableList<RelHint> hints;
 
   //~ Constructors -----------------------------------------------------------
 
   /**
    * Creates a SetOp.
    */
-  protected SetOp(RelOptCluster cluster, RelTraitSet traits, List<RelHint> hints,
+  protected SetOp(RelOptCluster cluster, RelTraitSet traits,
       List<RelNode> inputs, SqlKind kind, boolean all) {
     super(cluster, traits);
     Preconditions.checkArgument(kind == SqlKind.UNION
@@ -63,23 +62,14 @@ public abstract class SetOp extends AbstractRelNode implements Hintable {
     this.kind = kind;
     this.inputs = ImmutableList.copyOf(inputs);
     this.all = all;
-    this.hints = ImmutableList.copyOf(hints);
-  }
-
-  /**
-   * Creates a SetOp.
-   */
-  protected SetOp(RelOptCluster cluster, RelTraitSet traits,
-      List<RelNode> inputs, SqlKind kind, boolean all) {
-    this(cluster, traits, Collections.emptyList(), inputs, kind, all);
   }
 
   /**
    * Creates a SetOp by parsing serialized output.
    */
   protected SetOp(RelInput input) {
-    this(input.getCluster(), input.getTraitSet(), Collections.emptyList(),
-        input.getInputs(), SqlKind.UNION, input.getBoolean("all", false));
+    this(input.getCluster(), input.getTraitSet(), input.getInputs(),
+        SqlKind.UNION, input.getBoolean("all", false));
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -94,7 +84,7 @@ public abstract class SetOp extends AbstractRelNode implements Hintable {
   }
 
   @Override public void replaceInput(int ordinalInParent, RelNode p) {
-    final List<RelNode> newInputs = new ArrayList<>(inputs);
+    final List<RelNode> newInputs = new ArrayList<RelNode>(inputs);
     newInputs.set(ordinalInParent, p);
     inputs = ImmutableList.copyOf(newInputs);
     recomputeDigest();
@@ -113,8 +103,12 @@ public abstract class SetOp extends AbstractRelNode implements Hintable {
   }
 
   @Override protected RelDataType deriveRowType() {
-    final List<RelDataType> inputRowTypes =
-        Util.transform(inputs, RelNode::getRowType);
+    final List<RelDataType> inputRowTypes = Lists.transform(inputs,
+        new Function<RelNode, RelDataType>() {
+          public RelDataType apply(RelNode input) {
+            return input.getRowType();
+          }
+        });
     final RelDataType rowType =
         getCluster().getTypeFactory().leastRestrictive(inputRowTypes);
     if (rowType == null) {
@@ -123,10 +117,6 @@ public abstract class SetOp extends AbstractRelNode implements Hintable {
           + Util.sepList(inputRowTypes, ", "));
     }
     return rowType;
-  }
-
-  @Override public ImmutableList<RelHint> getHints() {
-    return hints;
   }
 
   /**
@@ -148,4 +138,15 @@ public abstract class SetOp extends AbstractRelNode implements Hintable {
     }
     return true;
   }
+
+  @Override public RelNode accept(RelShuttle shuttle) {
+    if (shuttle.visit(this)) {
+      for (RelNode child : inputs) {
+        child.accept(shuttle);
+      }
+    }
+    return shuttle.leave(this);
+  }
 }
+
+// End SetOp.java

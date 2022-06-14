@@ -16,8 +16,8 @@
  */
 package org.apache.calcite.sql2rel;
 
-import org.apache.calcite.rel.RelHomogeneousShuttle;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCorrelVariable;
@@ -27,22 +27,17 @@ import org.apache.calcite.rex.RexSubQuery;
 
 import com.google.common.collect.ImmutableSet;
 
-import org.checkerframework.checker.initialization.qual.NotOnlyInitialized;
-import org.checkerframework.checker.initialization.qual.UnderInitialization;
-
 /**
  * Rewrites relations to ensure the same correlation is referenced by the same
  * correlation variable.
  */
-public class DeduplicateCorrelateVariables extends RelHomogeneousShuttle {
-  @NotOnlyInitialized
+public class DeduplicateCorrelateVariables extends RelShuttleImpl {
   private final RexShuttle dedupRex;
 
   /** Creates a DeduplicateCorrelateVariables. */
   private DeduplicateCorrelateVariables(RexBuilder builder,
       CorrelationId canonicalId, ImmutableSet<CorrelationId> alternateIds) {
-    dedupRex = new DeduplicateCorrelateVariablesShuttle(builder,
-        canonicalId, alternateIds, this);
+    dedupRex = new DeduplicateCorrelateVariablesShuttle(builder, canonicalId, alternateIds, true);
   }
 
   /**
@@ -56,9 +51,8 @@ public class DeduplicateCorrelateVariables extends RelHomogeneousShuttle {
             ImmutableSet.copyOf(alternateIds)));
   }
 
-  @Override public RelNode visit(RelNode other) {
-    RelNode next = super.visit(other);
-    return next.accept(dedupRex);
+  @Override public RelNode doLeave(RelNode other) {
+    return super.doLeave(other.accept(dedupRex));
   }
 
   /**
@@ -68,16 +62,15 @@ public class DeduplicateCorrelateVariables extends RelHomogeneousShuttle {
     private final RexBuilder builder;
     private final CorrelationId canonicalId;
     private final ImmutableSet<CorrelationId> alternateIds;
-    @NotOnlyInitialized
-    private final DeduplicateCorrelateVariables shuttle;
+    private final boolean lookInside;
 
     private DeduplicateCorrelateVariablesShuttle(RexBuilder builder,
         CorrelationId canonicalId, ImmutableSet<CorrelationId> alternateIds,
-        @UnderInitialization DeduplicateCorrelateVariables shuttle) {
+        boolean lookInside) {
       this.builder = builder;
       this.canonicalId = canonicalId;
       this.alternateIds = alternateIds;
-      this.shuttle = shuttle;
+      this.lookInside = lookInside;
     }
 
     @Override public RexNode visitCorrelVariable(RexCorrelVariable variable) {
@@ -89,7 +82,9 @@ public class DeduplicateCorrelateVariables extends RelHomogeneousShuttle {
     }
 
     @Override public RexNode visitSubQuery(RexSubQuery subQuery) {
-      if (shuttle != null) {
+      if (lookInside) {
+        DeduplicateCorrelateVariables shuttle
+            = new DeduplicateCorrelateVariables(builder, canonicalId, alternateIds);
         RelNode r = subQuery.rel.accept(shuttle); // look inside sub-queries
         if (r != subQuery.rel) {
           subQuery = subQuery.clone(r);
@@ -99,3 +94,5 @@ public class DeduplicateCorrelateVariables extends RelHomogeneousShuttle {
     }
   }
 }
+
+// End DeduplicateCorrelateVariables.java

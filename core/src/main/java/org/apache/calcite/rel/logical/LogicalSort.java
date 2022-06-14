@@ -23,7 +23,6 @@ import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelCollationTraitDef;
 import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.RelShuttle;
 import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rex.RexNode;
 
@@ -63,32 +62,12 @@ public final class LogicalSort extends Sort {
     return new LogicalSort(cluster, traitSet, input, collation, offset, fetch);
   }
 
-  /**
-   * Creates a LogicalSort.
-   *
-   * @param cluster   RelOptCluster
-   * @param traitSet  Ordered set of traits
-   * @param input     Input relational expression
-   * @param collation array of sort specifications
-   * @param offset    Expression for number of rows to discard before returning
-   *                  first row
-   * @param fetch     Expression for number of rows to fetch
-   */
-  public static LogicalSort create(RelOptCluster cluster, RelTraitSet traitSet,
-      RelNode input, RelCollation collation, RexNode offset, RexNode fetch) {
-    return new LogicalSort(cluster, traitSet, input, collation, offset, fetch);
-  }
-
   //~ Methods ----------------------------------------------------------------
 
   @Override public Sort copy(RelTraitSet traitSet, RelNode newInput,
       RelCollation newCollation, RexNode offset, RexNode fetch) {
     return new LogicalSort(getCluster(), traitSet, newInput, newCollation,
         offset, fetch);
-  }
-
-  @Override public RelNode accept(RelShuttle shuttle) {
-    return shuttle.visit(this);
   }
 }
 

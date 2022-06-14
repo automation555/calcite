@@ -19,10 +19,8 @@ package org.apache.calcite.rel.logical;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
-import org.apache.calcite.rel.LogicalNode;
 import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.RelShuttle;
 import org.apache.calcite.rel.core.Union;
 
 import java.util.List;
@@ -31,7 +29,7 @@ import java.util.List;
  * Sub-class of {@link org.apache.calcite.rel.core.Union}
  * not targeted at any particular engine or calling convention.
  */
-public final class LogicalUnion extends Union implements LogicalNode {
+public final class LogicalUnion extends Union {
   //~ Constructors -----------------------------------------------------------
 
   /**
@@ -74,7 +72,6 @@ public final class LogicalUnion extends Union implements LogicalNode {
     return new LogicalUnion(getCluster(), traitSet, inputs, all);
   }
 
-  @Override public RelNode accept(RelShuttle shuttle) {
-    return shuttle.visit(this);
-  }
 }
+
+// End LogicalUnion.java

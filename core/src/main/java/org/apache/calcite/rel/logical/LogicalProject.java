@@ -19,14 +19,12 @@ package org.apache.calcite.rel.logical;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
-import org.apache.calcite.rel.LogicalNode;
+import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelCollationTraitDef;
 import org.apache.calcite.rel.RelCollations;
 import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.RelShuttle;
 import org.apache.calcite.rel.core.Project;
-import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.rel.metadata.RelMdCollation;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
@@ -35,7 +33,7 @@ import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.util.Util;
 
-import com.google.common.collect.ImmutableList;
+import com.google.common.base.Supplier;
 
 import java.util.List;
 
@@ -43,7 +41,7 @@ import java.util.List;
  * Sub-class of {@link org.apache.calcite.rel.core.Project} not
  * targeted at any particular engine or calling convention.
  */
-public final class LogicalProject extends Project implements LogicalNode {
+public final class LogicalProject extends Project {
   //~ Constructors -----------------------------------------------------------
 
   /**
@@ -53,7 +51,6 @@ public final class LogicalProject extends Project implements LogicalNode {
    *
    * @param cluster  Cluster this relational expression belongs to
    * @param traitSet Traits of this relational expression
-   * @param hints    Hints of this relational expression
    * @param input    Input relational expression
    * @param projects List of expressions for the input columns
    * @param rowType  Output row type
@@ -61,25 +58,18 @@ public final class LogicalProject extends Project implements LogicalNode {
   public LogicalProject(
       RelOptCluster cluster,
       RelTraitSet traitSet,
-      List<RelHint> hints,
       RelNode input,
       List<? extends RexNode> projects,
       RelDataType rowType) {
-    super(cluster, traitSet, hints, input, projects, rowType);
+    super(cluster, traitSet, input, projects, rowType);
     assert traitSet.containsIfApplicable(Convention.NONE);
-  }
-
-  @Deprecated // to be removed before 2.0
-  public LogicalProject(RelOptCluster cluster, RelTraitSet traitSet,
-      RelNode input, List<? extends RexNode> projects, RelDataType rowType) {
-    this(cluster, traitSet, ImmutableList.of(), input, projects, rowType);
   }
 
   @Deprecated // to be removed before 2.0
   public LogicalProject(RelOptCluster cluster, RelTraitSet traitSet,
       RelNode input, List<? extends RexNode> projects, RelDataType rowType,
       int flags) {
-    this(cluster, traitSet, ImmutableList.of(), input, projects, rowType);
+    this(cluster, traitSet, input, projects, rowType);
     Util.discard(flags);
   }
 
@@ -87,7 +77,7 @@ public final class LogicalProject extends Project implements LogicalNode {
   public LogicalProject(RelOptCluster cluster, RelNode input,
       List<RexNode> projects, List<String> fieldNames, int flags) {
     this(cluster, cluster.traitSetOf(RelCollations.EMPTY),
-        ImmutableList.of(), input, projects,
+        input, projects,
         RexUtil.createStructType(cluster.getTypeFactory(), projects,
             fieldNames, null));
     Util.discard(flags);
@@ -103,38 +93,37 @@ public final class LogicalProject extends Project implements LogicalNode {
   //~ Methods ----------------------------------------------------------------
 
   /** Creates a LogicalProject. */
-  public static LogicalProject create(final RelNode input, List<RelHint> hints,
+  public static LogicalProject create(final RelNode input,
       final List<? extends RexNode> projects, List<String> fieldNames) {
     final RelOptCluster cluster = input.getCluster();
     final RelDataType rowType =
         RexUtil.createStructType(cluster.getTypeFactory(), projects,
             fieldNames, SqlValidatorUtil.F_SUGGESTER);
-    return create(input, hints, projects, rowType);
+    return create(input, projects, rowType);
   }
 
   /** Creates a LogicalProject, specifying row type rather than field names. */
-  public static LogicalProject create(final RelNode input, List<RelHint> hints,
+  public static LogicalProject create(final RelNode input,
       final List<? extends RexNode> projects, RelDataType rowType) {
     final RelOptCluster cluster = input.getCluster();
     final RelMetadataQuery mq = cluster.getMetadataQuery();
     final RelTraitSet traitSet =
         cluster.traitSet().replace(Convention.NONE)
-            .replaceIfs(RelCollationTraitDef.INSTANCE,
-                () -> RelMdCollation.project(mq, input, projects));
-    return new LogicalProject(cluster, traitSet, hints, input, projects, rowType);
+            .replaceIfs(
+                RelCollationTraitDef.INSTANCE,
+                new Supplier<List<RelCollation>>() {
+                  public List<RelCollation> get() {
+                    return RelMdCollation.project(mq, input, projects);
+                  }
+                });
+    return new LogicalProject(cluster, traitSet, input, projects, rowType);
   }
 
   @Override public LogicalProject copy(RelTraitSet traitSet, RelNode input,
       List<RexNode> projects, RelDataType rowType) {
-    return new LogicalProject(getCluster(), traitSet, hints, input, projects, rowType);
+    return new LogicalProject(getCluster(), traitSet, input, projects, rowType);
   }
 
-  @Override public RelNode accept(RelShuttle shuttle) {
-    return shuttle.visit(this);
-  }
-
-  @Override public RelNode withHints(List<RelHint> hintList) {
-    return new LogicalProject(getCluster(), traitSet, hintList,
-        input, getProjects(), rowType);
-  }
 }
+
+// End LogicalProject.java

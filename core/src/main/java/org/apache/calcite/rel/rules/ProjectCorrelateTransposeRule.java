@@ -18,10 +18,9 @@ package org.apache.calcite.rel.rules;
 
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
-import org.apache.calcite.plan.hep.HepRelVertex;
 import org.apache.calcite.plan.volcano.RelSubset;
-import org.apache.calcite.rel.RelBasicShuttle;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.core.Correlate;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.Project;
@@ -30,7 +29,6 @@ import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCorrelVariable;
 import org.apache.calcite.rex.RexFieldAccess;
 import org.apache.calcite.rex.RexNode;
-import org.apache.calcite.rex.RexOver;
 import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.tools.RelBuilderFactory;
 import org.apache.calcite.util.BitSets;
@@ -44,10 +42,11 @@ import java.util.Map;
 /**
  * Push Project under Correlate to apply on Correlate's left and right child
  */
-public class ProjectCorrelateTransposeRule extends RelOptRule {
+public class ProjectCorrelateTransposeRule  extends RelOptRule {
 
   public static final ProjectCorrelateTransposeRule INSTANCE =
-      new ProjectCorrelateTransposeRule(expr -> !(expr instanceof RexOver),
+      new ProjectCorrelateTransposeRule(
+          PushProjector.ExprCondition.TRUE,
           RelFactories.LOGICAL_BUILDER);
 
   //~ Instance fields --------------------------------------------------------
@@ -190,21 +189,19 @@ public class ProjectCorrelateTransposeRule extends RelOptRule {
    * Visitor for RelNodes which applies specified {@link RexShuttle} visitor
    * for every node in the tree.
    */
-  public static class RelNodesExprsHandler extends RelBasicShuttle {
+  public static class RelNodesExprsHandler extends RelShuttleImpl {
     private final RexShuttle rexVisitor;
 
     public RelNodesExprsHandler(RexShuttle rexVisitor) {
       this.rexVisitor = rexVisitor;
     }
 
-    @Override protected RelNode visitChild(RelNode parent, int i, RelNode child) {
-      if (child instanceof HepRelVertex) {
-        child = ((HepRelVertex) child).getCurrentRel();
-      } else if (child instanceof RelSubset) {
-        RelSubset subset = (RelSubset) child;
-        child = Util.first(subset.getBest(), subset.getOriginal());
+    @Override public RelNode doLeave(RelNode node) {
+      if (node instanceof RelSubset) {
+        RelSubset subset = (RelSubset) node;
+        node = Util.first(subset.getBest(), subset.getOriginal());
       }
-      return super.visitChild(parent, i, child).accept(rexVisitor);
+      return node.accept(rexVisitor);
     }
   }
 }

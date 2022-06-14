@@ -72,7 +72,7 @@ public abstract class SingleRel extends AbstractRelNode {
     visitor.visit(input, 0, this);
   }
 
-  @Override public RelWriter explainTerms(RelWriter pw) {
+  public RelWriter explainTerms(RelWriter pw) {
     return super.explainTerms(pw)
         .input("input", getInput());
   }
@@ -82,10 +82,18 @@ public abstract class SingleRel extends AbstractRelNode {
       RelNode rel) {
     assert ordinalInParent == 0;
     this.input = rel;
-    recomputeDigest();
   }
 
-  @Override protected RelDataType deriveRowType() {
+  protected RelDataType deriveRowType() {
     return input.getRowType();
   }
+
+  @Override public RelNode accept(RelShuttle shuttle) {
+    if (shuttle.visit(this)) {
+      input.accept(shuttle);
+    }
+    return shuttle.leave(this);
+  }
 }
+
+// End SingleRel.java

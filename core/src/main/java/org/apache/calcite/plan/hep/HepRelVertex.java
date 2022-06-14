@@ -21,12 +21,10 @@ import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.AbstractRelNode;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelShuttle;
 import org.apache.calcite.rel.RelWriter;
-import org.apache.calcite.rel.metadata.DelegatingMetadataRel;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
-
-import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
 
@@ -34,7 +32,7 @@ import java.util.List;
  * HepRelVertex wraps a real {@link RelNode} as a vertex in a DAG representing
  * the entire query expression.
  */
-public class HepRelVertex extends AbstractRelNode implements DelegatingMetadataRel {
+public class HepRelVertex extends AbstractRelNode {
   //~ Instance fields --------------------------------------------------------
 
   /**
@@ -63,7 +61,7 @@ public class HepRelVertex extends AbstractRelNode implements DelegatingMetadataR
     return this;
   }
 
-  @Override public @Nullable RelOptCost computeSelfCost(RelOptPlanner planner,
+  @Override public RelOptCost computeSelfCost(RelOptPlanner planner,
       RelMetadataQuery mq) {
     // HepRelMetadataProvider is supposed to intercept this
     // and redirect to the real rels. But sometimes it doesn't.
@@ -78,6 +76,10 @@ public class HepRelVertex extends AbstractRelNode implements DelegatingMetadataR
     return currentRel.getRowType();
   }
 
+  @Override protected String computeDigest() {
+    return "HepRelVertex(" + currentRel + ")";
+  }
+
   /**
    * Replaces the implementation for this expression with a new one.
    *
@@ -88,30 +90,17 @@ public class HepRelVertex extends AbstractRelNode implements DelegatingMetadataR
   }
 
   /**
-   * Returns current implementation chosen for this vertex.
+   * @return current implementation chosen for this vertex
    */
   public RelNode getCurrentRel() {
     return currentRel;
   }
 
-  /**
-   * Returns {@link RelNode} for metadata.
-   */
-  @Override public RelNode getMetadataDelegateRel() {
-    return currentRel;
-  }
-
-  @Override public boolean deepEquals(@Nullable Object obj) {
-    return this == obj
-        || (obj instanceof HepRelVertex
-            && currentRel == ((HepRelVertex) obj).currentRel);
-  }
-
-  @Override public int deepHashCode() {
-    return currentRel.getId();
-  }
-
-  @Override public String getDigest() {
-    return "HepRelVertex(" + currentRel + ')';
+  public RelNode accept(RelShuttle shuttle) {
+    // Call fall-back method. Specific logical types (such as LogicalProject
+    // and LogicalJoin) have their own RelShuttle.visit methods.
+    return currentRel.accept(shuttle);
   }
 }
+
+// End HepRelVertex.java

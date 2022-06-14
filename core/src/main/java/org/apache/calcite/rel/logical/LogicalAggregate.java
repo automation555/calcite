@@ -19,16 +19,11 @@ package org.apache.calcite.rel.logical;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
-import org.apache.calcite.rel.LogicalNode;
 import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.RelShuttle;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
-import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.util.ImmutableBitSet;
-
-import com.google.common.collect.ImmutableList;
 
 import java.util.List;
 
@@ -44,7 +39,7 @@ import java.util.List;
  * <li>{@link org.apache.calcite.rel.rules.AggregateReduceFunctionsRule}.
  * </ul>
  */
-public final class LogicalAggregate extends Aggregate implements LogicalNode {
+public final class LogicalAggregate extends Aggregate {
   //~ Constructors -----------------------------------------------------------
 
   /**
@@ -52,10 +47,8 @@ public final class LogicalAggregate extends Aggregate implements LogicalNode {
    *
    * <p>Use {@link #create} unless you know what you're doing.
    *
-   * @param cluster    Cluster that this relational expression belongs to
-   * @param traitSet   Traits
-   * @param hints      Hints for this relational expression
-   * @param input      Input relational expression
+   * @param cluster  Cluster that this relational expression belongs to
+   * @param child    input relational expression
    * @param groupSet Bit set of grouping fields
    * @param groupSets Grouping sets, or null to use just {@code groupSet}
    * @param aggCalls Array of aggregates to compute, not null
@@ -63,40 +56,24 @@ public final class LogicalAggregate extends Aggregate implements LogicalNode {
   public LogicalAggregate(
       RelOptCluster cluster,
       RelTraitSet traitSet,
-      List<RelHint> hints,
-      RelNode input,
+      RelNode child,
+      boolean indicator,
       ImmutableBitSet groupSet,
       List<ImmutableBitSet> groupSets,
       List<AggregateCall> aggCalls) {
-    super(cluster, traitSet, hints, input, groupSet, groupSets, aggCalls);
+    super(cluster, traitSet, child, indicator, groupSet, groupSets, aggCalls);
   }
 
   @Deprecated // to be removed before 2.0
   public LogicalAggregate(
       RelOptCluster cluster,
-      RelTraitSet traitSet,
-      RelNode input,
+      RelNode child,
+      boolean indicator,
       ImmutableBitSet groupSet,
       List<ImmutableBitSet> groupSets,
       List<AggregateCall> aggCalls) {
-    this(cluster, traitSet, ImmutableList.of(), input, groupSet, groupSets, aggCalls);
-  }
-
-  @Deprecated // to be removed before 2.0
-  public LogicalAggregate(RelOptCluster cluster, RelTraitSet traitSet,
-      RelNode input, boolean indicator, ImmutableBitSet groupSet,
-      List<ImmutableBitSet> groupSets, List<AggregateCall> aggCalls) {
-    super(cluster, traitSet, ImmutableList.of(), input, groupSet, groupSets, aggCalls);
-    checkIndicator(indicator);
-  }
-
-  @Deprecated // to be removed before 2.0
-  public LogicalAggregate(RelOptCluster cluster,
-      RelNode input, boolean indicator, ImmutableBitSet groupSet,
-      List<ImmutableBitSet> groupSets, List<AggregateCall> aggCalls) {
-    super(cluster, cluster.traitSetOf(Convention.NONE), ImmutableList.of(), input, groupSet,
-        groupSets, aggCalls);
-    checkIndicator(indicator);
+    this(cluster, cluster.traitSetOf(Convention.NONE), child, indicator,
+        groupSet, groupSets, aggCalls);
   }
 
   /**
@@ -108,19 +85,9 @@ public final class LogicalAggregate extends Aggregate implements LogicalNode {
 
   /** Creates a LogicalAggregate. */
   public static LogicalAggregate create(final RelNode input,
-      List<RelHint> hints,
-      ImmutableBitSet groupSet,
-      List<ImmutableBitSet> groupSets,
+      ImmutableBitSet groupSet, List<ImmutableBitSet> groupSets,
       List<AggregateCall> aggCalls) {
-    return create_(input, hints, groupSet, groupSets, aggCalls);
-  }
-
-  @Deprecated // to be removed before 2.0
-  public static LogicalAggregate create(final RelNode input,
-      ImmutableBitSet groupSet,
-      List<ImmutableBitSet> groupSets,
-      List<AggregateCall> aggCalls) {
-    return create_(input, ImmutableList.of(), groupSet, groupSets, aggCalls);
+    return create_(input, false, groupSet, groupSets, aggCalls);
   }
 
   @Deprecated // to be removed before 2.0
@@ -129,37 +96,30 @@ public final class LogicalAggregate extends Aggregate implements LogicalNode {
       ImmutableBitSet groupSet,
       List<ImmutableBitSet> groupSets,
       List<AggregateCall> aggCalls) {
-    checkIndicator(indicator);
-    return create_(input, ImmutableList.of(), groupSet, groupSets, aggCalls);
+    return create_(input, indicator, groupSet, groupSets, aggCalls);
   }
 
   private static LogicalAggregate create_(final RelNode input,
-      List<RelHint> hints,
+      boolean indicator,
       ImmutableBitSet groupSet,
       List<ImmutableBitSet> groupSets,
       List<AggregateCall> aggCalls) {
     final RelOptCluster cluster = input.getCluster();
     final RelTraitSet traitSet = cluster.traitSetOf(Convention.NONE);
-    return new LogicalAggregate(cluster, traitSet, hints, input, groupSet,
+    return new LogicalAggregate(cluster, traitSet, input, indicator, groupSet,
         groupSets, aggCalls);
   }
 
   //~ Methods ----------------------------------------------------------------
 
   @Override public LogicalAggregate copy(RelTraitSet traitSet, RelNode input,
-      ImmutableBitSet groupSet,
+      boolean indicator, ImmutableBitSet groupSet,
       List<ImmutableBitSet> groupSets, List<AggregateCall> aggCalls) {
     assert traitSet.containsIfApplicable(Convention.NONE);
-    return new LogicalAggregate(getCluster(), traitSet, hints, input,
+    return new LogicalAggregate(getCluster(), traitSet, input, indicator,
         groupSet, groupSets, aggCalls);
   }
 
-  @Override public RelNode accept(RelShuttle shuttle) {
-    return shuttle.visit(this);
-  }
-
-  @Override public RelNode withHints(List<RelHint> hintList) {
-    return new LogicalAggregate(getCluster(), traitSet, hintList, input,
-        groupSet, groupSets, aggCalls);
-  }
 }
+
+// End LogicalAggregate.java
