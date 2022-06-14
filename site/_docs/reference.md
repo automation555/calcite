@@ -19,36 +19,6 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
-The following functions do not need to be documented. They are listed
-here to appease testAllFunctionsAreDocumented:
-
-| Function       | Reason not documented
-|:-------------- |:---------------------
-| CALL           | TODO: document
-| CLASSIFIER()   | Documented with MATCH_RECOGNIZE
-| CONVERT()      | In SqlStdOperatorTable, but not fully implemented
-| CUME_DIST()    | In SqlStdOperatorTable, but not fully implemented
-| DESC           | Described as part of ORDER BY syntax
-| EQUALS         | Documented as an period operator
-| FILTER         | Documented as part of aggregateCall syntax
-| FINAL          | TODO: Document with MATCH_RECOGNIZE
-| FIRST()        | TODO: Documented with MATCH_RECOGNIZE
-| JSON_ARRAYAGG_ABSENT_ON_NULL() | Covered by JSON_ARRAYAGG
-| JSON_OBJECTAGG_NULL_ON_NULL() | Covered by JSON_OBJECTAGG
-| JSON_VALUE_ANY() | Covered by JSON_VALUE
-| LAST()         | TODO: document with MATCH_RECOGNIZE
-| NEW            | TODO: document
-| NEXT()         | Documented with MATCH_RECOGNIZE
-| OVERLAPS       | Documented as a period operator
-| PERCENT_RANK() | In SqlStdOperatorTable, but not fully implemented
-| PRECEDES       | Documented as a period operator
-| PREV()         | Documented with MATCH_RECOGNIZE
-| RUNNING        | TODO: document with MATCH_RECOGNIZE
-| SINGLE_VALUE() | Internal (but should it be?)
-| SUCCEEDS       | Documented as a period operator
-| TABLE          | Documented as part of FROM syntax
-| VARIANCE()     | In SqlStdOperatorTable, but not fully implemented
 {% endcomment %}
 -->
 
@@ -125,9 +95,6 @@ statement:
   |   merge
   |   delete
   |   query
-
-statementList:
-      statement [ ';' statement ]* [ ';' ]
 
 setStatement:
       [ ALTER ( SYSTEM | SESSION ) ] SET identifier '=' expression
@@ -227,7 +194,6 @@ joinCondition:
 
 tableReference:
       tablePrimary
-      [ FOR SYSTEM_TIME AS OF expression ]
       [ matchRecognize ]
       [ [ AS ] alias [ '(' columnAlias [, columnAlias ]* ')' ] ]
 
@@ -253,13 +219,13 @@ groupItem:
   |   ROLLUP '(' expression [, expression ]* ')'
   |   GROUPING SETS '(' groupItem [, groupItem ]* ')'
 
-window:
+windowRef:
       windowName
   |   windowSpec
 
 windowSpec:
-      '('
       [ windowName ]
+      '('
       [ ORDER BY orderItem [, orderItem ]* ]
       [ PARTITION BY expression [, expression ]* ]
       [
@@ -332,7 +298,6 @@ Reserved keywords are **bold**.
 {% comment %} start {% endcomment %}
 A,
 **ABS**,
-ABSENT,
 ABSOLUTE,
 ACTION,
 ADA,
@@ -419,7 +384,6 @@ COMMAND_FUNCTION_CODE,
 **COMMIT**,
 COMMITTED,
 **CONDITION**,
-CONDITIONAL,
 CONDITION_NUMBER,
 **CONNECT**,
 CONNECTION,
@@ -503,14 +467,12 @@ DYNAMIC_FUNCTION_CODE,
 **ELEMENT**,
 **ELSE**,
 **EMPTY**,
-ENCODING,
 **END**,
 **END-EXEC**,
 **END_FRAME**,
 **END_PARTITION**,
 EPOCH,
 **EQUALS**,
-ERROR,
 **ESCAPE**,
 **EVERY**,
 **EXCEPT**,
@@ -536,7 +498,6 @@ FIRST,
 FOLLOWING,
 **FOR**,
 **FOREIGN**,
-FORMAT,
 FORTRAN,
 FOUND,
 FRAC_SECOND,
@@ -564,7 +525,6 @@ HIERARCHY,
 **HOLD**,
 **HOUR**,
 **IDENTITY**,
-IGNORE,
 IMMEDIATE,
 IMMEDIATELY,
 IMPLEMENTATION,
@@ -596,13 +556,6 @@ ISOYEAR,
 JAVA,
 **JOIN**,
 JSON,
-**JSON_ARRAY**,
-**JSON_ARRAYAGG**,
-**JSON_EXISTS**,
-**JSON_OBJECT**,
-**JSON_OBJECTAGG**,
-**JSON_QUERY**,
-**JSON_VALUE**,
 K,
 KEY,
 KEY_MEMBER,
@@ -719,7 +672,6 @@ PARAMETER_SPECIFIC_SCHEMA,
 PARTIAL,
 **PARTITION**,
 PASCAL,
-PASSING,
 PASSTHROUGH,
 PAST,
 PATH,
@@ -773,7 +725,6 @@ RELATIVE,
 REPEATABLE,
 REPLACE,
 **RESET**,
-RESPECT,
 RESTART,
 RESTRICT,
 **RESULT**,
@@ -782,7 +733,6 @@ RETURNED_CARDINALITY,
 RETURNED_LENGTH,
 RETURNED_OCTET_LENGTH,
 RETURNED_SQLSTATE,
-RETURNING,
 **RETURNS**,
 **REVOKE**,
 **RIGHT**,
@@ -799,7 +749,6 @@ ROW_COUNT,
 **ROW_NUMBER**,
 **RUNNING**,
 **SAVEPOINT**,
-SCALAR,
 SCALE,
 SCHEMA,
 SCHEMA_NAME,
@@ -949,7 +898,6 @@ TYPE,
 **UESCAPE**,
 UNBOUNDED,
 UNCOMMITTED,
-UNCONDITIONAL,
 UNDER,
 **UNION**,
 **UNIQUE**,
@@ -966,9 +914,6 @@ USER_DEFINED_TYPE_CODE,
 USER_DEFINED_TYPE_NAME,
 USER_DEFINED_TYPE_SCHEMA,
 **USING**,
-UTF16,
-UTF32,
-UTF8,
 **VALUE**,
 **VALUES**,
 **VALUE_OF**,
@@ -1064,19 +1009,14 @@ Note:
 
 ### Non-scalar types
 
-| Type     | Description                | Example literals
-|:-------- |:---------------------------|:---------------
-| ANY      | A value of an unknown type |
-| ROW      | Row with 1 or more columns | Example: Row(f0 int null, f1 varchar)
-| MAP      | Collection of keys mapped to values |
-| MULTISET | Unordered collection that may contain duplicates | Example: int multiset
-| ARRAY    | Ordered, contiguous collection that may contain duplicates | Example: varchar(10) array
-| CURSOR   | Cursor over the result of executing a query |
-
-Note:
-
-* Every `ROW` column type can have an optional [ NULL | NOT NULL ] suffix
-  to indicate if this column type is nullable, default is not nullable.
+| Type     | Description
+|:-------- |:-----------------------------------------------------------
+| ANY      | A value of an unknown type
+| ROW      | Row with 1 or more columns
+| MAP      | Collection of keys mapped to values
+| MULTISET | Unordered collection that may contain duplicates
+| ARRAY    | Ordered, contiguous collection that may contain duplicates
+| CURSOR   | Cursor over the result of executing a query
 
 ### Spatial types
 
@@ -1091,18 +1031,18 @@ for example `ST_GeomFromText('POINT (30 10)')`.
 | Data type   | Type code | Examples in WKT
 |:----------- |:--------- |:---------------------
 | GEOMETRY           |  0 | generalization of Point, Curve, Surface, GEOMETRYCOLLECTION
-| POINT              |  1 | <code>ST_GeomFromText(&#8203;'POINT (30 10)')</code> is a point in 2D space; <code>ST_GeomFromText(&#8203;'POINT Z(30 10 2)')</code> is point in 3D space
+| POINT              |  1 | <tt>ST_GeomFromText(&#8203;'POINT (30 10)')</tt> is a point in 2D space; <tt>ST_GeomFromText(&#8203;'POINT Z(30 10 2)')</tt> is point in 3D space
 | CURVE            | 13 | generalization of LINESTRING
-| LINESTRING         |  2 | <code>ST_GeomFromText(&#8203;'LINESTRING (30 10, 10 30, 40 40)')</code>
+| LINESTRING         |  2 | <tt>ST_GeomFromText(&#8203;'LINESTRING (30 10, 10 30, 40 40)')</tt>
 | SURFACE            | 14 | generalization of Polygon, PolyhedralSurface
-| POLYGON            |  3 | <code>ST_GeomFromText(&#8203;'POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))')</code> is a pentagon; <code>ST_GeomFromText(&#8203;'POLYGON ((35 10, 45 45, 15 40, 10 20, 35 10), (20 30, 35 35, 30 20, 20 30))')</code> is a pentagon with a quadrilateral hole
+| POLYGON            |  3 | <tt>ST_GeomFromText(&#8203;'POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))')</tt> is a pentagon; <tt>ST_GeomFromText(&#8203;'POLYGON ((35 10, 45 45, 15 40, 10 20, 35 10), (20 30, 35 35, 30 20, 20 30))')</tt> is a pentagon with a quadrilateral hole
 | POLYHEDRALSURFACE  | 15 |
 | GEOMETRYCOLLECTION |  7 | a collection of zero or more GEOMETRY instances; a generalization of MULTIPOINT, MULTILINESTRING, MULTIPOLYGON
-| MULTIPOINT         |  4 | <code>ST_GeomFromText(&#8203;'MULTIPOINT ((10 40), (40 30), (20 20), (30 10))')</code> is equivalent to <code>ST_GeomFromText(&#8203;'MULTIPOINT (10 40, 40 30, 20 20, 30 10)')</code>
+| MULTIPOINT         |  4 | <tt>ST_GeomFromText(&#8203;'MULTIPOINT ((10 40), (40 30), (20 20), (30 10))')</tt> is equivalent to <tt>ST_GeomFromText(&#8203;'MULTIPOINT (10 40, 40 30, 20 20, 30 10)')</tt>
 | MULTICURVE         |  - | generalization of MULTILINESTRING
-| MULTILINESTRING    |  5 | <code>ST_GeomFromText(&#8203;'MULTILINESTRING ((10 10, 20 20, 10 40), (40 40, 30 30, 40 20, 30 10))')</code>
+| MULTILINESTRING    |  5 | <tt>ST_GeomFromText(&#8203;'MULTILINESTRING ((10 10, 20 20, 10 40), (40 40, 30 30, 40 20, 30 10))')</tt>
 | MULTISURFACE       |  - | generalization of MULTIPOLYGON
-| MULTIPOLYGON       |  6 | <code>ST_GeomFromText(&#8203;'MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 20, 5 10, 15 5)))')</code>
+| MULTIPOLYGON       |  6 | <tt>ST_GeomFromText(&#8203;'MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 20, 5 10, 15 5)))')</tt>
 
 ## Operators and functions
 
@@ -1113,7 +1053,6 @@ The operator precedence and associativity, highest to lowest.
 | Operator                                          | Associativity
 |:------------------------------------------------- |:-------------
 | .                                                 | left
-| ::                                                | left
 | [ ] (array element)                               | left
 | + - (unary plus, minus)                           | right
 | * / %                                             | left
@@ -1124,9 +1063,6 @@ The operator precedence and associativity, highest to lowest.
 | NOT                                               | right
 | AND                                               | left
 | OR                                                | left
-
-Note that `::` is dialect-specific, but is shown in this table for
-completeness.
 
 ### Comparison operators
 
@@ -1277,7 +1213,6 @@ Not implemented:
 | SECOND(date)              | Equivalent to `EXTRACT(SECOND FROM date)`. Returns an integer between 0 and 59.
 | TIMESTAMPADD(timeUnit, integer, datetime) | Returns *datetime* with an interval of (signed) *integer* *timeUnit*s added. Equivalent to `datetime + INTERVAL 'integer' timeUnit`
 | TIMESTAMPDIFF(timeUnit, datetime, datetime2) | Returns the (signed) number of *timeUnit* intervals between *datetime* and *datetime2*. Equivalent to `(datetime2 - datetime) timeUnit`
-| LAST_DAY(date)            | Returns the date of the last day of the month in a value of datatype DATE; For example, it returns DATE'2020-02-29' for both DATE'2020-02-10' and TIMESTAMP'2020-02-10 10:10:10'
 
 Calls to niladic functions such as `CURRENT_DATE` do not accept parentheses in
 standard SQL. Calls with parentheses, such as `CURRENT_DATE()` are accepted in certain
@@ -1303,7 +1238,6 @@ Not implemented:
 | SYSTEM_USER     | Returns the name of the current data store user as identified by the operating system
 | CURRENT_PATH    | Returns a character string representing the current lookup scope for references to user-defined routines and types
 | CURRENT_ROLE    | Returns the current active role
-| CURRENT_SCHEMA  | Returns the current schema
 
 ### Conditional functions and operators
 
@@ -1320,63 +1254,6 @@ Not implemented:
 |:--------------- | :----------
 | CAST(value AS type) | Converts a value to a given type.
 
-Supported data types:
-
-{% highlight sql %}
-type:
-      typeName [ '(' precision [, scale] ')' ]
-      [ CHARACTER SET charSetName ]
-      [ collectionsTypeName ]
-
-typeName:
-      sqlTypeName
-  |   collectionsTypeName
-  |   rowTypeName
-  |   compoundIdentifier
-
-sqlTypeName:
-      char
-  |   varchar
-  |   DATE
-  |   TIME
-  |   TIMESTAMP
-  |   GEOMETRY
-  |   decimal
-  |   BOOLEAN
-  |   integer
-  |   BINARY
-  |   varbinary
-  |   TINYINT
-  |   SMALLINT
-  |   BIGINT
-  |   REAL
-  |   double
-  |   FLOAT
-  |   ANY
-
-collectionsTypeName:
-      ARRAY | MULTISET
-
-rowTypeName:
-      ROW '('
-        fieldName1 fieldType1 [ [ NULL | NOT NULL ] ]
-        [ , fieldName2 fieldType2 [ [ NULL | NOT NULL ] ] ]*
-        ')'
-
-char:
-      CHARACTER | CHAR
-varchar:
-      char VARYING | VARCHAR
-decimal:
-      DECIMAL | DEC | NUMERIC
-integer:
-      INTEGER | INT
-varbinary:
-      BINARY VARYING | VARBINARY
-double:
-      DOUBLE [PRECISION]
-{% endhighlight %}
-
 ### Value constructors
 
 | Operator syntax | Description
@@ -1392,7 +1269,7 @@ double:
 
 | Operator syntax | Description
 |:--------------- |:-----------
-| ELEMENT(value)  | Returns the sole element of an array or multiset; null if the collection is empty; throws if it has more than one element.
+| ELEMENT(value)  | Returns the sole element of a array or multiset; null if the collection is empty; throws if it has more than one element.
 | CARDINALITY(value) | Returns the number of elements in an array or multiset.
 | value MEMBER OF multiset | Returns whether the *value* is a member of *multiset*.
 | multiset IS A SET | Whether *multiset* is a set (has no duplicates).
@@ -1538,24 +1415,27 @@ period:
 
 | Operator syntax | Description
 |:--------------- |:-----------
-| {fn ASCII(string)} | Returns the ASCII code of the first character of *string*; if the first character is a non-ASCII character, returns its Unicode code point; returns 0 if *string* is empty
 | {fn CONCAT(character, character)} | Returns the concatenation of character strings
 | {fn INSERT(string1, start, length, string2)} | Inserts *string2* into a slot in *string1*
-| {fn LCASE(string)} | Returns a string in which all alphabetic characters in *string* have been converted to lower case
+| {fn LCASE(string)}            | Returns a string in which all alphabetic characters in *string* have been converted to lower case
 | {fn LENGTH(string)} | Returns the number of characters in a string
 | {fn LOCATE(string1, string2 [, integer])} | Returns the position in *string2* of the first occurrence of *string1*. Searches from the beginning of *string2*, unless *integer* is specified.
-| {fn LEFT(string, length)} | Returns the leftmost *length* characters from *string*
 | {fn LTRIM(string)} | Returns *string* with leading space characters removed
-| {fn REPLACE(string, search, replacement)} | Returns a string in which all the occurrences of *search* in *string* are replaced with *replacement*; if *replacement* is the empty string, the occurrences of *search* are removed
-| {fn REVERSE(string)} | Returns *string* with the order of the characters reversed
-| {fn RIGHT(string, integer)} | Returns the rightmost *length* characters from *string*
 | {fn RTRIM(string)} | Returns *string* with trailing space characters removed
 | {fn SUBSTRING(string, offset, length)} | Returns a character string that consists of *length* characters from *string* starting at the *offset* position
 | {fn UCASE(string)} | Returns a string in which all alphabetic characters in *string* have been converted to upper case
+| {fn REPLACE(string, search, replacement)} | Returns a string in which all the occurrences of *search* in *string* are replaced with *replacement*; if *replacement* is the empty string, the occurrences of *search* are removed
 
 Not implemented:
 
+* {fn ASCII(string)} - Convert a single-character string to the corresponding ASCII code, an integer between 0 and 255
 * {fn CHAR(string)}
+* {fn DIFFERENCE(string, string)}
+* {fn LEFT(string, integer)}
+* {fn REPEAT(string, integer)}
+* {fn RIGHT(string, integer)}
+* {fn SOUNDEX(string)}
+* {fn SPACE(integer)}
 
 #### Date/time
 
@@ -1574,9 +1454,13 @@ Not implemented:
 | {fn HOUR(date)} | Equivalent to `EXTRACT(HOUR FROM date)`. Returns an integer between 0 and 23.
 | {fn MINUTE(date)} | Equivalent to `EXTRACT(MINUTE FROM date)`. Returns an integer between 0 and 59.
 | {fn SECOND(date)} | Equivalent to `EXTRACT(SECOND FROM date)`. Returns an integer between 0 and 59.
-| {fn TIMESTAMPADD(timeUnit, count, datetime)} | Adds an interval of *count* *timeUnit*s to a datetime
+| {fn TIMESTAMPADD(timeUnit, count, timestamp)} | Adds an interval of *count* *timeUnit*s to a timestamp
 | {fn TIMESTAMPDIFF(timeUnit, timestamp1, timestamp2)} | Subtracts *timestamp1* from *timestamp2* and returns the result in *timeUnit*s
 
+Not implemented:
+
+* {fn DAYNAME(date)}
+* {fn MONTHNAME(date)}
 
 #### System
 
@@ -1598,14 +1482,9 @@ Syntax:
 
 {% highlight sql %}
 aggregateCall:
-        agg( [ ALL | DISTINCT ] value [, value ]*)
-        [ WITHIN GROUP (ORDER BY orderItem [, orderItem ]*) ]
-        [ FILTER (WHERE condition) ]
+        agg( [ ALL | DISTINCT ] value [, value ]*) [ FILTER (WHERE condition) ]
     |   agg(*) [ FILTER (WHERE condition) ]
 {% endhighlight %}
-
-where *agg* is one of the operators in the following table, or a user-defined
-aggregate function.
 
 If `FILTER` is present, the aggregate function only considers rows for which
 *condition* evaluates to TRUE.
@@ -1613,68 +1492,38 @@ If `FILTER` is present, the aggregate function only considers rows for which
 If `DISTINCT` is present, duplicate argument values are eliminated before being
 passed to the aggregate function.
 
-If `WITHIN GROUP` is present, the aggregate function sorts the input rows
-according to the `ORDER BY` clause inside `WITHIN GROUP` before aggregating
-values. `WITHIN GROUP` is only allowed for hypothetical set functions (`RANK`,
-`DENSE_RANK`, `PERCENT_RANK` and `CUME_DIST`), inverse distribution functions
-(`PERCENTILE_CONT` and `PERCENTILE_DISC`) and collection functions (`COLLECT`
-and `LISTAGG`).
-
 | Operator syntax                    | Description
 |:---------------------------------- |:-----------
 | COLLECT( [ ALL &#124; DISTINCT ] value)       | Returns a multiset of the values
-| LISTAGG( [ ALL &#124; DISTINCT ] value [, separator]) | Returns values concatenated into a string, delimited by separator (default ',')
 | COUNT( [ ALL &#124; DISTINCT ] value [, value ]*) | Returns the number of input rows for which *value* is not null (wholly not null if *value* is composite)
 | COUNT(*)                           | Returns the number of input rows
-| FUSION(multiset)                   | Returns the multiset union of *multiset* across all input values
+| FUSION( multiset )                 | Returns the multiset union of *multiset* across all input values
 | APPROX_COUNT_DISTINCT(value [, value ]*)      | Returns the approximate number of distinct values of *value*; the database is allowed to use an approximation but is not required to
 | AVG( [ ALL &#124; DISTINCT ] numeric)         | Returns the average (arithmetic mean) of *numeric* across all input values
 | SUM( [ ALL &#124; DISTINCT ] numeric)         | Returns the sum of *numeric* across all input values
 | MAX( [ ALL &#124; DISTINCT ] value)           | Returns the maximum value of *value* across all input values
 | MIN( [ ALL &#124; DISTINCT ] value)           | Returns the minimum value of *value* across all input values
 | ANY_VALUE( [ ALL &#124; DISTINCT ] value)     | Returns one of the values of *value* across all input values; this is NOT specified in the SQL standard
-| BIT_AND( [ ALL &#124; DISTINCT ] value)       | Returns the bitwise AND of all non-null input values, or null if none
-| BIT_OR( [ ALL &#124; DISTINCT ] value)        | Returns the bitwise OR of all non-null input values, or null if none
 | STDDEV_POP( [ ALL &#124; DISTINCT ] numeric)  | Returns the population standard deviation of *numeric* across all input values
 | STDDEV_SAMP( [ ALL &#124; DISTINCT ] numeric) | Returns the sample standard deviation of *numeric* across all input values
-| STDDEV( [ ALL &#124; DISTINCT ] numeric)      | Synonym for `STDDEV_SAMP`
 | VAR_POP( [ ALL &#124; DISTINCT ] value)       | Returns the population variance (square of the population standard deviation) of *numeric* across all input values
 | VAR_SAMP( [ ALL &#124; DISTINCT ] numeric)    | Returns the sample variance (square of the sample standard deviation) of *numeric* across all input values
-| CORR(numeric1, numeric2)           | Returns the the correlation coefficient, defined as the ratio of the population covariance divided by the product of the population standard deviation of the independent expression and the population standard deviation of dependent expression
 | COVAR_POP(numeric1, numeric2)      | Returns the population covariance of the pair (*numeric1*, *numeric2*) across all input values
 | COVAR_SAMP(numeric1, numeric2)     | Returns the sample covariance of the pair (*numeric1*, *numeric2*) across all input values
-| REGR_AVGX(numeric1, numeric2)      | Returns the average of the independent expression in a linear regression model
-| REGR_AVGY(numeric1, numeric2)      | Returns the average of the dependent expression in a linear regression model
-| REGR_COUNT(numeric1, numeric2)     | Returns the number of rows where both dependent and independent expressions are not null
-| REGR_INTERCEPT(numeric1, numeric2) | Returns the the y-intercept of the least-squares-fit linear equation determined by the (independent expression, dependent expression) pairs in a linear regression model
-| REGR_R2(numeric1, numeric2)        | Returns the square of the correlation coefficient in a linear regression model
-| REGR_SLOPE(numeric1, numeric2)     | Returns the slope of the least-squares-fit linear equation determined by the (independent expression, dependent expression) pairs in a linear regression model
 | REGR_COUNT(numeric1, numeric2)     | Returns the number of rows where both dependent and independent expressions are not null
 | REGR_SXX(numeric1, numeric2)       | Returns the sum of squares of the dependent expression in a linear regression model
-| REGR_SXY(numeric1, numeric2)       | Returns the sum of products of the independent expression times dependent expression in a linear regression model
 | REGR_SYY(numeric1, numeric2)       | Returns the sum of squares of the independent expression in a linear regression model
 
+Not implemented:
+
+* REGR_AVGX(numeric1, numeric2)
+* REGR_AVGY(numeric1, numeric2)
+* REGR_INTERCEPT(numeric1, numeric2)
+* REGR_R2(numeric1, numeric2)
+* REGR_SLOPE(numeric1, numeric2)
+* REGR_SXY(numeric1, numeric2)
+
 ### Window functions
-
-Syntax:
-
-{% highlight sql %}
-windowedAggregateCall:
-        agg( [ ALL | DISTINCT ] value [, value ]*)
-        [ RESPECT NULLS | IGNORE NULLS ]
-        [ WITHIN GROUP (ORDER BY orderItem [, orderItem ]*) ]
-        [ FILTER (WHERE condition) ]
-        OVER window
-    |   agg(*)
-        [ FILTER (WHERE condition) ]
-        OVER window
-{% endhighlight %}
-
-where *agg* is one of the operators in the following table, or a user-defined
-aggregate function.
-
-`DISTINCT`, `FILTER` and `WITHIN GROUP` are as described for aggregate
-functions.
 
 | Operator syntax                           | Description
 |:----------------------------------------- |:-----------
@@ -1686,6 +1535,8 @@ functions.
 | MIN(value) OVER window                    | Returns the minimum value of *value* across all values in *window*
 | RANK() OVER window                        | Returns the rank of the current row with gaps; same as ROW_NUMBER of its first peer
 | DENSE_RANK() OVER window                  | Returns the rank of the current row without gaps; this function counts peer groups
+| PERCENT_RANK() OVER window                | Returns the relative rank of a row R is defined as (RK–1)/(NR–1), where RK is defined to be the RANK of R and NR is defined to be the number of rows in the window partition of R. 
+| CUME_DIST() OVER window                   | Returns the relative rank of a row R is defined as NP/NR, where NP is defined to be the number of rows preceding or peer with R in the window ordering of the window partition of R and NR is defined to be the number of rows in the window partition of R. 
 | ROW_NUMBER() OVER window                  | Returns the number of the current row within its partition, counting from 1
 | FIRST_VALUE(value) OVER window            | Returns *value* evaluated at the row that is the first row of the window frame
 | LAST_VALUE(value) OVER window             | Returns *value* evaluated at the row that is the last row of the window frame
@@ -1694,19 +1545,13 @@ functions.
 | NTH_VALUE(value, nth) OVER window         | Returns *value* evaluated at the row that is the *n*th row of the window frame
 | NTILE(value) OVER window                  | Returns an integer ranging from 1 to *value*, dividing the partition as equally as possible
 
-Note:
-
-* You may specify null treatment (`IGNORE NULLS`, `RESPECT NULLS`) for
-  `FIRST_VALUE`, `LAST_VALUE`, `NTH_VALUE`, `LEAD` and `LAG` functions. The
-  syntax handled by the parser, but only `RESPECT NULLS` is implemented at
-  runtime.
-
 Not implemented:
 
 * COUNT(DISTINCT value [, value ]*) OVER window
 * APPROX_COUNT_DISTINCT(value [, value ]*) OVER window
-* PERCENT_RANK(value) OVER window
-* CUME_DIST(value) OVER window
+* FIRST_VALUE(value) IGNORE NULLS OVER window
+* LAST_VALUE(value) IGNORE NULLS OVER window
+* NTH_VALUE(value, nth) [ FROM { FIRST | LAST } ] IGNORE NULLS OVER window
 
 ### Grouping functions
 
@@ -1969,7 +1814,7 @@ The following functions modify 3D geometries.
 Not implemented:
 
 * ST_AddZ(geom, zToAdd) Adds *zToAdd* to the z-coordinate of *geom*
-* ST_Interpolate3DLine(geom) Returns *geom* with an interpolation of z values, or null if it is not a line-string or MULTILINESTRING
+* ST_Interpolate3DLine(geom) Returns *geom* with a interpolation of z values, or null if it is not a line-string or MULTILINESTRING
 * ST_MultiplyZ(geom, zFactor) Returns *geom* with its z-values multiplied by *zFactor*
 * ST_Reverse3DLine(geom [, sortOrder ]) Potentially reverses *geom* according to the z-values of its first and last coordinates
 * ST_UpdateZ(geom, newZ [, updateCondition ]) Updates the z-values of *geom*
@@ -2055,314 +1900,6 @@ Not implemented:
 * ST_Accum(geom) Accumulates *geom* into a GEOMETRYCOLLECTION (or MULTIPOINT, MULTILINESTRING or MULTIPOLYGON if possible)
 * ST_Collect(geom) Alias for `ST_Accum`
 * ST_Union(geom) Computes the union of geometries
-
-### JSON Functions
-
-In the following:
-
-* *jsonValue* is a character string containing a JSON value;
-* *path* is a character string containing a JSON path expression; mode flag `strict` or `lax` should be specified in the beginning of *path*.
-
-#### Query Functions
-
-| Operator syntax        | Description
-|:---------------------- |:-----------
-| JSON_EXISTS(jsonValue, path [ { TRUE &#124; FALSE &#124; UNKNOWN &#124; ERROR ) ON ERROR } ) | Whether a *jsonValue* satisfies a search criterion described using JSON path expression *path*
-| JSON_VALUE(jsonValue, path [ RETURNING type ] [ { ERROR &#124; NULL &#124; DEFAULT expr } ON EMPTY ] [ { ERROR &#124; NULL &#124; DEFAULT expr } ON ERROR ] ) | Extract an SQL scalar from a *jsonValue* using JSON path expression *path*
-| JSON_QUERY(jsonValue, path [ { WITHOUT [ ARRAY ] &#124; WITH [ CONDITIONAL &#124; UNCONDITIONAL ] [ ARRAY ] } WRAPPER ] [ { ERROR &#124; NULL &#124; EMPTY ARRAY &#124; EMPTY OBJECT } ON EMPTY ] [ { ERROR &#124; NULL &#124; EMPTY ARRAY &#124; EMPTY OBJECT } ON ERROR ] ) | Extract a JSON object or JSON array from *jsonValue* using the *path* JSON path expression
-
-Note:
-
-* The `ON ERROR` and `ON EMPTY` clauses define the fallback
-  behavior of the function when an error is thrown or a null value
-  is about to be returned.
-* The `ARRAY WRAPPER` clause defines how to represent a JSON array result
-  in `JSON_QUERY` function. The following examples compare the wrapper
-  behaviors.
-
-Example Data:
-
-```JSON
-{"a": "[1,2]", "b": [1,2], "c": "hi"}
-```
-
-Comparison:
-
-|Operator                                    |$.a          |$.b          |$.c
-|:-------------------------------------------|:------------|:------------|:------------
-|JSON_VALUE                                  | [1, 2]      | error       | hi
-|JSON QUERY WITHOUT ARRAY WRAPPER            | error       | [1, 2]      | error
-|JSON QUERY WITH UNCONDITIONAL ARRAY WRAPPER | [ "[1,2]" ] | [ [1,2] ]   | [ "hi" ]
-|JSON QUERY WITH CONDITIONAL ARRAY WRAPPER   | [ "[1,2]" ] | [1,2]       | [ "hi" ]
-
-Not implemented:
-
-* JSON_TABLE
-
-#### Constructor Functions
-
-| Operator syntax        | Description
-|:---------------------- |:-----------
-| JSON_OBJECT( { [ KEY ] name VALUE value [ FORMAT JSON ] &#124; name : value [ FORMAT JSON ] } * [ { NULL &#124; ABSENT } ON NULL ] ) | Construct JSON object using a series of key (*name*) value (*value*) pairs
-| JSON_OBJECTAGG( { [ KEY ] name VALUE value [ FORMAT JSON ] &#124; name : value [ FORMAT JSON ] } [ { NULL &#124; ABSENT } ON NULL ] ) | Aggregate function to construct a JSON object using a key (*name*) value (*value*) pair
-| JSON_ARRAY( { value [ FORMAT JSON ] } * [ { NULL &#124; ABSENT } ON NULL ] ) | Construct a JSON array using a series of values (*value*)
-| JSON_ARRAYAGG( value [ FORMAT JSON ] [ ORDER BY orderItem [, orderItem ]* ] [ { NULL &#124; ABSENT } ON NULL ] ) | Aggregate function to construct a JSON array using a value (*value*)
-
-Note:
-
-* The flag `FORMAT JSON` indicates the value is formatted as JSON
-  character string. When `FORMAT JSON` is used, the value should be
-  de-parse from JSON character string to a SQL structured value.
-* `ON NULL` clause defines how the JSON output represents null
-  values. The default null behavior of `JSON_OBJECT` and
-  `JSON_OBJECTAGG` is `NULL ON NULL`, and for `JSON_ARRAY` and
-  `JSON_ARRAYAGG` it is `ABSENT ON NULL`.
-* If `ORDER BY` clause is provided, `JSON_ARRAYAGG` sorts the
-  input rows into the specified order before performing aggregation.
-
-#### Comparison Operators
-
-| Operator syntax                   | Description
-|:--------------------------------- |:-----------
-| jsonValue IS JSON [ VALUE ]       | Whether *jsonValue* is a JSON value
-| jsonValue IS NOT JSON [ VALUE ]   | Whether *jsonValue* is not a JSON value
-| jsonValue IS JSON SCALAR          | Whether *jsonValue* is a JSON scalar value
-| jsonValue IS NOT JSON SCALAR      | Whether *jsonValue* is not a JSON scalar value
-| jsonValue IS JSON OBJECT          | Whether *jsonValue* is a JSON object
-| jsonValue IS NOT JSON OBJECT      | Whether *jsonValue* is not a JSON object
-| jsonValue IS JSON ARRAY           | Whether *jsonValue* is a JSON array
-| jsonValue IS NOT JSON ARRAY       | Whether *jsonValue* is not a JSON array
-
-### Dialect-specific Operators
-
-The following operators are not in the SQL standard, and are not enabled in
-Calcite's default operator table. They are only available for use in queries
-if your session has enabled an extra operator table.
-
-To enable an operator table, set the
-[fun]({{ site.baseurl }}/docs/adapter.html#jdbc-connect-string-parameters)
-connect string parameter.
-
-The 'C' (compatibility) column contains value
-'m' for MySQL ('fun=mysql' in the connect string),
-'o' for Oracle ('fun=oracle' in the connect string),
-'p' for PostgreSQL ('fun=postgresql' in the connect string).
-
-One operator name may correspond to multiple SQL dialects, but with different
-semantics.
-
-| C | Operator syntax                                | Description
-|:- |:-----------------------------------------------|:-----------
-| p | expr :: type                                   | Casts *expr* to *type*
-| o | CHR(integer) | Returns the character having the binary equivalent to *integer* as a CHAR value
-| o | DECODE(value, value1, result1 [, valueN, resultN ]* [, default ]) | Compares *value* to each *valueN* value one by one; if *value* is equal to a *valueN*, returns the corresponding *resultN*, else returns *default*, or NULL if *default* is not specified
-| p | DIFFERENCE(string, string)                     | Returns a measure of the similarity of two strings, namely the number of character positions that their `SOUNDEX` values have in common: 4 if the `SOUNDEX` values are same and 0 if the `SOUNDEX` values are totally different
-| o | GREATEST(expr [, expr ]*)                      | Returns the greatest of the expressions
-| m | JSON_TYPE(jsonValue)                           | Returns a string value indicating the type of a *jsonValue*
-| m | JSON_DEPTH(jsonValue)                          | Returns an integer value indicating the depth of a *jsonValue*
-| m | JSON_PRETTY(jsonValue)                         | Returns a pretty-printing of *jsonValue*
-| m | JSON_LENGTH(jsonValue [, path ])               | Returns a integer indicating the length of *jsonValue*
-| m | JSON_KEYS(jsonValue [, path ])                 | Returns a string indicating the keys of a JSON *jsonValue*
-| m | JSON_REMOVE(jsonValue, path[, path])           | Removes data from *jsonValue* using a series of *path* expressions and returns the result
-| m | JSON_STORAGE_SIZE(jsonValue)                   | Returns the number of bytes used to store the binary representation of a *jsonValue*
-| o | LEAST(expr [, expr ]* )                        | Returns the least of the expressions
-| m p | LEFT(string, length)                         | Returns the leftmost *length* characters from the *string*
-| m | TO_BASE64(string)                              | Converts the *string* to base-64 encoded form and returns a encoded string
-| m | FROM_BASE64(string)                            | Returns the decoded result of a base-64 *string* as a string
-| m | {fn DAYNAME(date)}                             | Returns the date of the name of the weekday in a value of datatype DATE; For example, it returns '星期日' for both DATE'2020-02-10' and TIMESTAMP'2020-02-10 10:10:10'
-| m | {fn MONTHNAME(date)}                           | Returns the date of the name of the month in a value of datatype DATE; For example, it returns '二月' for both DATE'2020-02-10' and TIMESTAMP'2020-02-10 10:10:10'
-| o | LTRIM(string)                                  | Returns *string* with all blanks removed from the start
-| o | NVL(value1, value2)                            | Returns *value1* if *value1* is not null, otherwise *value2*
-| m p | REPEAT(string, integer)                      | Returns a string consisting of *string* repeated of *integer* times; returns an empty string if *integer* is less than 1
-| m | REVERSE(string)                                | Returns *string* with the order of the characters reversed
-| m p | RIGHT(string, length)                        | Returns the rightmost *length* characters from the *string*
-| o | RTRIM(string)                                  | Returns *string* with all blanks removed from the end
-| m o p | SOUNDEX(string)                            | Returns the phonetic representation of *string*; throws if *string* is encoded with multi-byte encoding such as UTF-8
-| m | SPACE(integer)                                 | Returns a string of *integer* spaces; returns an empty string if *integer* is less than 1
-| o | SUBSTR(string, position [, substring_length ]) | Returns a portion of *string*, beginning at character *position*, *substring_length* characters long. SUBSTR calculates lengths using characters as defined by the input character set
-| o p | TRANSLATE(expr, fromString, toString)        | Returns *expr* with all occurrences of each character in *fromString* replaced by its corresponding character in *toString*. Characters in *expr* that are not in *fromString* are not replaced
-
-Note:
-
-* `JSON_TYPE` / `JSON_DEPTH` / `JSON_PRETTY` / `JSON_STORAGE_SIZE` return null if the argument is null
-* `JSON_LENGTH` / `JSON_KEYS` / `JSON_REMOVE` return null if the first argument is null
-* `JSON_TYPE` generally returns an upper-case string flag indicating the type of the JSON input. Currently supported supported type flags are:
-  * INTEGER
-  * STRING
-  * FLOAT
-  * DOUBLE
-  * LONG
-  * BOOLEAN
-  * DATE
-  * OBJECT
-  * ARRAY
-  * NULL
-* `JSON_DEPTH` defines a JSON value's depth as follows:
-  * An empty array, empty object, or scalar value has depth 1;
-  * A non-empty array containing only elements of depth 1 or non-empty object containing only member values of depth 1 has depth 2;
-  * Otherwise, a JSON document has depth greater than 2.
-* `JSON_LENGTH` defines a JSON value's length as follows:
-  * A scalar value has length 1;
-  * The length of array or object is the number of elements is contains.
-
-Usage Examples:
-
-##### JSON_TYPE example
-
-SQL
-
-```SQL
-SELECT JSON_TYPE(v) AS c1,
-  JSON_TYPE(JSON_VALUE(v, 'lax $.b' ERROR ON ERROR)) AS c2,
-  JSON_TYPE(JSON_VALUE(v, 'strict $.a[0]' ERROR ON ERROR)) AS c3,
-  JSON_TYPE(JSON_VALUE(v, 'strict $.a[1]' ERROR ON ERROR)) AS c4
-FROM (VALUES ('{"a": [10, true],"b": "[10, true]"}')) AS t(v)
-LIMIT 10;
-```
-
-Result
-
-| c1     | c2    | c3      | c4      |
-| ------ | ----- | ------- | ------- |
-| OBJECT | ARRAY | INTEGER | BOOLEAN |
-
-##### JSON_DEPTH example
-
-SQL
-
-```SQL
-SELECT JSON_DEPTH(v) AS c1,
-  JSON_DEPTH(JSON_VALUE(v, 'lax $.b' ERROR ON ERROR)) AS c2,
-  JSON_DEPTH(JSON_VALUE(v, 'strict $.a[0]' ERROR ON ERROR)) AS c3,
-  JSON_DEPTH(JSON_VALUE(v, 'strict $.a[1]' ERROR ON ERROR)) AS c4
-FROM (VALUES ('{"a": [10, true],"b": "[10, true]"}')) AS t(v)
-LIMIT 10;
-```
-
-Result
-
-| c1     | c2    | c3      | c4      |
-| ------ | ----- | ------- | ------- |
-| 3      | 2     | 1       | 1       |
-
-##### JSON_LENGTH example
-
-SQL
-
-```SQL
-SELECT JSON_LENGTH(v) AS c1,
-  JSON_LENGTH(v, 'lax $.a') AS c2,
-  JSON_LENGTH(v, 'strict $.a[0]') AS c3,
-  JSON_LENGTH(v, 'strict $.a[1]') AS c4
-FROM (VALUES ('{"a": [10, true]}')) AS t(v)
-LIMIT 10;
-```
-
-Result
-
-| c1     | c2    | c3      | c4      |
-| ------ | ----- | ------- | ------- |
-| 1      | 2     | 1       | 1       |
-
-##### JSON_KEYS example
-
-SQL
-
- ```SQL
-SELECT JSON_KEYS(v) AS c1,
-  JSON_KEYS(v, 'lax $.a') AS c2,
-  JSON_KEYS(v, 'lax $.b') AS c2,
-  JSON_KEYS(v, 'strict $.a[0]') AS c3,
-  JSON_KEYS(v, 'strict $.a[1]') AS c4
-FROM (VALUES ('{"a": [10, true],"b": {"c": 30}}')) AS t(v)
-LIMIT 10;
-```
-
- Result
-
-| c1         | c2   | c3    | c4   | c5   |
-| ---------- | ---- | ----- | ---- | ---- |
-| ["a", "b"] | NULL | ["c"] | NULL | NULL |
-
-##### JSON_REMOVE example
-
-SQL
-
- ```SQL
-SELECT JSON_REMOVE(v, '$[1]') AS c1
-FROM (VALUES ('["a", ["b", "c"], "d"]')) AS t(v)
-LIMIT 10;
-```
-
- Result
-
-| c1         |
-| ---------- |
-| ["a", "d"] |
-
-
-##### JSON_STORAGE_SIZE example
-
-SQL
-
- ```SQL
-SELECT
-JSON_STORAGE_SIZE('[100, \"sakila\", [1, 3, 5], 425.05]') AS c1,
-JSON_STORAGE_SIZE('{\"a\": 10, \"b\": \"a\", \"c\": \"[1, 3, 5, 7]\"}') AS c2,
-JSON_STORAGE_SIZE('{\"a\": 10, \"b\": \"xyz\", \"c\": \"[1, 3, 5, 7]\"}') AS c3,
-JSON_STORAGE_SIZE('[100, \"json\", [[10, 20, 30], 3, 5], 425.05]') AS c4
-limit 10;
-```
-
- Result
-
-| c1 | c2 | c3 | c4 |
-| -- | ---| ---| -- |
-| 29 | 35 | 37 | 36 |
-
-
-#### DECODE example
-
-SQL
-
-```SQL
-SELECT DECODE(f1, 1, 'aa', 2, 'bb', 3, 'cc', 4, 'dd', 'ee') as c1,
-  DECODE(f2, 1, 'aa', 2, 'bb', 3, 'cc', 4, 'dd', 'ee') as c2,
-  DECODE(f3, 1, 'aa', 2, 'bb', 3, 'cc', 4, 'dd', 'ee') as c3,
-  DECODE(f4, 1, 'aa', 2, 'bb', 3, 'cc', 4, 'dd', 'ee') as c4,
-  DECODE(f5, 1, 'aa', 2, 'bb', 3, 'cc', 4, 'dd', 'ee') as c5
-FROM (VALUES (1, 2, 3, 4, 5)) AS t(f1, f2, f3, f4, f5);
-
-```
- Result
-
-| c1          | c2          | c3          | c4          | c5          |
-| ----------- | ----------- | ----------- | ----------- | ----------- |
-| aa          | bb          | cc          | dd          | ee          |
-
-#### TRANSLATE example
-
-SQL
-
-```SQL
-SELECT TRANSLATE('Aa*Bb*Cc''D*d', ' */''%', '_') as c1,
-  TRANSLATE('Aa/Bb/Cc''D/d', ' */''%', '_') as c2,
-  TRANSLATE('Aa Bb Cc''D d', ' */''%', '_') as c3,
-  TRANSLATE('Aa%Bb%Cc''D%d', ' */''%', '_') as c4
-FROM (VALUES (true)) AS t(f0);
-```
-
-Result
-
-| c1          | c2          | c3          | c4          |
-| ----------- | ----------- | ----------- | ----------- |
-| Aa_Bb_CcD_d | Aa_Bb_CcD_d | Aa_Bb_CcD_d | Aa_Bb_CcD_d |
-
-Not implemented:
-
-* JSON_INSERT
-* JSON_SET
-* JSON_REPLACE
 
 ## User-defined functions
 
@@ -2568,14 +2105,12 @@ ddlStatement:
   |   createViewStatement
   |   createMaterializedViewStatement
   |   createTypeStatement
-  |   createFunctionStatement
   |   dropSchemaStatement
   |   dropForeignSchemaStatement
   |   dropTableStatement
   |   dropViewStatement
   |   dropMaterializedViewStatement
   |   dropTypeStatement
-  |   dropFunctionStatement
 
 createSchemaStatement:
       CREATE [ OR REPLACE ] SCHEMA [ IF NOT EXISTS ] name
@@ -2641,14 +2176,6 @@ createMaterializedViewStatement:
       [ '(' columnName [, columnName ]* ')' ]
       AS query
 
-createFunctionStatement:
-      CREATE [ OR REPLACE ] FUNCTION [ IF NOT EXISTS ] name
-      AS classNameLiteral
-      [ USING  usingFile [, usingFile ]* ]
-
-usingFile:
-      ( JAR | FILE | ARCHIVE ) filePathLiteral
-
 dropSchemaStatement:
       DROP SCHEMA [ IF EXISTS ] name
 
@@ -2666,9 +2193,6 @@ dropMaterializedViewStatement:
 
 dropTypeStatement:
       DROP TYPE [ IF EXISTS ] name
-
-dropFunctionStatement:
-      DROP FUNCTION [ IF EXISTS ] name
 {% endhighlight %}
 
 In *createTableStatement*, if you specify *AS query*, you may omit the list of
@@ -2677,6 +2201,3 @@ case it just renames the underlying column.
 
 In *columnGenerator*, if you do not specify `VIRTUAL` or `STORED` for a
 generated column, `VIRTUAL` is the default.
-
-In *createFunctionStatement* and *usingFile*, *classNameLiteral*
-and *filePathLiteral* are character literals.
