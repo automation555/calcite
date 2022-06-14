@@ -17,10 +17,9 @@
 package org.apache.calcite.rel.rules;
 
 import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
-import org.apache.calcite.plan.RelRule;
-import org.apache.calcite.rel.core.Calc;
-import org.apache.calcite.rel.core.Project;
+import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.logical.LogicalCalc;
 import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rex.RexBuilder;
@@ -28,49 +27,54 @@ import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexOver;
 import org.apache.calcite.rex.RexProgram;
 import org.apache.calcite.rex.RexProgramBuilder;
+import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.tools.RelBuilderFactory;
 import org.apache.calcite.util.Pair;
 
-import org.immutables.value.Value;
-
 /**
- * Planner rule that merges a
- * {@link org.apache.calcite.rel.core.Project} and a
- * {@link org.apache.calcite.rel.core.Calc}.
+ * Planner rule which merges a
+ * {@link org.apache.calcite.rel.logical.LogicalProject} and a
+ * {@link org.apache.calcite.rel.logical.LogicalCalc}.
  *
- * <p>The resulting {@link org.apache.calcite.rel.core.Calc} has the
+ * <p>The resulting {@link org.apache.calcite.rel.logical.LogicalCalc} has the
  * same project list as the original
- * {@link org.apache.calcite.rel.core.Project}, but expressed in terms
- * of the original {@link org.apache.calcite.rel.core.Calc}'s inputs.
+ * {@link org.apache.calcite.rel.logical.LogicalProject}, but expressed in terms
+ * of the original {@link org.apache.calcite.rel.logical.LogicalCalc}'s inputs.
  *
  * @see FilterCalcMergeRule
- * @see CoreRules#PROJECT_CALC_MERGE
  */
-@Value.Enclosing
-public class ProjectCalcMergeRule
-    extends RelRule<ProjectCalcMergeRule.Config>
-    implements TransformationRule {
+public class ProjectCalcMergeRule extends RelOptRule {
+  //~ Static fields/initializers ---------------------------------------------
 
-  /** Creates a ProjectCalcMergeRule. */
-  protected ProjectCalcMergeRule(Config config) {
-    super(config);
-  }
+  public static final ProjectCalcMergeRule INSTANCE =
+      new ProjectCalcMergeRule(RelFactories.LOGICAL_BUILDER);
 
-  @Deprecated // to be removed before 2.0
+  //~ Constructors -----------------------------------------------------------
+
+  /**
+   * Creates a ProjectCalcMergeRule.
+   *
+   * @param relBuilderFactory Builder for relational expressions
+   */
   public ProjectCalcMergeRule(RelBuilderFactory relBuilderFactory) {
-    this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-        .as(Config.class));
+    super(
+        operand(
+            LogicalProject.class,
+            operand(LogicalCalc.class, any())),
+        relBuilderFactory, null);
   }
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public void onMatch(RelOptRuleCall call) {
-    final Project project = call.rel(0);
-    final Calc calc = call.rel(1);
+  public void onMatch(RelOptRuleCall call) {
+    final LogicalProject project = call.rel(0);
+    final LogicalCalc calc = call.rel(1);
 
     // Don't merge a project which contains windowed aggregates onto a
     // calc. That would effectively be pushing a windowed aggregate down
-    // through a filter.
+    // through a filter. Transform the project into an identical calc,
+    // which we'll have chance to merge later, after the over is
+    // expanded.
     final RelOptCluster cluster = project.getCluster();
     RexProgram program =
         RexProgram.create(
@@ -79,7 +83,12 @@ public class ProjectCalcMergeRule
             null,
             project.getRowType(),
             cluster.getRexBuilder());
-    if (RexOver.containsOver(program)) {
+    // Don't merge a project onto a calc which contains non-deterministic expr.
+    if (RexOver.containsOver(program)
+        || !RexUtil.isDeterministic(project.getProjects())
+        || !RexUtil.isDeterministic(calc.getProgram().getExprList())) {
+      LogicalCalc projectAsCalc = LogicalCalc.create(calc, program);
+      call.transformTo(projectAsCalc);
       return;
     }
 
@@ -101,28 +110,10 @@ public class ProjectCalcMergeRule
             topProgram,
             bottomProgram,
             rexBuilder);
-    final Calc newCalc =
-        calc.copy(calc.getTraitSet(), calc.getInput(), mergedProgram);
+    final LogicalCalc newCalc =
+        LogicalCalc.create(calc.getInput(), mergedProgram);
     call.transformTo(newCalc);
   }
-
-  /** Rule configuration. */
-  @Value.Immutable
-  public interface Config extends RelRule.Config {
-    Config DEFAULT = ImmutableProjectCalcMergeRule.Config.of()
-        .withOperandFor(LogicalProject.class, LogicalCalc.class);
-
-    @Override default ProjectCalcMergeRule toRule() {
-      return new ProjectCalcMergeRule(this);
-    }
-
-    /** Defines an operand tree for the given classes. */
-    default Config withOperandFor(Class<? extends Project> projectClass,
-        Class<? extends Calc> calcClass) {
-      return withOperandSupplier(b0 ->
-          b0.operand(projectClass).oneInput(b1 ->
-              b1.operand(calcClass).anyInputs()))
-          .as(Config.class);
-    }
-  }
 }
+
+// End ProjectCalcMergeRule.java

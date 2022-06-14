@@ -17,9 +17,9 @@
 package org.apache.calcite.rel.rules;
 
 import org.apache.calcite.plan.Contexts;
+import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptUtil;
-import org.apache.calcite.plan.RelRule;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.RelFactories;
@@ -27,10 +27,11 @@ import org.apache.calcite.rel.core.SetOp;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RelBuilderFactory;
 
-import org.immutables.value.Value;
+import com.google.common.collect.Lists;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -38,39 +39,51 @@ import java.util.List;
 /**
  * Planner rule that pushes a {@link org.apache.calcite.rel.core.Filter}
  * past a {@link org.apache.calcite.rel.core.SetOp}.
- *
- * @see CoreRules#FILTER_SET_OP_TRANSPOSE
  */
-@Value.Enclosing
-public class FilterSetOpTransposeRule
-    extends RelRule<FilterSetOpTransposeRule.Config>
-    implements TransformationRule {
+public class FilterSetOpTransposeRule extends RelOptRule {
+  public static final FilterSetOpTransposeRule INSTANCE =
+      new FilterSetOpTransposeRule(RelFactories.LOGICAL_BUILDER);
 
-  /** Creates a FilterSetOpTransposeRule. */
-  protected FilterSetOpTransposeRule(Config config) {
-    super(config);
-  }
+  //~ Constructors -----------------------------------------------------------
 
-  @Deprecated // to be removed before 2.0
+  /**
+   * Creates a FilterSetOpTransposeRule.
+   */
   public FilterSetOpTransposeRule(RelBuilderFactory relBuilderFactory) {
-    this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-        .as(Config.class));
+    super(
+        operand(Filter.class,
+            operand(SetOp.class, any())),
+        relBuilderFactory, null);
   }
 
   @Deprecated // to  be removed before 2.0
   public FilterSetOpTransposeRule(RelFactories.FilterFactory filterFactory) {
-    this(Config.DEFAULT
-        .withRelBuilderFactory(RelBuilder.proto(Contexts.of(filterFactory)))
-        .as(Config.class));
+    this(RelBuilder.proto(Contexts.of(filterFactory)));
   }
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public void onMatch(RelOptRuleCall call) {
+  // implement RelOptRule
+  public void onMatch(RelOptRuleCall call) {
     Filter filterRel = call.rel(0);
     SetOp setOp = call.rel(1);
 
-    RexNode condition = filterRel.getCondition();
+    final List<RexNode> deterministicFilters = Lists.<RexNode>newArrayList();
+    final List<RexNode> nondeterministicFilters = Lists.<RexNode>newArrayList();
+    for (RexNode expr : RelOptUtil.conjunctions(filterRel.getCondition())) {
+      if (RexUtil.isDeterministic(expr)) {
+        deterministicFilters.add(expr);
+      } else {
+        nondeterministicFilters.add(expr);
+      }
+    }
+
+    if (deterministicFilters.isEmpty()) {
+      return;
+    }
+
+    final RelBuilder builder = call.builder();
+    final RexNode condition = builder.and(deterministicFilters);
 
     // create filters on top of each setop child, modifying the filter
     // condition to reference each setop child
@@ -94,20 +107,14 @@ public class FilterSetOpTransposeRule
     // create a new setop whose children are the filters created above
     SetOp newSetOp =
         setOp.copy(setOp.getTraitSet(), newSetOpInputs);
+    builder.push(newSetOp);
 
-    call.transformTo(newSetOp);
-  }
-
-  /** Rule configuration. */
-  @Value.Immutable
-  public interface Config extends RelRule.Config {
-    Config DEFAULT = ImmutableFilterSetOpTransposeRule.Config.of()
-        .withOperandSupplier(b0 ->
-            b0.operand(Filter.class).oneInput(b1 ->
-                b1.operand(SetOp.class).anyInputs()));
-
-    @Override default FilterSetOpTransposeRule toRule() {
-      return new FilterSetOpTransposeRule(this);
+    if (!nondeterministicFilters.isEmpty()) {
+      builder.filter(nondeterministicFilters);
     }
+
+    call.transformTo(builder.build());
   }
 }
+
+// End FilterSetOpTransposeRule.java

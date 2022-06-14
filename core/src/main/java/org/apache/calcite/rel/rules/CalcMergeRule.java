@@ -16,46 +16,50 @@
  */
 package org.apache.calcite.rel.rules;
 
+import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
-import org.apache.calcite.plan.RelRule;
 import org.apache.calcite.rel.core.Calc;
+import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rex.RexOver;
 import org.apache.calcite.rex.RexProgram;
 import org.apache.calcite.rex.RexProgramBuilder;
+import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.tools.RelBuilderFactory;
-
-import org.immutables.value.Value;
 
 /**
  * Planner rule that merges a
- * {@link org.apache.calcite.rel.core.Calc} onto a
- * {@link org.apache.calcite.rel.core.Calc}.
+ * {@link org.apache.calcite.rel.logical.LogicalCalc} onto a
+ * {@link org.apache.calcite.rel.logical.LogicalCalc}.
  *
- * <p>The resulting {@link org.apache.calcite.rel.core.Calc} has the
+ * <p>The resulting {@link org.apache.calcite.rel.logical.LogicalCalc} has the
  * same project list as the upper
- * {@link org.apache.calcite.rel.core.Calc}, but expressed in terms of
- * the lower {@link org.apache.calcite.rel.core.Calc}'s inputs.
- *
- * @see CoreRules#CALC_MERGE
+ * {@link org.apache.calcite.rel.logical.LogicalCalc}, but expressed in terms of
+ * the lower {@link org.apache.calcite.rel.logical.LogicalCalc}'s inputs.
  */
-@Value.Enclosing
-public class CalcMergeRule extends RelRule<CalcMergeRule.Config>
-    implements TransformationRule {
+public class CalcMergeRule extends RelOptRule {
+  //~ Static fields/initializers ---------------------------------------------
 
-  /** Creates a CalcMergeRule. */
-  protected CalcMergeRule(Config config) {
-    super(config);
-  }
+  public static final CalcMergeRule INSTANCE =
+      new CalcMergeRule(RelFactories.LOGICAL_BUILDER);
 
-  @Deprecated // to be removed before 2.0
+  //~ Constructors -----------------------------------------------------------
+
+  /**
+   * Creates a CalcMergeRule.
+   *
+   * @param relBuilderFactory Builder for relational expressions
+   */
   public CalcMergeRule(RelBuilderFactory relBuilderFactory) {
-    this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-        .as(Config.class));
+    super(
+        operand(
+            Calc.class,
+            operand(Calc.class, any())),
+        relBuilderFactory, null);
   }
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public void onMatch(RelOptRuleCall call) {
+  @Override public boolean matches(RelOptRuleCall call) {
     final Calc topCalc = call.rel(0);
     final Calc bottomCalc = call.rel(1);
 
@@ -64,8 +68,19 @@ public class CalcMergeRule extends RelRule<CalcMergeRule.Config>
     // through a filter.
     RexProgram topProgram = topCalc.getProgram();
     if (RexOver.containsOver(topProgram)) {
-      return;
+      return false;
     }
+
+    // Don't merge a calc which contains non-deterministic expr onto a calc and
+    // don't also merge a calc onto a calc which contains non-deterministic expr.
+    return RexUtil.isDeterministic(topProgram.getExprList())
+        && RexUtil.isDeterministic(bottomCalc.getProgram().getExprList());
+  }
+
+  public void onMatch(RelOptRuleCall call) {
+    final Calc topCalc = call.rel(0);
+    final Calc bottomCalc = call.rel(1);
+    RexProgram topProgram = topCalc.getProgram();
 
     // Merge the programs together.
 
@@ -82,27 +97,14 @@ public class CalcMergeRule extends RelRule<CalcMergeRule.Config>
             bottomCalc.getInput(),
             mergedProgram);
 
-    if (newCalc.getDigest().equals(bottomCalc.getDigest())
-        && newCalc.getRowType().equals(bottomCalc.getRowType())) {
+    if (newCalc.getDigest().equals(bottomCalc.getDigest())) {
       // newCalc is equivalent to bottomCalc, which means that topCalc
       // must be trivial. Take it out of the game.
-      call.getPlanner().prune(topCalc);
+      call.getPlanner().setImportance(topCalc, 0.0);
     }
 
     call.transformTo(newCalc);
   }
-
-  /** Rule configuration. */
-  @Value.Immutable
-  public interface Config extends RelRule.Config {
-    Config DEFAULT = ImmutableCalcMergeRule.Config.of()
-        .withOperandSupplier(b0 ->
-            b0.operand(Calc.class).oneInput(b1 ->
-                b1.operand(Calc.class).anyInputs()))
-        .as(Config.class);
-
-    @Override default CalcMergeRule toRule() {
-      return new CalcMergeRule(this);
-    }
-  }
 }
+
+// End CalcMergeRule.java

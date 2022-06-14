@@ -17,27 +17,27 @@
 package org.apache.calcite.rel.rules;
 
 import org.apache.calcite.plan.Contexts;
+import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.plan.RelOptUtil;
-import org.apache.calcite.plan.RelRule;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.Aggregate.Group;
+import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RelBuilderFactory;
 import org.apache.calcite.util.ImmutableBitSet;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
 
-import org.immutables.value.Value;
-
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -45,34 +45,38 @@ import java.util.List;
  * past a {@link org.apache.calcite.rel.core.Aggregate}.
  *
  * @see org.apache.calcite.rel.rules.AggregateFilterTransposeRule
- * @see CoreRules#FILTER_AGGREGATE_TRANSPOSE
  */
-@Value.Enclosing
-public class FilterAggregateTransposeRule
-    extends RelRule<FilterAggregateTransposeRule.Config>
-    implements TransformationRule {
+public class FilterAggregateTransposeRule extends RelOptRule {
 
-  /** Creates a FilterAggregateTransposeRule. */
-  protected FilterAggregateTransposeRule(Config config) {
-    super(config);
-  }
+  /** The default instance of
+   * {@link FilterAggregateTransposeRule}.
+   *
+   * <p>It matches any kind of agg. or filter */
+  public static final FilterAggregateTransposeRule INSTANCE =
+      new FilterAggregateTransposeRule(Filter.class,
+          RelFactories.LOGICAL_BUILDER, Aggregate.class);
 
-  @Deprecated // to be removed before 2.0
+  //~ Constructors -----------------------------------------------------------
+
+  /**
+   * Creates a FilterAggregateTransposeRule.
+   *
+   * <p>If {@code filterFactory} is null, creates the same kind of filter as
+   * matched in the rule. Similarly {@code aggregateFactory}.</p>
+   */
   public FilterAggregateTransposeRule(
       Class<? extends Filter> filterClass,
-      RelBuilderFactory relBuilderFactory,
+      RelBuilderFactory builderFactory,
       Class<? extends Aggregate> aggregateClass) {
-    this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-        .as(Config.class)
-        .withOperandFor(filterClass, aggregateClass));
+    this(
+        operand(filterClass,
+            operand(aggregateClass, any())),
+        builderFactory);
   }
 
-  @Deprecated // to be removed before 2.0
   protected FilterAggregateTransposeRule(RelOptRuleOperand operand,
-      RelBuilderFactory relBuilderFactory) {
-    this(Config.DEFAULT.withRelBuilderFactory(relBuilderFactory)
-        .withOperandSupplier(b -> b.exactly(operand))
-        .as(Config.class));
+      RelBuilderFactory builderFactory) {
+    super(operand, builderFactory, null);
   }
 
   @Deprecated // to be removed before 2.0
@@ -86,7 +90,17 @@ public class FilterAggregateTransposeRule
 
   //~ Methods ----------------------------------------------------------------
 
-  @Override public void onMatch(RelOptRuleCall call) {
+  @Override public boolean matches(RelOptRuleCall call) {
+    final Aggregate aggRel = call.rel(1);
+    for (AggregateCall aggCall : aggRel.getAggCallList()) {
+      if (!aggCall.getAggregation().isDeterministic()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  public void onMatch(RelOptRuleCall call) {
     final Filter filterRel = call.rel(0);
     final Aggregate aggRel = call.rel(1);
 
@@ -101,12 +115,12 @@ public class FilterAggregateTransposeRule
       adjustments[j] = i - j;
       j++;
     }
-    final List<RexNode> pushedConditions = new ArrayList<>();
-    final List<RexNode> remainingConditions = new ArrayList<>();
+    final List<RexNode> pushedConditions = Lists.newArrayList();
+    final List<RexNode> remainingConditions = Lists.newArrayList();
 
     for (RexNode condition : conditions) {
       ImmutableBitSet rCols = RelOptUtil.InputFinder.bits(condition);
-      if (canPush(aggRel, rCols)) {
+      if (RexUtil.isDeterministic(condition) && canPush(aggRel, rCols)) {
         pushedConditions.add(
             condition.accept(
                 new RelOptUtil.RexInputConverter(rexBuilder, origFields,
@@ -115,6 +129,9 @@ public class FilterAggregateTransposeRule
       } else {
         remainingConditions.add(condition);
       }
+    }
+    if (pushedConditions.isEmpty()) {
+      return;
     }
 
     final RelBuilder builder = call.builder();
@@ -128,7 +145,7 @@ public class FilterAggregateTransposeRule
     call.transformTo(rel);
   }
 
-  private static boolean canPush(Aggregate aggregate, ImmutableBitSet rCols) {
+  private boolean canPush(Aggregate aggregate, ImmutableBitSet rCols) {
     // If the filter references columns not in the group key, we cannot push
     final ImmutableBitSet groupKeys =
         ImmutableBitSet.range(0, aggregate.getGroupSet().cardinality());
@@ -148,35 +165,6 @@ public class FilterAggregateTransposeRule
     }
     return true;
   }
-
-  /** Rule configuration. */
-  @Value.Immutable
-  public interface Config extends RelRule.Config {
-    Config DEFAULT = ImmutableFilterAggregateTransposeRule.Config.of()
-        .withOperandFor(Filter.class, Aggregate.class);
-
-    @Override default FilterAggregateTransposeRule toRule() {
-      return new FilterAggregateTransposeRule(this);
-    }
-
-    /** Defines an operand tree for the given 2 classes. */
-    default Config withOperandFor(Class<? extends Filter> filterClass,
-        Class<? extends Aggregate> aggregateClass) {
-      return withOperandSupplier(b0 ->
-          b0.operand(filterClass).oneInput(b1 ->
-              b1.operand(aggregateClass).anyInputs()))
-          .as(Config.class);
-    }
-
-    /** Defines an operand tree for the given 3 classes. */
-    default Config withOperandFor(Class<? extends Filter> filterClass,
-        Class<? extends Aggregate> aggregateClass,
-        Class<? extends RelNode> relClass) {
-      return withOperandSupplier(b0 ->
-          b0.operand(filterClass).oneInput(b1 ->
-              b1.operand(aggregateClass).oneInput(b2 ->
-                  b2.operand(relClass).anyInputs())))
-          .as(Config.class);
-    }
-  }
 }
+
+// End FilterAggregateTransposeRule.java
