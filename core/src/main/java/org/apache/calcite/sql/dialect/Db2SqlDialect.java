@@ -16,20 +16,21 @@
  */
 package org.apache.calcite.sql.dialect;
 
+import org.apache.calcite.avatica.util.TimeUnit;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlIntervalLiteral;
 import org.apache.calcite.sql.SqlIntervalQualifier;
 import org.apache.calcite.sql.SqlWriter;
+import org.apache.calcite.sql.parser.SqlParserPos;
 
 /**
  * A <code>SqlDialect</code> implementation for the IBM DB2 database.
  */
 public class Db2SqlDialect extends SqlDialect {
-  public static final SqlDialect.Context DEFAULT_CONTEXT = SqlDialect.EMPTY_CONTEXT
-      .withDatabaseProduct(SqlDialect.DatabaseProduct.DB2);
-
-  public static final SqlDialect DEFAULT = new Db2SqlDialect(DEFAULT_CONTEXT);
+  public static final SqlDialect DEFAULT =
+      new Db2SqlDialect(EMPTY_CONTEXT
+          .withDatabaseProduct(DatabaseProduct.DB2));
 
   /** Creates a Db2SqlDialect. */
   public Db2SqlDialect(Context context) {
@@ -83,14 +84,38 @@ public class Db2SqlDialect extends SqlDialect {
     // If one operand is a time, the other must be labeled duration of HOURS, MINUTES, or SECONDS.
     // If one operand is a timestamp, the other operand can be any of teh duration.
 
-    SqlIntervalLiteral.IntervalValue interval =
-        literal.getValueAs(SqlIntervalLiteral.IntervalValue.class);
+    final SqlIntervalLiteral.IntervalValue interval =
+        (SqlIntervalLiteral.IntervalValue) literal.getValue();
+    final SqlIntervalQualifier qualifier;
+
+    // Correct invalid single-field interval literals, such as those holding weeks or quarters.
+    // These could have been created as part of the TimestampAddConvertlet.
+    if (interval.getIntervalQualifier().isSingleDatetimeField()) {
+      switch (interval.getIntervalQualifier().getStartUnit()) {
+      case WEEK:
+        qualifier = new SqlIntervalQualifier(TimeUnit.DAY, null, SqlParserPos.ZERO);
+        break;
+
+      case QUARTER:
+        qualifier = new SqlIntervalQualifier(TimeUnit.MONTH, null, SqlParserPos.ZERO);
+        break;
+
+      default:
+        qualifier = interval.getIntervalQualifier();
+        break;
+      }
+    } else {
+      qualifier = interval.getIntervalQualifier();
+    }
+
     if (interval.getSign() == -1) {
       writer.print("-");
     }
-    writer.literal(interval.getIntervalLiteral());
-    unparseSqlIntervalQualifier(writer, interval.getIntervalQualifier(),
+    writer.literal(literal.getValue().toString());
+    unparseSqlIntervalQualifier(writer, qualifier,
         RelDataTypeSystem.DEFAULT);
   }
 
 }
+
+// End Db2SqlDialect.java

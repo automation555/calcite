@@ -105,7 +105,8 @@ public class MysqlSqlDialect extends SqlDialect {
       return new SqlDataTypeSpec(new SqlIdentifier("CHAR", SqlParserPos.ZERO),
           type.getPrecision(), -1, null, null, SqlParserPos.ZERO);
     case INTEGER:
-      return new SqlDataTypeSpec(new SqlIdentifier("_UNSIGNED", SqlParserPos.ZERO),
+    case BIGINT:
+      return new SqlDataTypeSpec(new SqlIdentifier("_SIGNED", SqlParserPos.ZERO),
           type.getPrecision(), -1, null, null, SqlParserPos.ZERO);
     }
     return super.getCastSpec(type);
@@ -115,8 +116,7 @@ public class MysqlSqlDialect extends SqlDialect {
     final SqlNode operand = ((SqlBasicCall) aggCall).operand(0);
     final SqlLiteral nullLiteral = SqlLiteral.createNull(SqlParserPos.ZERO);
     final SqlNode unionOperand = new SqlSelect(SqlParserPos.ZERO, SqlNodeList.EMPTY,
-        SqlNodeList.of(nullLiteral), null, null, null, null, SqlNodeList.EMPTY, null,
-        null, null, null);
+        SqlNodeList.of(nullLiteral), null, null, null, null, SqlNodeList.EMPTY, null, null, null);
     // For MySQL, generate
     //   CASE COUNT(*)
     //   WHEN 0 THEN NULL
@@ -128,12 +128,10 @@ public class MysqlSqlDialect extends SqlDialect {
             SqlStdOperatorTable.COUNT.createCall(SqlParserPos.ZERO, operand),
             SqlNodeList.of(
                 SqlLiteral.createExactNumeric("0", SqlParserPos.ZERO),
-                SqlLiteral.createExactNumeric("1", SqlParserPos.ZERO)
-            ),
+                SqlLiteral.createExactNumeric("1", SqlParserPos.ZERO)),
             SqlNodeList.of(
                 nullLiteral,
-                operand
-            ),
+                operand),
             SqlStdOperatorTable.SCALAR_QUERY.createCall(SqlParserPos.ZERO,
                 SqlStdOperatorTable.UNION_ALL
                     .createCall(SqlParserPos.ZERO, unionOperand, unionOperand)));
@@ -262,11 +260,17 @@ public class MysqlSqlDialect extends SqlDialect {
     case MINUTE:
     case HOUR:
     case DAY:
-    case WEEK:
     case MONTH:
-    case QUARTER:
     case YEAR:
       return timeUnit;
+
+    // Intervals cannot hold WEEK or QUARTERs. This can be the time unit
+    // if a TimestampAdd call was transformed to Datetime_plus through the
+    // TimestampAdd convertlet.
+    case WEEK:
+      return TimeUnit.DAY;
+    case QUARTER:
+      return TimeUnit.MONTH;
     default:
       throw new AssertionError(" Time unit " + timeUnit + "is not supported now.");
     }

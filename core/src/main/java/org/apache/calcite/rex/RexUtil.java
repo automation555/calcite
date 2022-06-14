@@ -16,6 +16,7 @@
  */
 package org.apache.calcite.rex;
 
+import org.apache.calcite.avatica.util.TimeUnit;
 import org.apache.calcite.linq4j.function.Predicate1;
 import org.apache.calcite.plan.RelOptPredicateList;
 import org.apache.calcite.plan.RelOptUtil;
@@ -35,6 +36,7 @@ import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.sql.type.IntervalSqlType;
 import org.apache.calcite.sql.type.SqlTypeFamily;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeUtil;
@@ -50,8 +52,8 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 
-import org.apiguardian.api.API;
-
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -297,21 +299,6 @@ public class RexUtil {
     return node;
   }
 
-  /** Removes any casts.
-   *
-   * <p>For example, {@code CAST('1' AS INTEGER)} becomes {@code '1'}. */
-  public static RexNode removeCast(RexNode e) {
-    for (;;) {
-      switch (e.getKind()) {
-      case CAST:
-        e = ((RexCall) e).operands.get(0);
-        break;
-      default:
-        return e;
-      }
-    }
-  }
-
   /** Creates a map containing each (e, constant) pair that occurs within
    * a predicate list.
    *
@@ -469,21 +456,6 @@ public class RexUtil {
     return false;
   }
 
-  /** Returns the number of nodes (including leaves) in a list of
-   * expressions.
-   *
-   * @see RexNode#nodeCount() */
-  public static int nodeCount(List<? extends RexNode> nodes) {
-    return nodeCount(0, nodes);
-  }
-
-  static int nodeCount(int n, List<? extends RexNode> nodes) {
-    for (RexNode operand : nodes) {
-      n += operand.nodeCount();
-    }
-    return n;
-  }
-
   /**
    * Walks over an expression and determines whether it is constant.
    */
@@ -499,10 +471,6 @@ public class RexUtil {
     }
 
     public Boolean visitLocalRef(RexLocalRef localRef) {
-      return false;
-    }
-
-    @Override public Boolean visitLambdaRef(RexLambdaRef localRef) {
       return false;
     }
 
@@ -522,10 +490,6 @@ public class RexUtil {
       return false;
     }
 
-    @Override public Boolean visitLambda(RexLambda lambda) {
-      return false;
-    }
-
     public Boolean visitCorrelVariable(RexCorrelVariable correlVariable) {
       // Correlating variables change when there is an internal restart.
       // Not good enough for our purposes.
@@ -539,9 +503,8 @@ public class RexUtil {
     }
 
     public Boolean visitCall(RexCall call) {
-      // Constant if operator meets the following conditions:
-      // 1. It is deterministic;
-      // 2. All its operands are constant.
+      // Constant if operator is deterministic and all operands are
+      // constant.
       return call.getOperator().isDeterministic()
           && RexVisitorImpl.visitArrayAnd(this, call.getOperands());
     }
@@ -1261,7 +1224,7 @@ public class RexUtil {
     if (target < 0) {
       return null;
     }
-    return fieldCollation.withFieldIndex(target);
+    return fieldCollation.copy(target);
   }
 
   /**
@@ -1433,34 +1396,14 @@ public class RexUtil {
    *
    * <p>The implementation of this method does not return false positives.
    * However, it is not complete.
-   * @param node input node to verify if it represents a loss-less cast
-   * @return true iff the node is a loss-less cast
    */
   public static boolean isLosslessCast(RexNode node) {
     if (!node.isA(SqlKind.CAST)) {
       return false;
     }
-    return isLosslessCast(((RexCall) node).getOperands().get(0).getType(), node.getType());
-  }
-
-
-  /**
-   * Returns whether the conversion from {@code source} to {@code target} type
-   * is a 'loss-less' cast, that is, a cast from which
-   * the original value of the field can be certainly recovered.
-   *
-   * <p>For instance, int &rarr; bigint is loss-less (as you can cast back to
-   * int without loss of information), but bigint &rarr; int is not loss-less.
-   *
-   * <p>The implementation of this method does not return false positives.
-   * However, it is not complete.
-   * @param source source type
-   * @param target target type
-   * @return true iff the conversion is a loss-less cast
-   */
-  @API(since = "1.22", status = API.Status.EXPERIMENTAL)
-  public static boolean isLosslessCast(RelDataType source, RelDataType target) {
+    final RelDataType source = ((RexCall) node).getOperands().get(0).getType();
     final SqlTypeName sourceSqlTypeName = source.getSqlTypeName();
+    final RelDataType target = node.getType();
     final SqlTypeName targetSqlTypeName = target.getSqlTypeName();
     // 1) Both INT numeric types
     if (SqlTypeFamily.INTEGER.getTypeNames().contains(sourceSqlTypeName)
@@ -1904,15 +1847,14 @@ public class RexUtil {
   @Deprecated // to be removed before 2.0
   public static RexNode simplifyOr(RexBuilder rexBuilder, RexCall call) {
     return new RexSimplify(rexBuilder, RelOptPredicateList.EMPTY, EXECUTOR)
-        .simplifyUnknownAs(call, RexUnknownAs.UNKNOWN);
+        .simplifyOr(call);
   }
 
   @Deprecated // to be removed before 2.0
   public static RexNode simplifyOrs(RexBuilder rexBuilder,
       List<RexNode> terms) {
     return new RexSimplify(rexBuilder, RelOptPredicateList.EMPTY, EXECUTOR)
-        .simplifyUnknownAs(RexUtil.composeDisjunction(rexBuilder, terms),
-            RexUnknownAs.UNKNOWN);
+        .simplifyOrs(terms);
   }
 
   /**
@@ -2125,6 +2067,26 @@ public class RexUtil {
       e.accept(visitor);
     }
     return occurrences;
+  }
+
+  /**
+   * Converts any RexNodes containing the Datetime_plus operator to an equivalent
+   * RexNode containing TimestampAdd.
+   *
+   * @param node The node to search for datetime_plus expressions.
+   * @return A tree where all possible datetime_plus nodes have been converted to
+   * timestampadd nodes, or null if there were datetime_plus nodes that could not
+   * be converted.
+   */
+  public static RexNode convertDatetimePlusToTimestampAdd(RexBuilder builder,
+      RexNode node) {
+    try {
+      final DateTimePlusToTsAddVisitor visitor = new DateTimePlusToTsAddVisitor(builder);
+      return node.accept(visitor);
+    } catch (Util.FoundOne e) {
+      Util.swallow(e, null);
+      return null;
+    }
   }
 
   //~ Inner Classes ----------------------------------------------------------
@@ -2456,6 +2418,30 @@ public class RexUtil {
     return Lists.transform(list, Object::toString);
   }
 
+  /** Detects if the given RexNode has an interval data type. */
+  public static boolean isInterval(RexNode node) {
+    switch (node.getType().getSqlTypeName()) {
+    case INTERVAL_YEAR:
+    case INTERVAL_MONTH:
+    case INTERVAL_YEAR_MONTH:
+    case INTERVAL_DAY:
+    case INTERVAL_HOUR:
+    case INTERVAL_MINUTE:
+    case INTERVAL_SECOND:
+    case INTERVAL_DAY_HOUR:
+    case INTERVAL_DAY_MINUTE:
+    case INTERVAL_DAY_SECOND:
+      return true;
+    }
+
+    return false;
+  }
+
+  /** Detects if the given RexNode is an interval literal. */
+  public static boolean isIntervalLiteral(RexNode node) {
+    return node instanceof RexLiteral && isInterval(node);
+  }
+
   /** Helps {@link org.apache.calcite.rex.RexUtil#toDnf}. */
   private static class DnfHelper {
     final RexBuilder rexBuilder;
@@ -2723,4 +2709,106 @@ public class RexUtil {
       return simplify.rexBuilder.makeCast(call.getType(), simplifiedNode, matchNullability);
     }
   }
+
+
+  /**
+   * Visitor class which transforms datetime_plus operators to timestamp_add operators.
+   */
+  private static class DateTimePlusToTsAddVisitor extends RexShuttle {
+    private final RexBuilder builder;
+
+    DateTimePlusToTsAddVisitor(RexBuilder builder) {
+      this.builder = builder;
+    }
+
+    private static TimeUnit getTimeUnitFromIntervalLiteral(RexNode intervalLiteral) {
+      final IntervalSqlType intervalType = (IntervalSqlType) intervalLiteral.getType();
+      return intervalType.getIntervalQualifier().getUnit();
+    }
+
+    private RexNode convertIntervalLiteralToInteger(TimeUnit unit,
+                                                    RexNode intervalLiteral, RexNode coefficient) {
+      final RexLiteral intervalAsInt = builder.makeExactLiteral(((RexLiteral) intervalLiteral)
+          .getValueAs(BigDecimal.class).divide(unit.multiplier, 0, RoundingMode.HALF_DOWN));
+
+      // No co-efficient. Just return the original literal.
+      if (null == coefficient) {
+        return intervalAsInt;
+      }
+
+      RexNode result;
+      // Unit literal. Omit.
+      if (intervalAsInt.getValueAs(BigDecimal.class).equals(BigDecimal.ONE)) {
+        result = coefficient;
+      } else {
+        // Multiply the interval-as-int by the coefficient.
+        result = builder.makeCall(SqlStdOperatorTable.MULTIPLY, intervalAsInt, coefficient);
+      }
+
+      return result;
+    }
+
+    @Override public RexNode visitCall(RexCall call) {
+      // Only transform DATETIME_PLUS calls that are applied to a
+      // datetime <op> single-field interval.
+      if (call.getOperator() != SqlStdOperatorTable.DATETIME_PLUS) {
+        return super.visitCall(call);
+      }
+
+      RexNode datetime = call.getOperands().get(0);
+      if (datetime.getType().getSqlTypeName() != SqlTypeName.DATE
+          && datetime.getType().getSqlTypeName() != SqlTypeName.TIME
+          && datetime.getType().getSqlTypeName() != SqlTypeName.TIMESTAMP) {
+        return super.visitCall(call);
+      }
+
+      // The datetime argument might be another call to DATETIME_PLUS.
+      // Recursively transform this as well.
+      datetime = datetime.accept(this);
+
+      // Check the type of the interval parameter.
+      if (!isInterval(call.getOperands().get(1))) {
+        throw new Util.FoundOne(call);
+      }
+
+      // Note that while we can CAST the interval argument to an integer, we wouldn't be able
+      // to represent this in a SQL dialect that doesn't support intervals (since there's no way
+      // to cast an interval). We will only try to do this conversion if the interval is either
+      // a literal, or a literal multiplied by an expression.
+      final RexNode interval = call.getOperands().get(1);
+
+      final RexNode intervalAsInt;
+      final TimeUnit unit;
+      if (interval instanceof RexLiteral) {
+        unit = getTimeUnitFromIntervalLiteral(interval);
+        intervalAsInt = convertIntervalLiteralToInteger(unit, interval, null);
+      } else if (interval instanceof RexCall
+            && ((RexCall) interval).getOperator() == SqlStdOperatorTable.MULTIPLY) {
+        // Identify which, if any operand is an interval literal.
+        final RexCall multiplyOp = (RexCall) interval;
+        final RexNode leftOp = multiplyOp.getOperands().get(0);
+        final RexNode rightOp = multiplyOp.getOperands().get(1);
+
+        if (isIntervalLiteral(leftOp)) {
+          unit = getTimeUnitFromIntervalLiteral(leftOp);
+          intervalAsInt = convertIntervalLiteralToInteger(unit, leftOp, rightOp);
+        } else if (isIntervalLiteral(rightOp)) {
+          unit = getTimeUnitFromIntervalLiteral(rightOp);
+          intervalAsInt = convertIntervalLiteralToInteger(unit, rightOp, leftOp);
+        } else {
+          // Neither are single field interval literals. Don't convert.
+          // We could do a deeper search if these are multiply functions but this wouldn't
+          // be very common.
+          throw new Util.FoundOne(call);
+        }
+      } else {
+        throw new Util.FoundOne(call);
+      }
+
+      return builder.makeCall(SqlStdOperatorTable.TIMESTAMP_ADD,
+          builder.makeFlag(unit), intervalAsInt, datetime);
+    }
+  }
 }
+
+// End RexUtil.java
