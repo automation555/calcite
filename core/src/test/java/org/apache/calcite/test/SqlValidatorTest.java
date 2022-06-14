@@ -3952,38 +3952,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         .fails("ORDER BY expression should not contain OVER clause");
   }
 
-  @Test public void testAggregateFunctionInOver() {
-    final String sql = "select sum(deptno) over (order by count(empno))\n"
-        + "from emp\n"
-        + "group by deptno";
-    winSql(sql).ok();
-    final String sql2 = "select sum(^empno^) over (order by count(empno))\n"
-        + "from emp\n"
-        + "group by deptno";
-    winSql(sql2).fails("Expression 'EMPNO' is not being grouped");
-  }
-
-  @Test public void testAggregateInsideOverClause() {
-    final String sql = "select ^empno^,\n"
-        + "  sum(empno) over (partition by min(sal)) empno_sum\n"
-        + "from emp";
-    sql(sql).fails("Expression 'EMPNO' is not being grouped");
-
-    final String sql2 = "select ^empno^,\n"
-        + "  sum(empno) over (partition by min(sal)) empno_sum\n"
-        + "from emp\n"
-        + "group by empno";
-    sql(sql2).ok();
-  }
-
-  @Test public void testAggregateInsideOverClause2() {
-    final String sql = "select ^empno^,\n"
-        + "  sum(empno) over ()\n"
-        + "  + sum(empno) over (partition by min(sal)) empno_sum\n"
-        + "from emp";
-    sql(sql).fails("Expression 'EMPNO' is not being grouped");
-  }
-
   @Test public void testWindowFunctions() {
     // SQL 03 Section 6.10
 
@@ -7432,10 +7400,7 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + " UNNEST(d.employees) as e";
     final String type = "RecordType(INTEGER NOT NULL DEPTNO,"
         + " INTEGER NOT NULL EMPNO,"
-        + " VARCHAR(10) NOT NULL ENAME,"
-        + " RecordType(RecordType(VARCHAR(10) NOT NULL TYPE, VARCHAR(20) NOT NULL DESC,"
-        + " RecordType(VARCHAR(10) NOT NULL A, VARCHAR(10) NOT NULL B) NOT NULL OTHERS)"
-        + " NOT NULL ARRAY NOT NULL SKILLS) NOT NULL DETAIL) NOT NULL";
+        + " VARCHAR(10) NOT NULL ENAME) NOT NULL";
     sql(sql).type(type);
 
     // equivalent query using CROSS JOIN
@@ -7812,19 +7777,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         "RecordType(INTEGER NOT NULL X, VARCHAR(20) NOT NULL EMAIL, INTEGER NOT NULL Y) NOT NULL");
   }
 
-  @Test public void testArrayOfRecordType() {
-    sql("SELECT name, dept_nested.employees[1].ne as ne from dept_nested")
-        .fails("Unknown field 'NE'");
-    sql("SELECT name, dept_nested.employees[1].ename as ename from dept_nested")
-        .type("RecordType(VARCHAR(10) NOT NULL NAME, VARCHAR(10) ENAME) NOT NULL");
-    sql("SELECT dept_nested.employees[1].detail.skills[1].desc as DESCRIPTION\n"
-        + "from dept_nested")
-        .type("RecordType(VARCHAR(20) DESCRIPTION) NOT NULL");
-    sql("SELECT dept_nested.employees[1].detail.skills[1].others.a as oa\n"
-        + "from dept_nested")
-        .type("RecordType(VARCHAR(10) OA) NOT NULL");
-  }
-
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-497">[CALCITE-497]
    * Support optional qualifier for column name references</a>. */
@@ -7952,17 +7904,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
     final String expected = "SELECT `NAME`\n"
         + "FROM `DEPT`\n"
         + "FETCH NEXT 2 ROWS ONLY";
-    tester.checkRewrite(validator, sql, expected);
-  }
-
-  @Test public void testRewriteWithLimitWithDynamicParameters() {
-    SqlValidator validator = tester.getValidator();
-    validator.setIdentifierExpansion(false);
-    final String sql = "select name from dept offset ? rows fetch next ? rows only";
-    final String expected = "SELECT `NAME`\n"
-        + "FROM `DEPT`\n"
-        + "OFFSET ? ROWS\n"
-        + "FETCH NEXT ? ROWS ONLY";
     tester.checkRewrite(validator, sql, expected);
   }
 
@@ -8524,7 +8465,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + "\n"
         + "CURRENT_VALUE -\n"
         + "DEFAULT -\n"
-        + "DOT -\n"
         + "ITEM -\n"
         + "NEXT_VALUE -\n"
         + "PATTERN_EXCLUDE -\n"
@@ -8536,6 +8476,8 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + "$LiteralChain -\n"
         + "+ pre\n"
         + "- pre\n"
+        + "-> left\n"
+        + ". left\n"
         + "FINAL pre\n"
         + "RUNNING pre\n"
         + "\n"
@@ -8760,22 +8702,9 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
         + "  timestamp '1970-01-01 00:00:00', 1, 1, 1)";
     pragmaticTester.checkQueryFails(sql3,
         "Column 'SLACKER' has no default value and does not allow NULLs");
-    assertThat("Should not check for default value, even if if column is missing"
-            + "from INSERT and nullable",
+    assertThat("Missing non-NULL column generates a call to factory",
         MockCatalogReader.CountingFactory.THREAD_CALL_COUNT.get().get(),
-        is(c));
-
-    // Now remove DEPTNO, which has a default value, from the target list.
-    // Will generate an extra call to newColumnDefaultValue at sql-to-rel time,
-    // just not yet.
-    final String sql4 = "insert into ^emp^ (empno, ename, job, mgr, hiredate,\n"
-        + "  sal, comm, slacker)\n"
-        + "values(1, 'nom', 'job', 0,\n"
-        + "  timestamp '1970-01-01 00:00:00', 1, 1, false)";
-    pragmaticTester.checkQuery(sql4);
-    assertThat("Missing DEFAULT column generates a call to factory",
-        MockCatalogReader.CountingFactory.THREAD_CALL_COUNT.get().get(),
-        is(c));
+        is(c + 1));
   }
 
   @Test public void testInsertView() {
@@ -10430,9 +10359,6 @@ public class SqlValidatorTest extends SqlValidatorTestCase {
             .fails(error);
 
     sql("select (((^slackingmin^))) from emp_r")
-            .fails(error);
-
-    sql("select ^slackingmin^ from nest.emp_r")
             .fails(error);
   }
 

@@ -231,12 +231,6 @@ public enum SqlKind {
    * MATCH_RECOGNIZE clause
    */
   MATCH_RECOGNIZE,
-
-  /**
-   * UPDATABILITY  clause
-   */
-  UPDATABILITY,
-
   // binary operators
 
   /**
@@ -277,6 +271,11 @@ public enum SqlKind {
    * the concatenation operator in a pattern expression within a match_recognize clause
    */
   PATTERN_CONCAT,
+
+  /**
+   * the followed by operator in a pattern expression within a match_recognize clause
+   */
+  PATTERN_FOLLOWED_BY,
 
   // comparison operators
 
@@ -855,9 +854,6 @@ public enum SqlKind {
   /** The {@code LAST_VALUE} aggregate function. */
   LAST_VALUE,
 
-  /** The {@code ANY_VALUE} aggregate function. */
-  ANY_VALUE,
-
   /** The {@code COVAR_POP} aggregate function. */
   COVAR_POP,
 
@@ -887,9 +883,6 @@ public enum SqlKind {
 
   /** The {@code NTILE} aggregate function. */
   NTILE,
-
-  /** The {@code NTH_VALUE} aggregate function. */
-  NTH_VALUE,
 
   /** The {@code COLLECT} aggregate function. */
   COLLECT,
@@ -950,24 +943,6 @@ public enum SqlKind {
    * the {@link #SESSION} group function. */
   SESSION_END,
 
-  /** Column declaration. */
-  COLUMN_DECL,
-
-  /** Attribute definition. */
-  ATTRIBUTE_DEF,
-
-  /** {@code CHECK} constraint. */
-  CHECK,
-
-  /** {@code UNIQUE} constraint. */
-  UNIQUE,
-
-  /** {@code PRIMARY KEY} constraint. */
-  PRIMARY_KEY,
-
-  /** {@code FOREIGN KEY} constraint. */
-  FOREIGN_KEY,
-
   // DDL and session control statements follow. The list is not exhaustive: feel
   // free to add more.
 
@@ -979,15 +954,6 @@ public enum SqlKind {
 
   /** {@code ALTER SESSION} DDL statement. */
   ALTER_SESSION,
-
-  /** {@code CREATE SCHEMA} DDL statement. */
-  CREATE_SCHEMA,
-
-  /** {@code CREATE FOREIGN SCHEMA} DDL statement. */
-  CREATE_FOREIGN_SCHEMA,
-
-  /** {@code DROP SCHEMA} DDL statement. */
-  DROP_SCHEMA,
 
   /** {@code CREATE TABLE} DDL statement. */
   CREATE_TABLE,
@@ -1007,15 +973,6 @@ public enum SqlKind {
   /** {@code DROP VIEW} DDL statement. */
   DROP_VIEW,
 
-  /** {@code CREATE MATERIALIZED VIEW} DDL statement. */
-  CREATE_MATERIALIZED_VIEW,
-
-  /** {@code ALTER MATERIALIZED VIEW} DDL statement. */
-  ALTER_MATERIALIZED_VIEW,
-
-  /** {@code DROP MATERIALIZED VIEW} DDL statement. */
-  DROP_MATERIALIZED_VIEW,
-
   /** {@code CREATE SEQUENCE} DDL statement. */
   CREATE_SEQUENCE,
 
@@ -1033,12 +990,6 @@ public enum SqlKind {
 
   /** {@code DROP INDEX} DDL statement. */
   DROP_INDEX,
-
-  /** {@code CREATE TYPE} DDL statement. */
-  CREATE_TYPE,
-
-  /** {@code DROP TYPE} DDL statement. */
-  DROP_TYPE,
 
   /** DDL statement not handled above.
    *
@@ -1099,14 +1050,10 @@ public enum SqlKind {
    */
   public static final EnumSet<SqlKind> DDL =
       EnumSet.of(COMMIT, ROLLBACK, ALTER_SESSION,
-          CREATE_SCHEMA, CREATE_FOREIGN_SCHEMA, DROP_SCHEMA,
           CREATE_TABLE, ALTER_TABLE, DROP_TABLE,
           CREATE_VIEW, ALTER_VIEW, DROP_VIEW,
-          CREATE_MATERIALIZED_VIEW, ALTER_MATERIALIZED_VIEW,
-          DROP_MATERIALIZED_VIEW,
           CREATE_SEQUENCE, ALTER_SEQUENCE, DROP_SEQUENCE,
           CREATE_INDEX, ALTER_INDEX, DROP_INDEX,
-          CREATE_TYPE, DROP_TYPE,
           SET_OPTION, OTHER_DDL);
 
   /**
